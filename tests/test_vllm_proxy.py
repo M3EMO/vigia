@@ -288,3 +288,93 @@ def test_top_logprob_features_edge_cases():
     assert all(math.isnan(v) for v in only_inf.values())
     single = top_logprob_features(-0.1, [-0.1])
     assert math.isnan(single["out_margin"]) and single["out_top20_entropy"] == pytest.approx(0.0)
+
+
+def _api_client(backend: VllmProxyBackend) -> TestClient:
+    async def get_context(request: Request) -> RequestContext:
+        return RequestContext(backend=backend, scorer=None, policy=Policy())
+
+    app = FastAPI()
+    app.include_router(create_api_router(get_context))
+    return TestClient(app)
+
+
+CONTEXT_ERROR = {
+    "object": "error",
+    "message": "This model's maximum context length is 2048 tokens. However, you requested 5000 tokens",
+    "type": "BadRequestError",
+    "code": 400,
+}
+
+
+def test_vllm_400_is_invalid_prompt_eagerly_and_through_api():
+    """Regresión: "Errores de vLLM salen como 500 internal_error: un 400 de contexto excedido no es 400".
+
+    `stream()` hace el request antes de devolver: el rechazo sale de la llamada y la API lo
+    responde 400 `invalid_prompt`, con y sin stream.
+    """
+    from vigia.contracts import InvalidRequestError
+
+    backend = VllmProxyBackend(
+        "http://vllm.local", "m", None, fake_vllm(CONTEXT_ERROR, [], status=400), n_experts=4
+    )
+    with pytest.raises(InvalidRequestError, match="contexto") as exc:
+        backend.stream([{"role": "user", "content": "hola"}], max_tokens=5)  # sin iterar
+    assert exc.value.code == "invalid_prompt" and "2048" not in str(exc.value)
+    client = _api_client(backend)
+    body = {"model": "m", "messages": [{"role": "user", "content": "hola"}], "max_tokens": 5, "vigia": {}}
+    for stream in (False, True):
+        resp = client.post("/v1/chat/completions", json={**body, "stream": stream})
+        assert resp.status_code == 400, (stream, resp.text)
+        assert resp.json()["error"]["code"] == "invalid_prompt"
+
+
+def test_vllm_5xx_and_transport_errors_stay_backend_errors():
+    """Regresión: "Errores de vLLM salen como 500 internal_error: ...": un 5xx no es error del cliente."""
+    from vigia.contracts import InvalidRequestError
+
+    backend = VllmProxyBackend("http://vllm.local", "m", None, fake_vllm({}, [], status=503), n_experts=4)
+    with pytest.raises(VllmProxyError, match="HTTP 503") as exc:
+        backend.stream([{"role": "user", "content": "hola"}], max_tokens=5)
+    assert not isinstance(exc.value, InvalidRequestError)
+
+    def boom(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("caído")
+
+    down = VllmProxyBackend(
+        "http://vllm.local", "m", None, httpx.Client(transport=httpx.MockTransport(boom)), n_experts=4
+    )
+    with pytest.raises(VllmProxyError, match="no respondió"):
+        down.stream([{"role": "user", "content": "hola"}], max_tokens=5)
+
+
+@pytest.mark.parametrize(("finish", "n_tokens"), [("length", 2), ("stop", 3)])
+def test_vllm_finish_reason_is_passed_through(finish, n_tokens):
+    """Regresión: "finish_reason de vLLM se ignora: se infiere por conteo y sale invertido".
+
+    vLLM corta por contexto con menos tokens que max_tokens (`length`) o para por EOS justo en
+    max_tokens (`stop`). Vigía devuelve lo que informa vLLM, no el conteo.
+    """
+    payload = vllm_response(ROUTED[:n_tokens].tolist(), TOKENS[:n_tokens])
+    payload["choices"][0]["finish_reason"] = finish
+    backend = make_backend(payload)
+    stream = backend.stream([{"role": "user", "content": "hola"}], max_tokens=3, tiers=(Tier.F0, Tier.U))
+    assert stream.finish_reason is None  # el contrato lo deja en None hasta agotar el iterador
+    assert len(list(stream)) == n_tokens
+    assert stream.finish_reason == finish and stream.completion_tokens == n_tokens
+    assert stream.prompt_tokens == 5 and stream.text == "".join(t["token"] for t in TOKENS[:n_tokens])
+    client = _api_client(make_backend(payload))
+    msgs = [{"role": "user", "content": "hola"}]
+    body = {"model": "granite-moe", "messages": msgs, "max_tokens": 3, "vigia": {}}
+    resp = client.post("/v1/chat/completions", json=body)
+    assert resp.status_code == 200 and resp.json()["choices"][0]["finish_reason"] == finish
+    sse = client.post("/v1/chat/completions", json={**body, "stream": True}).text
+    finals = [json.loads(line[6:]) for line in sse.splitlines() if line.startswith("data: {")]
+    assert [c["choices"][0]["finish_reason"] for c in finals if c["choices"][0]["finish_reason"]] == [finish]
+
+
+def test_vllm_unknown_finish_reason_is_none():
+    from vigia.backends.vllm_proxy import normalize_finish_reason
+
+    assert normalize_finish_reason("abort") is None and normalize_finish_reason(None) is None
+    assert normalize_finish_reason("eos") == "stop" and normalize_finish_reason("length") == "length"

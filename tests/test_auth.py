@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime, timedelta
 from typing import Annotated
+from urllib.parse import urlencode
 
 import pytest
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
@@ -584,3 +586,91 @@ def test_purge_expired_sessions(state, orgs, clock):
     state.sessions.create(uid, orgs[0])
     clock.now += timedelta(hours=9)
     assert state.sessions.purge_expired() == 1
+
+
+# --- credenciales revocadas mientras el body llega lento ------------------------------------------
+
+
+async def _slow_post(app, path, headers, body, *, between=None, stall=False):
+    """POST ASGI en dos tramos: `between()` corre antes del segundo; con `stall`, nunca llega."""
+    chunks = [body[:5], body[5:]]
+    sent: list[dict] = []
+    calls = 0
+
+    async def receive():
+        nonlocal calls
+        i, calls = calls, calls + 1
+        if i == 0:
+            return {"type": "http.request", "body": chunks[0], "more_body": True}
+        if i == 1 and not stall:
+            if between is not None:
+                between()
+            return {"type": "http.request", "body": chunks[1], "more_body": False}
+        await asyncio.Event().wait()  # el cliente no manda nada más
+
+    async def send(message):
+        sent.append(message)
+
+    scope = {
+        "type": "http",
+        "asgi": {"version": "3.0"},
+        "http_version": "1.1",
+        "method": "POST",
+        "scheme": "https",
+        "path": path,
+        "raw_path": path.encode(),
+        "query_string": b"",
+        "root_path": "",
+        "headers": [(k.lower().encode(), v.encode()) for k, v in headers.items()]
+        + [(b"host", b"testserver"), (b"content-length", str(len(body)).encode())],
+        "client": ("127.0.0.1", 50000),
+        "server": ("testserver", 443),
+    }
+    await app(scope, receive, send)
+    return next(m["status"] for m in sent if m["type"] == "http.response.start")
+
+
+def test_disabled_user_cannot_finish_a_slow_post_started_before(state, orgs):
+    """Un admin deshabilitado o degradado completa un POST que empezó antes del cambio y crea una API key
+    admin que sigue funcionando: la sesión se vuelve a resolver con el body completo."""
+    uid = add_user(state, orgs[0], "ada@example.com", "admin")
+    client = client_for(state)
+    csrf = do_login(client, "ada@example.com").json()["csrf"]
+    cookie = f"{SESSION_COOKIE}={client.cookies.get(SESSION_COOKIE)}"
+    headers = {"Cookie": cookie, "Content-Type": "application/x-www-form-urlencoded"}
+    body = urlencode({"csrf_token": csrf, "scopes": "admin"}).encode()
+    app = make_app(state)
+    assert asyncio.run(_slow_post(app, "/policy", headers, body)) == 200
+
+    def disable():
+        state.repo(orgs[0]).update_user(uid, disabled=True)
+
+    assert asyncio.run(_slow_post(app, "/policy", headers, body, between=disable)) == 401
+
+
+def test_revoked_key_cannot_finish_a_slow_request_started_before(state, orgs):
+    """Variante API: una key revocada mientras su request está a medio body recibe 401."""
+    token, kid = auth.create_api_key(state, orgs[0], "efímera", ["ingest"])
+    app = make_app(state)
+
+    @app.post("/api/echo")
+    async def echo(request: Request, p: IngestP):
+        return {"n": len(await request.json())}
+
+    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+    body = b'{"messages": ["hola", "chau"]}'
+    assert asyncio.run(_slow_post(app, "/api/echo", headers, body)) == 200
+
+    def revoke():
+        auth.revoke_api_key(state, orgs[0], kid)
+
+    assert asyncio.run(_slow_post(app, "/api/echo", headers, body, between=revoke)) == 401
+
+
+def test_body_that_never_finishes_is_cut_with_408(state, orgs, monkeypatch):
+    """Un body que no termina de llegar no retiene la conexión: 408 al vencer el tope."""
+    monkeypatch.setattr(auth, "BODY_READ_TIMEOUT", timedelta(milliseconds=50))
+    token, _ = auth.create_api_key(state, orgs[0], "k", ["ingest"])
+    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+    status = asyncio.run(_slow_post(make_app(state), "/api/ingest", headers, b'{"a": 1}', stall=True))
+    assert status == 408

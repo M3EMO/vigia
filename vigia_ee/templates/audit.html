@@ -41,8 +41,8 @@
         <td data-label="Fecha">{{ r.ts|dt }}</td>
         <td data-label="Actor">{% if r.actor_user_id %}{{ users.get(r.actor_user_id, "cuenta borrada") }}{% elif r.actor_key_id %}API key <code>{{ r.actor_key_id }}</code>{% else %}sistema{% endif %}</td>
         <td data-label="Acción"><code>{{ r.action }}</code></td>
-        <td data-label="Objeto">{% if r.target %}<code>{{ r.target|clean }}</code>{% else %}s/d{% endif %}</td>
-        <td data-label="Detalle">{% if r.detail %}<code>{{ r.detail_json|clean }}</code>{% else %}s/d{% endif %}</td>
+        <td data-label="Objeto" class="vg-break">{% if r.target %}<code>{{ r.target|clean }}</code>{% else %}s/d{% endif %}</td>
+        <td data-label="Detalle" class="vg-break">{% if r.detail %}<code>{{ r.detail_json|clean }}</code>{% else %}s/d{% endif %}</td>
       </tr>
       {% endfor %}
     </tbody>

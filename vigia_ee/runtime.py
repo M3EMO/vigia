@@ -23,6 +23,7 @@ import logging
 import math
 import os
 import secrets
+import sqlite3
 import threading
 import time
 from collections.abc import Iterator, Mapping
@@ -30,6 +31,7 @@ from dataclasses import dataclass, field, fields, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
+from urllib.parse import urlsplit
 
 from vigia.api import RequestContext, TraceRecord
 from vigia.contracts import (
@@ -46,19 +48,19 @@ from vigia.contracts import (
 )
 from vigia.detector import Detector
 from vigia.policy import (
-    RAG_FALLBACK_ACTION,
     HttpRetriever,
     PolicyError,
     RetrieverError,
     decide,
     policy_from_dict,
+    rag_fallback,
 )
 from vigia.spans import build_spans
 from vigia_ee import audit, webhooks
 from vigia_ee.auth import AuthState, PepperRing, Principal
 from vigia_ee.calibration import CalibrationService
 from vigia_ee.db import Database, TenantScopedRepository, create_org, list_org_ids, utcnow
-from vigia_ee.jobs import JobQueue
+from vigia_ee.jobs import DEFAULT_LANE, JobQueue
 from vigia_ee.metrics import Metrics
 from vigia_ee.security import RateLimiter, log_event
 
@@ -69,12 +71,38 @@ TINY_ARCHS = ("mixtral", "gpt_oss")
 CHEAP_TIERS = (Tier.F0, Tier.F1, Tier.U)
 MAX_PLAYGROUND_MESSAGES = 64
 MAX_PLAYGROUND_CHARS = 32_000
+SHUTTING_DOWN_MESSAGE = "La plataforma se está cerrando. Reintentá en unos segundos."
 _TRUE = {"1", "true", "yes", "on", "si", "sí"}
 _FALSE = {"0", "false", "no", "off"}
 
 
 class SettingsError(ValueError):
     """La configuración es inválida. El mensaje nombra la variable."""
+
+
+# Variable de entorno de cada campo con rango: los errores nombran lo que el operador corrige.
+_RANGES: tuple[tuple[str, str, int, int], ...] = (
+    ("max_tokens_limit", "VIGIA_MAX_TOKENS_LIMIT", 1, 32_768),
+    ("default_max_tokens", "VIGIA_DEFAULT_MAX_TOKENS", 1, 32_768),
+    ("max_body_bytes", "VIGIA_MAX_BODY_BYTES", 1024, 64 * 1024 * 1024),
+    ("max_upload_bytes", "VIGIA_MAX_UPLOAD_BYTES", 1024, 256 * 1024 * 1024),
+    ("key_rate_per_minute", "VIGIA_KEY_RATE_PER_MINUTE", 1, 1_000_000),
+    ("tenant_rate_per_minute", "VIGIA_TENANT_RATE_PER_MINUTE", 1, 1_000_000),
+    ("max_queue_depth", "VIGIA_MAX_QUEUE_DEPTH", 1, 10_000_000),
+    ("review_min_reviewers", "VIGIA_REVIEW_MIN_REVIEWERS", 1, 10),
+    ("shutdown_timeout_s", "VIGIA_SHUTDOWN_TIMEOUT", 1, 3600),
+)
+# Forma del modelo servido por vLLM. vLLM no la informa y la normalización de U la necesita fija.
+_VLLM_SHAPE: tuple[tuple[str, str, int, int], ...] = (
+    ("vllm_n_experts", "VIGIA_VLLM_N_EXPERTS", 2, 4096),
+    ("vllm_top_k", "VIGIA_VLLM_TOP_K", 1, 4096),
+    ("vllm_n_layers", "VIGIA_VLLM_N_LAYERS", 1, 1024),
+)
+
+
+def _check_int(value: Any, env_name: str, lo: int, hi: int) -> None:
+    if isinstance(value, bool) or not isinstance(value, int) or not lo <= value <= hi:
+        raise SettingsError(f"{env_name} debe ser un entero entre {lo} y {hi}.")
 
 
 # --- Configuración ---------------------------------------------------------------------------------
@@ -106,6 +134,11 @@ class Settings:
     tenant_rate_per_minute: int = 600
     max_queue_depth: int = 1000
     review_min_reviewers: int = 2
+    shutdown_timeout_s: int = 30  # tope del cierre ordenado (uvicorn timeout_graceful_shutdown)
+    # Obligatorios con backend=vllm: expertos por capa, top-k y capas MoE del modelo servido.
+    vllm_n_experts: int | None = None
+    vllm_top_k: int | None = None
+    vllm_n_layers: int | None = None
 
     def __post_init__(self) -> None:
         self.data_dir = Path(self.data_dir)
@@ -122,25 +155,31 @@ class Settings:
             raise SettingsError(
                 f"Modelo diminuto desconocido; opciones: {', '.join(TINY_PREFIX + a for a in TINY_ARCHS)}."
             )
-        if self.backend == "vllm" and (not self.vllm_url or not self.vllm_model):
-            raise SettingsError("Con VIGIA_BACKEND=vllm hacen falta VIGIA_VLLM_URL y VIGIA_VLLM_MODEL.")
-        for name, lo, hi in (
-            ("max_tokens_limit", 1, 32_768),
-            ("default_max_tokens", 1, 32_768),
-            ("max_body_bytes", 1024, 64 * 1024 * 1024),
-            ("max_upload_bytes", 1024, 256 * 1024 * 1024),
-            ("key_rate_per_minute", 1, 1_000_000),
-            ("tenant_rate_per_minute", 1, 1_000_000),
-            ("max_queue_depth", 1, 10_000_000),
-            ("review_min_reviewers", 1, 10),
-        ):
-            value = getattr(self, name)
-            if isinstance(value, bool) or not isinstance(value, int) or not lo <= value <= hi:
-                raise SettingsError(f"{name} debe ser un entero entre {lo} y {hi}.")
+        if self.backend == "vllm":
+            self._check_vllm()
+        for name, env_name, lo, hi in _RANGES:
+            _check_int(getattr(self, name), env_name, lo, hi)
         if self.default_max_tokens > self.max_tokens_limit:
-            raise SettingsError("default_max_tokens no puede superar max_tokens_limit.")
+            raise SettingsError("VIGIA_DEFAULT_MAX_TOKENS no puede superar VIGIA_MAX_TOKENS_LIMIT.")
         if self.metrics_token is not None and len(self.metrics_token) < 16:
             raise SettingsError("VIGIA_METRICS_TOKEN debe tener al menos 16 caracteres.")
+
+    def _check_vllm(self) -> None:
+        """URL y forma del modelo servido. Sin `n_experts` fijo, U de un token dependería del futuro."""
+        if not self.vllm_url or not self.vllm_model:
+            raise SettingsError("Con VIGIA_BACKEND=vllm hacen falta VIGIA_VLLM_URL y VIGIA_VLLM_MODEL.")
+        parts = urlsplit(self.vllm_url)
+        if parts.scheme not in ("http", "https") or not parts.hostname:
+            raise SettingsError("VIGIA_VLLM_URL debe ser una URL http(s) con host.")
+        missing = [env_name for name, env_name, _, _ in _VLLM_SHAPE if getattr(self, name) is None]
+        if missing:
+            raise SettingsError(
+                f"Con VIGIA_BACKEND=vllm hacen falta {', '.join(missing)} (config.json del modelo servido)."
+            )
+        for name, env_name, lo, hi in _VLLM_SHAPE:
+            _check_int(getattr(self, name), env_name, lo, hi)
+        if self.vllm_top_k > self.vllm_n_experts:  # type: ignore[operator]
+            raise SettingsError("VIGIA_VLLM_TOP_K no puede superar VIGIA_VLLM_N_EXPERTS.")
 
     @classmethod
     def from_env(cls, environ: Mapping[str, str] | None = None) -> Settings:
@@ -177,10 +216,14 @@ class Settings:
             tenant_rate_per_minute=_env_int(env, "VIGIA_TENANT_RATE_PER_MINUTE", 600),
             max_queue_depth=_env_int(env, "VIGIA_MAX_QUEUE_DEPTH", 1000),
             review_min_reviewers=_env_int(env, "VIGIA_REVIEW_MIN_REVIEWERS", 2),
+            shutdown_timeout_s=_env_int(env, "VIGIA_SHUTDOWN_TIMEOUT", 30),
+            vllm_n_experts=_env_int(env, "VIGIA_VLLM_N_EXPERTS", None),
+            vllm_top_k=_env_int(env, "VIGIA_VLLM_TOP_K", None),
+            vllm_n_layers=_env_int(env, "VIGIA_VLLM_N_LAYERS", None),
         )
 
 
-def _env_int(env: Mapping[str, str], name: str, default: int) -> int:
+def _env_int(env: Mapping[str, str], name: str, default: int | None) -> int | None:
     raw = env.get(name)
     if raw is None or not raw.strip():
         return default
@@ -223,16 +266,39 @@ def _env_secret(env: Mapping[str, str], name: str) -> str | None:
 
 
 def build_backend(settings: Settings) -> Backend:
-    """Backend según la configuración: vLLM (modo reducido), modelo diminuto o checkpoint HF."""
+    """Backend según la configuración: vLLM (modo reducido), modelo diminuto o checkpoint HF.
+
+    Un checkpoint que no se puede cargar (ruta o repo inexistente, carpeta sin tokenizer) sale como
+    `SettingsError` con `VIGIA_MODEL` y la causa en una línea, nunca como traceback crudo. vLLM recibe
+    la forma fija del modelo servido (`VIGIA_VLLM_N_EXPERTS`, `_TOP_K`, `_N_LAYERS`): así U es causal.
+    """
     if settings.backend == "vllm":
         from vigia.backends.vllm_proxy import VllmProxyBackend
 
-        return VllmProxyBackend(settings.vllm_url, settings.vllm_model, api_key=settings.vllm_api_key)
+        return VllmProxyBackend(
+            settings.vllm_url,
+            settings.vllm_model,
+            api_key=settings.vllm_api_key,
+            n_experts=settings.vllm_n_experts,
+            top_k=settings.vllm_top_k or 0,
+            n_layers=settings.vllm_n_layers or 0,
+        )
     if settings.model.startswith(TINY_PREFIX):
         return make_tiny_backend(settings.model.removeprefix(TINY_PREFIX))
     from vigia.backends.hf import HFBackend
 
-    return HFBackend(settings.model)
+    try:
+        return HFBackend(settings.model)
+    except (OSError, ValueError) as exc:
+        raise SettingsError(
+            f"No se puede cargar el modelo (VIGIA_MODEL={settings.model}): {_short_cause(exc)}"
+        ) from exc
+
+
+def _short_cause(exc: BaseException, limit: int = 300) -> str:
+    """Primera línea no vacía del error, recortada: la causa sin el stack ni el texto de ayuda."""
+    first = next((ln.strip() for ln in str(exc).splitlines() if ln.strip()), type(exc).__name__)
+    return first if len(first) <= limit else first[: limit - 1] + "…"
 
 
 def make_tiny_backend(arch: str) -> Backend:
@@ -290,6 +356,20 @@ def _usage(info: ModelInfo, tokens: list[TokenEvent]) -> dict[str, Any] | None:
     return {"layers": layers, "counts": counts} if seen else None
 
 
+def _stored_span(row: Mapping[str, Any], tokens: list[ScoredToken], text: str) -> Span:
+    """Span guardado (start, end, score) con el rango de tokens y el texto que la base no guarda."""
+    start, end = int(row["start"]), int(row["end"])
+    inside = [t.index for t in tokens if t.start < end and t.end > start]
+    return Span(
+        start=start,
+        end=end,
+        token_start=min(inside) if inside else 0,
+        token_end=max(inside) + 1 if inside else 0,
+        score=float(row["score"]),
+        text=text[start:end],
+    )
+
+
 def _check_messages(messages: Any) -> list[dict[str, str]]:
     if not isinstance(messages, list) or not 1 <= len(messages) <= MAX_PLAYGROUND_MESSAGES:
         raise ValueError(f"Mandá entre 1 y {MAX_PLAYGROUND_MESSAGES} mensajes.")
@@ -312,6 +392,60 @@ def _check_messages(messages: Any) -> list[dict[str, str]]:
     return out
 
 
+# --- Almacenamiento -------------------------------------------------------------------------------
+
+_SQLITE_REASONS = (
+    ("readonly", "la base es de solo lectura"),
+    ("not a database", "el archivo no es una base SQLite"),
+    ("unable to open", "no se puede abrir el archivo"),
+    ("locked", "otra conexión tiene la base bloqueada"),
+    ("disk i/o", "error de entrada/salida del disco"),
+)
+
+
+def _storage_var(settings: Settings) -> str:
+    """Nombra la variable que fijó la ruta de la base, para que el operador sepa qué corregir."""
+    if Path(settings.db_path) == Path(settings.data_dir) / "vigia.db":
+        return f"VIGIA_DATA_DIR={settings.data_dir}"
+    return f"VIGIA_DB_PATH={settings.db_path}"
+
+
+def _sqlite_reason(exc: sqlite3.Error) -> str:
+    text = str(exc)
+    for needle, reason in _SQLITE_REASONS:
+        if needle in text.lower():
+            return reason
+    return text
+
+
+def open_database(settings: Settings) -> Database:
+    """Crea la carpeta, abre la base, migra y prueba que acepte escrituras.
+
+    Un error de almacenamiento (carpeta inválida, base de solo lectura o corrupta) sale como
+    `SettingsError` con la variable y la causa, nunca como traceback crudo.
+    """
+    where = _storage_var(settings)
+    path = settings.db_path
+    if str(path) != ":memory:":
+        try:
+            Path(path).parent.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            reason = exc.strerror or str(exc)
+            raise SettingsError(f"No se puede crear la carpeta de datos ({where}): {reason}.") from exc
+    try:
+        db = Database(path)
+    except (OSError, sqlite3.Error) as exc:
+        reason = _sqlite_reason(exc) if isinstance(exc, sqlite3.Error) else exc.strerror or str(exc)
+        raise SettingsError(f"No se puede abrir la base ({where}): {reason}.") from exc
+    try:
+        with db.transaction():
+            db.execute("UPDATE schema_migrations SET applied_at = applied_at WHERE 0")
+    except sqlite3.Error as exc:
+        db.close()
+        raise SettingsError(f"La base no acepta escrituras ({where}): {_sqlite_reason(exc)}.") from exc
+    return db
+
+
 # --- Runtime ---------------------------------------------------------------------------------------
 
 
@@ -321,11 +455,11 @@ class Runtime:
     def __init__(self, settings: Settings, *, backend: Backend | None = None, clock: Any = None) -> None:
         self.settings = settings
         self.clock = clock or utcnow
-        if str(settings.db_path) != ":memory:":
-            Path(settings.db_path).parent.mkdir(parents=True, exist_ok=True)
-        self.db = Database(settings.db_path)
+        self.db = open_database(settings)
         self._closed = False
+        self._shutting_down = threading.Event()
         try:
+            base_artifact = self._read_base_detector()  # antes del modelo: falla rápido
             peppers = settings.peppers or PepperRing.from_env()
             self.auth = AuthState(
                 db=self.db,
@@ -350,7 +484,7 @@ class Runtime:
             self._policy_alerts: dict[str, str] = {}
             self._retrievers: dict[str, tuple[str, HttpRetriever | None]] = {}
             self._base_checked: set[str] = set()
-            self.base_detector: Detector | None = self._load_base_detector()
+            self.base_detector: Detector | None = self._check_base_detector(base_artifact)
             self.calibration = CalibrationService(self)
             self.startup_errors = self._warm_detectors()
         except BaseException:
@@ -366,6 +500,20 @@ class Runtime:
 
     def repo(self, org_id: str) -> TenantScopedRepository:
         return TenantScopedRepository(self.db, org_id)
+
+    @property
+    def shutting_down(self) -> bool:
+        """True desde que el proceso recibió la señal de cierre (`begin_shutdown`)."""
+        return self._shutting_down.is_set()
+
+    def begin_shutdown(self) -> None:
+        """Marca el cierre: los requests nuevos de generación responden 503 y el playground corta.
+
+        Lo llama el servidor al recibir SIGINT/SIGTERM, antes de esperar los requests en curso.
+        """
+        if not self._shutting_down.is_set():
+            self._shutting_down.set()
+            log_event(_log, "shutdown_started", level=logging.INFO)
 
     def close(self) -> None:
         """Detiene el worker, libera el backend y cierra la base. Idempotente."""
@@ -396,15 +544,32 @@ class Runtime:
         self.ensure_base_detector(org_id)
         return org_id
 
-    def _load_base_detector(self) -> Detector | None:
+    def _read_base_detector(self) -> Detector | None:
+        """Lee `VIGIA_BASE_DETECTOR`. Archivo inexistente, ilegible o artefacto inválido: SettingsError."""
         path = self.settings.base_detector_path
         if path is None:
             return None
+        where = f"VIGIA_BASE_DETECTOR={path}"
         try:
-            detector = Detector.load(path)
+            text = Path(path).read_text(encoding="utf-8")
+        except FileNotFoundError:
+            raise SettingsError(f"No existe el detector base ({where}).") from None
+        except (OSError, UnicodeDecodeError) as exc:
+            reason = exc.strerror if isinstance(exc, OSError) and exc.strerror else type(exc).__name__
+            raise SettingsError(f"No se puede leer el detector base ({where}): {reason}.") from None
+        try:
+            return Detector.loads(text)
+        except (DetectorMismatchError, ValueError) as exc:
+            raise SettingsError(f"El detector base es inválido ({where}): {_short_cause(exc)}") from None
+
+    def _check_base_detector(self, detector: Detector | None) -> Detector | None:
+        """Rechazo blando (documentado): un detector base de otro modelo no se instala y queda en el log."""
+        if detector is None:
+            return None
+        try:
             detector.check_model(self.model_info)
         except DetectorMismatchError as exc:
-            log_event(_log, "base_detector_rejected", level=logging.WARNING, error_type=type(exc).__name__)
+            log_event(_log, "base_detector_rejected", level=logging.WARNING, error_type="model_mismatch")
             _log.warning("detector base descartado: %s", exc)
             return None
         return detector
@@ -722,49 +887,71 @@ class Runtime:
             return []
 
     def trace_view(self, org_id: str, trace_id: str) -> dict[str, Any] | None:
-        """Traza del tenant para `GET /v1/vigia/traces/{id}` (sin el prompt). None si es ajena."""
+        """Traza del tenant para `GET /v1/vigia/traces/{id}` (sin el prompt). None si es ajena.
+
+        Misma forma que `vigia.serve.trace_view` (A-09, P-14): `{id, object, created_at, model,
+        source, finish_reason, response, vigia, latency_ms, overhead_ms, rag_status}`, con `vigia`
+        igual a `VigiaResult.to_dict()`. Así un cliente escrito contra `vigia serve` lee la traza de
+        la plataforma. Con `abstain` no viajan el texto, los tokens ni los fragmentos. El panel lee la
+        traza completa con `repo.get_trace`. `rag_status` y `status` salen de la base cuando sus
+        columnas existen; sin ellas valen None y "ok".
+        """
         if not isinstance(trace_id, str) or not trace_id:
             return None
         trace = self.repo(org_id).get_trace(trace_id)
         if trace is None:
             return None
+        abstained = trace["action"] == "abstain"
+        text = trace["response_text"] or ""
+        tokens = [
+            ScoredToken(
+                index=t["idx"],
+                text=t["text"],
+                start=t["start"],
+                end=t["end"],
+                p_error=t["p_error"],
+                flag=bool(t["flag"]),
+            )
+            for t in trace["tokens"]
+        ]
+        spans = [_stored_span(s, tokens, text) for s in trace["spans"]]
+        result = VigiaResult(
+            trace_id=trace["id"],
+            tokens=[] if abstained else tokens,
+            spans=[] if abstained else spans,
+            response_p_error=trace["response_p_error"],
+            action=trace["action"],
+            calibration_id=trace["calibration_id"],
+            calibrated=trace["calibration_id"] is not None and not trace["degraded"],
+            mode=trace["mode"],
+            degraded=bool(trace["degraded"]),
+            status=trace.get("status") or "ok",
+            rag_status=trace.get("rag_status"),
+            alpha=trace["alpha"],
+            tau=trace["tau"],
+        )
         return {
             "id": trace["id"],
             "object": "vigia.trace",
             "created_at": trace["created_at"],
-            "source": trace["source"],
             "model": trace["model_id"],
-            "mode": trace["mode"],
-            "action": trace["action"],
-            "response_p_error": trace["response_p_error"],
-            "calibration_id": trace["calibration_id"],
-            "calibrated": trace["calibration_id"] is not None and not trace["degraded"],
-            "alpha": trace["alpha"],
-            "tau": trace["tau"],
-            "degraded": bool(trace["degraded"]),
+            "source": trace["source"],
             "finish_reason": trace["finish_reason"],
+            "response": None if abstained else trace["response_text"],
+            "vigia": result.to_dict(),
             "latency_ms": trace["latency_ms"],
             "overhead_ms": trace["overhead_ms"],
-            "n_tokens": trace["n_tokens"],
-            "response_text": trace["response_text"],
-            "tokens": [
-                {
-                    "index": t["idx"],
-                    "text": t["text"],
-                    "start": t["start"],
-                    "end": t["end"],
-                    "p_error": t["p_error"],
-                    "flag": bool(t["flag"]),
-                }
-                for t in trace["tokens"]
-            ],
-            "spans": [{"start": s["start"], "end": s["end"], "score": s["score"]} for s in trace["spans"]],
+            "rag_status": result.rag_status,
         }
 
     # -- salud --
 
     def readiness(self) -> dict[str, bool]:
-        """Chequeos de `/readyz`: base escribible, worker vivo y cola bajo el tope."""
+        """Chequeos de `/readyz`: base escribible, worker vivo y cola bajo el tope.
+
+        La cola mide solo `DEFAULT_LANE` (purga y calibración): el backlog de webhooks de un tenant
+        corre en su propio carril y no saca el nodo. La métrica `vigia_jobs_queue_depth` cuenta todo.
+        """
         checks = {"db": False, "worker": False, "queue": False}
         try:
             with self.db.transaction():
@@ -774,7 +961,7 @@ class Runtime:
             log_event(_log, "readyz_db_error", level=logging.WARNING, error_type=type(exc).__name__)
         checks["worker"] = self.jobs.is_alive()
         try:
-            checks["queue"] = self.jobs.depth() < self.settings.max_queue_depth
+            checks["queue"] = self.jobs.depth(lane=DEFAULT_LANE) < self.settings.max_queue_depth
         except Exception as exc:  # noqa: BLE001
             log_event(_log, "readyz_queue_error", level=logging.WARNING, error_type=type(exc).__name__)
         return checks
@@ -817,6 +1004,9 @@ class Runtime:
             yield {"type": "error", "message": str(exc)}
             return
         org_id = principal.org_id
+        if self.shutting_down:
+            yield {"type": "error", "message": SHUTTING_DOWN_MESSAGE}
+            return
         ctx = self.context_for(principal, source="playground")
         policy = ctx.policy
         fail_open = policy.on_detector_error == "fail_open"
@@ -850,6 +1040,9 @@ class Runtime:
             )
             text_len = 0
             for ev in stream:
+                if self.shutting_down:  # el cierre corta la generación; no se guarda una traza parcial
+                    yield {"type": "error", "message": SHUTTING_DOWN_MESSAGE}
+                    return
                 t0 = time.perf_counter()
                 p: float | None = None
                 if scorer is not None and _visible(ev):
@@ -886,8 +1079,10 @@ class Runtime:
                 spans = build_spans(text, scored, gap_max=policy.gap_max, min_tokens=policy.min_tokens)
             action = decide(policy, response_p, spans)
             rag_status = None
-            if action == "rag_retry":  # el playground transmite en vivo: no reintenta, usa el respaldo
-                action, rag_status = RAG_FALLBACK_ACTION, "unavailable"
+            if action == "rag_retry":
+                # El playground transmite en vivo como `stream_policy=annotate_only`: no re-consulta y
+                # usa `policy.rag_fallback_action`. El texto ya viajó, así que no se oculta.
+                action, rag_status = rag_fallback(policy), "unavailable"
             overhead += time.perf_counter() - t0
             result = VigiaResult(
                 trace_id=trace_id,

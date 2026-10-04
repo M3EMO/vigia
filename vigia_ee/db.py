@@ -35,7 +35,29 @@ SCHEMA_PATH = Path(__file__).with_name("schema.sql")
 
 # Migraciones versionadas. La 1 es el contrato `schema.sql` (idempotente, CREATE IF NOT EXISTS).
 # Una migración nueva se agrega al final con el número siguiente; nunca se edita una aplicada.
-MIGRATIONS: tuple[tuple[int, str], ...] = ((1, SCHEMA_PATH.read_text(encoding="utf-8")),)
+# 2: `audit_log.org_seq`, la posición del evento dentro de su organización. El `seq` global queda
+# interno (solo ordena): mostrarlo dejaba inferir cuántos eventos registraron los otros tenants.
+# El backfill reabre un momento el trigger append-only y lo vuelve a crear dentro de la misma transacción.
+_AUDIT_ORG_SEQ = """
+ALTER TABLE audit_log ADD COLUMN org_seq INTEGER;
+DROP TRIGGER IF EXISTS audit_log_no_update;
+UPDATE audit_log SET org_seq = n.pos
+FROM (SELECT seq, row_number() OVER (PARTITION BY org_id ORDER BY seq) AS pos FROM audit_log) AS n
+WHERE n.seq = audit_log.seq;
+CREATE TRIGGER audit_log_no_update BEFORE UPDATE ON audit_log
+BEGIN SELECT RAISE(ABORT, 'audit_log es append-only'); END;
+CREATE UNIQUE INDEX IF NOT EXISTS ux_audit_org_seq ON audit_log(org_id, org_seq);
+"""
+MIGRATIONS: tuple[tuple[int, str], ...] = (
+    (1, SCHEMA_PATH.read_text(encoding="utf-8")),
+    (2, _AUDIT_ORG_SEQ),
+)
+# Eventos de auditoría de una org tal como salen hacia el tenant: `seq` es la posición por organización.
+AUDIT_SELECT = (
+    "SELECT org_seq AS seq, org_id, ts, actor_user_id, actor_key_id, action, target, detail_json, "
+    "prev_hash, hash FROM audit_log WHERE org_id IS ?"
+)
+AUDIT_ORDER = " ORDER BY audit_log.seq"
 
 STORE_TEXT_MODES = ("none", "redacted", "full")
 ROLES = ("owner", "admin", "reviewer", "viewer")
@@ -218,7 +240,7 @@ def create_org(
 
 def list_org_ids(db: Database) -> list[str]:
     """IDs de todas las organizaciones (para jobs de sistema como la purga de retención)."""
-    return [r["id"] for r in db.query("SELECT id FROM orgs ORDER BY created_at")]
+    return [r["id"] for r in db.query("SELECT id FROM orgs ORDER BY created_at, rowid")]
 
 
 def lookup_user_by_email(db: Database, email: str) -> dict[str, Any] | None:
@@ -364,7 +386,7 @@ class TenantScopedRepository:
 
     def list_users(self) -> list[dict[str, Any]]:
         return self.db.query(
-            f"SELECT {_USER_PUBLIC} FROM users WHERE org_id = ? ORDER BY created_at",  # noqa: S608
+            f"SELECT {_USER_PUBLIC} FROM users WHERE org_id = ? ORDER BY created_at, rowid",  # noqa: S608
             (self.org_id,),
         )
 
@@ -496,7 +518,7 @@ class TenantScopedRepository:
 
     def list_api_keys(self) -> list[dict[str, Any]]:
         return self.db.query(
-            f"SELECT {_KEY_PUBLIC} FROM api_keys WHERE org_id = ? ORDER BY created_at",  # noqa: S608
+            f"SELECT {_KEY_PUBLIC} FROM api_keys WHERE org_id = ? ORDER BY created_at, rowid",  # noqa: S608
             (self.org_id,),
         )
 
@@ -858,7 +880,7 @@ class TenantScopedRepository:
         if self.get_review_item(item_id) is None:
             return None
         return self.db.query(
-            "SELECT * FROM review_decisions WHERE item_id = ? AND org_id = ? ORDER BY created_at",
+            "SELECT * FROM review_decisions WHERE item_id = ? AND org_id = ? ORDER BY created_at, rowid",
             (item_id, self.org_id),
         )
 
@@ -901,7 +923,7 @@ class TenantScopedRepository:
 
     def list_detectors(self) -> list[dict[str, Any]]:
         return self.db.query(
-            f"SELECT {_DETECTOR_PUBLIC} FROM detectors WHERE org_id = ? ORDER BY created_at",  # noqa: S608
+            f"SELECT {_DETECTOR_PUBLIC} FROM detectors WHERE org_id = ? ORDER BY created_at, rowid",  # noqa: S608
             (self.org_id,),
         )
 
@@ -965,7 +987,7 @@ class TenantScopedRepository:
 
     def list_datasets(self) -> list[dict[str, Any]]:
         return self.db.query(
-            f"SELECT {_DATASET_PUBLIC} FROM datasets WHERE org_id = ? ORDER BY created_at",  # noqa: S608
+            f"SELECT {_DATASET_PUBLIC} FROM datasets WHERE org_id = ? ORDER BY created_at, rowid",  # noqa: S608
             (self.org_id,),
         )
 
@@ -999,7 +1021,7 @@ class TenantScopedRepository:
         sql = f"SELECT {cols} FROM webhooks WHERE org_id = ?"  # noqa: S608 - columnas fijas
         if enabled_only:
             sql += " AND disabled = 0"
-        rows = self.db.query(sql + " ORDER BY created_at", (self.org_id,))
+        rows = self.db.query(sql + " ORDER BY created_at, rowid", (self.org_id,))
         if event is not None:
             rows = [r for r in rows if event in r["events"].split(",")]
         return rows
@@ -1044,7 +1066,7 @@ class TenantScopedRepository:
         for tr in traces:
             tr["tokens"] = by_trace_tokens.get(tr["id"], [])
             tr["spans"] = by_trace_spans.get(tr["id"], [])
-        datasets = q("SELECT * FROM datasets WHERE org_id = ? ORDER BY created_at", o)
+        datasets = q("SELECT * FROM datasets WHERE org_id = ? ORDER BY created_at, rowid", o)
         for d in datasets:
             d["content"] = bytes(d["content"]).decode("utf-8", errors="replace")
         return {
@@ -1055,11 +1077,11 @@ class TenantScopedRepository:
             "users": self.list_users(),
             "api_keys": self.list_api_keys(),
             "traces": traces,
-            "review_items": q("SELECT * FROM review_items WHERE org_id = ? ORDER BY created_at", o),
-            "review_decisions": q("SELECT * FROM review_decisions WHERE org_id = ? ORDER BY created_at", o),
-            "detectors": q("SELECT * FROM detectors WHERE org_id = ? ORDER BY created_at", o),
+            "review_items": q("SELECT * FROM review_items WHERE org_id = ? ORDER BY created_at, rowid", o),
+            "review_decisions": q("SELECT * FROM review_decisions WHERE org_id = ? ORDER BY created_at, rowid", o),
+            "detectors": q("SELECT * FROM detectors WHERE org_id = ? ORDER BY created_at, rowid", o),
             "datasets": datasets,
             "webhooks": self.list_webhooks(),
-            "jobs": q("SELECT * FROM jobs WHERE org_id = ? ORDER BY created_at", o),
-            "audit_log": q("SELECT * FROM audit_log WHERE org_id = ? ORDER BY seq", o),
+            "jobs": q("SELECT * FROM jobs WHERE org_id = ? ORDER BY created_at, rowid", o),
+            "audit_log": q(AUDIT_SELECT + AUDIT_ORDER, o),
         }

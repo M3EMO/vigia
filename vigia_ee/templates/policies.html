@@ -14,12 +14,12 @@
   {% if thresholds %}
   <p class="vg-hint">alpha es la tasa de errores por token que se acepta dejar sin marcar (FNR, garantizada por CRC). Menor alpha marca más texto. Detector <code>{{ detector_id }}</code>.</p>
   <div class="vg-table-wrap">
-    <table class="vg-table">
+    <table class="vg-table vg-table-cards">
       <caption class="sr-only">Umbrales guardados del detector activo</caption>
       <thead><tr><th scope="col">alpha</th><th scope="col" class="vg-num">τ</th><th scope="col" class="vg-num">Tasa de marcado esperada</th><th scope="col" class="vg-num">Precisión esperada</th></tr></thead>
       <tbody>
         {% for t in thresholds %}
-        <tr{% if t.alpha == policy.alpha %} aria-current="true"{% endif %}><th scope="row">{{ t.alpha|num(2) }}{% if t.alpha == policy.alpha %} (actual){% endif %}</th><td class="vg-num">{{ t.tau|num(3) }}</td><td class="vg-num">{{ t.expected_flag_rate|pct }}</td><td class="vg-num">{{ t.expected_precision|num(3) }}</td></tr>
+        <tr{% if t.alpha == policy.alpha %} aria-current="true"{% endif %}><th scope="row" data-label="alpha">{{ t.alpha|num(2) }}{% if t.alpha == policy.alpha %} (actual){% endif %}</th><td class="vg-num" data-label="τ">{{ t.tau|num(3) }}</td><td class="vg-num" data-label="Tasa de marcado esperada">{{ t.expected_flag_rate|pct }}</td><td class="vg-num" data-label="Precisión esperada">{{ t.expected_precision|num(3) }}</td></tr>
         {% endfor %}
       </tbody>
     </table>
@@ -60,21 +60,21 @@
 
   <fieldset>
     <legend>Umbrales de acción sobre el P(error) de la respuesta</legend>
-    <p class="vg-hint">Número entre 0 y 1. Vacío desactiva la acción.</p>
+    <p class="vg-hint" id="thr-hint">Número entre 0 y 1. Vacío desactiva la acción.</p>
     <div class="vg-form-inline">
       <div class="vg-field">
         <label for="human_review_at">Revisión humana desde</label>
-        <input id="human_review_at" name="human_review_at" type="number" min="0" max="1" step="0.01" inputmode="decimal" value="{{ thr(values.human_review_at) }}"{{ invalid(errors, "human_review_at") }}>
+        <input id="human_review_at" name="human_review_at" type="number" min="0" max="1" step="0.01" inputmode="decimal" value="{{ thr(values.human_review_at) }}"{{ invalid(errors, "human_review_at", "thr-hint") }}>
         {{ field_error(errors, "human_review_at") }}
       </div>
       <div class="vg-field">
         <label for="rag_retry_at">Re-consulta RAG desde</label>
-        <input id="rag_retry_at" name="rag_retry_at" type="number" min="0" max="1" step="0.01" inputmode="decimal" value="{{ thr(values.rag_retry_at) }}"{{ invalid(errors, "rag_retry_at") }}>
+        <input id="rag_retry_at" name="rag_retry_at" type="number" min="0" max="1" step="0.01" inputmode="decimal" value="{{ thr(values.rag_retry_at) }}"{{ invalid(errors, "rag_retry_at", "thr-hint") }}>
         {{ field_error(errors, "rag_retry_at") }}
       </div>
       <div class="vg-field">
         <label for="abstain_at">Abstención desde</label>
-        <input id="abstain_at" name="abstain_at" type="number" min="0" max="1" step="0.01" inputmode="decimal" value="{{ thr(values.abstain_at) }}"{{ invalid(errors, "abstain_at") }}>
+        <input id="abstain_at" name="abstain_at" type="number" min="0" max="1" step="0.01" inputmode="decimal" value="{{ thr(values.abstain_at) }}"{{ invalid(errors, "abstain_at", "thr-hint") }}>
         {{ field_error(errors, "abstain_at") }}
       </div>
     </div>
@@ -89,9 +89,9 @@
     <legend>Re-consulta RAG</legend>
     <div class="vg-field">
       <label for="rag_url">URL del retriever</label>
-      <input id="rag_url" name="rag_url" type="url" maxlength="2048" placeholder="https://buscador.interno/api/search" value="{{ values.rag_url or '' }}"{{ invalid(errors, "rag_url") }}>
+      <input id="rag_url" name="rag_url" type="url" maxlength="2048" placeholder="https://buscador.interno/api/search" value="{{ values.rag_url or '' }}"{{ invalid(errors, "rag_url", "rag-url-hint") }}>
       {{ field_error(errors, "rag_url") }}
-      <p class="vg-hint">Solo hosts de la allowlist del despliegue, o https con IP pública.</p>
+      <p class="vg-hint" id="rag-url-hint">Solo hosts de la allowlist del despliegue, o https con IP pública.</p>
     </div>
     <div class="vg-form-inline">
       <div class="vg-field">

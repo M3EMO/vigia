@@ -23,19 +23,21 @@ from __future__ import annotations
 
 import json
 import math
+import re
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Annotated, Any
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 
+import anyio
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request, Response
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 from jinja2 import Environment, FileSystemLoader, StrictUndefined, select_autoescape
 from markupsafe import Markup
-from starlette.concurrency import iterate_in_threadpool
+from starlette.types import Receive, Scope, Send
 
 from vigia import charts
 from vigia.contracts import ScoredToken
@@ -54,7 +56,7 @@ from vigia_ee.auth import (
     verify_password,
 )
 from vigia_ee.db import TenantScopedRepository, lookup_user_by_email, parse_iso, utcnow
-from vigia_ee.security import SESSION_COOKIE, RateLimitExceeded, check_fetch_site
+from vigia_ee.security import SESSION_COOKIE, RateLimitExceeded, check_fetch_site, enforce_rate_limit
 
 PANEL_TZ = timezone(timedelta(hours=-3), "UTC-3")
 TEMPLATES_DIR = Path(__file__).with_name("templates")
@@ -192,6 +194,53 @@ def clean(text: Any) -> str:
     return pii.safe_display(text) if isinstance(text, str) else ""
 
 
+HEATMAP_SCALE = 1.2  # el texto del heatmap mide 10 unidades: a 1,2 queda en 12 px
+_SVG_OPEN_RE = re.compile(r'^<svg [^>]*?viewBox="0 0 (\d+(?:\.\d+)?) (\d+(?:\.\d+)?)" width="100%"')
+
+
+def fixed_size_svg(svg: str, scale: float = HEATMAP_SCALE) -> str:
+    """Cambia el `width="100%"` de un SVG de `vigia.charts` por un tamaño en px proporcional al viewBox.
+
+    Con `width="100%"` el SVG no tiene tamaño intrínseco y se estira al ancho del contenedor: el
+    heatmap de 176 unidades llegaba a 937 px con rótulos de 58 px. Con tamaño fijo, el contenedor
+    con scroll lo muestra entero a escala `scale`.
+    """
+    match = _SVG_OPEN_RE.match(svg)
+    if match is None:
+        return svg
+    w, h = (round(float(v) * scale) for v in match.groups())
+    head = match.group(0).replace('width="100%"', f'width="{w}" height="{h}"')
+    return head + svg[match.end() :]
+
+
+_SVG_TITLE_ID_RE = re.compile(r'<title id="([^"]+)">')
+
+
+def scrollable_chart(svg: str) -> str:
+    """Envuelve un SVG de `vigia.charts` en una región con scroll horizontal y foco de teclado.
+
+    El CSS fija el SVG en 30rem (escala 1, texto de 10 a 12 px). En una columna angosta la región
+    hace scroll en lugar de achicar el texto. La región toma su nombre del `<title>` del SVG.
+    """
+    match = _SVG_TITLE_ID_RE.search(svg)
+    name = f'aria-labelledby="{match.group(1)}"' if match else 'aria-label="Gráfico"'
+    return f'<div class="vg-chart-scroll" tabindex="0" role="region" {name}>{svg}</div>'
+
+
+def token_label(text: Any) -> str:
+    """Rótulo visible de un token en la tabla de señales: nunca queda vacío.
+
+    Un token de control, bidi o solo espacios queda vacío tras `clean`; ahí se muestran sus code
+    points (`U+001D`) para que el revisor sepa qué token es. Sin texto, `·`.
+    """
+    shown = clean(text)
+    if shown.strip():
+        return shown
+    if not isinstance(text, str) or not text:
+        return "·"
+    return " ".join(f"U+{ord(ch):04X}" for ch in text[:8]) + (" …" if len(text) > 8 else "")
+
+
 def level_for(score: float) -> tuple[str, str]:
     for lo, key, label in LEVELS:
         if score >= lo:
@@ -207,7 +256,9 @@ def make_environment() -> Environment:
         trim_blocks=True,
         lstrip_blocks=True,
     )
-    env.filters.update(num=fmt_num, count=fmt_count, pct=fmt_pct, ms=fmt_ms, dt=fmt_dt, clean=clean)
+    env.filters.update(
+        num=fmt_num, count=fmt_count, pct=fmt_pct, ms=fmt_ms, dt=fmt_dt, clean=clean, token_label=token_label
+    )
     env.globals.update(
         ACTION_LABELS=ACTION_LABELS,
         SOURCE_LABELS=SOURCE_LABELS,
@@ -240,6 +291,30 @@ def page(permission: str) -> Callable[..., Any]:
                 location = "/login?" + urlencode({"next": target})
                 raise PanelHTTPError(303, "Iniciá sesión.", headers={"Location": location}) from None
             raise PanelHTTPError(exc.status_code, exc.detail, headers=exc.headers) from None
+
+    setattr(dependency, PERMISSION_ATTR, getattr(inner, PERMISSION_ATTR))
+    return dependency
+
+
+def optional_page(permission: str) -> Callable[..., Any]:
+    """Como `page(permission)`, pero sin sesión vigente devuelve None en lugar de un 401.
+
+    Con sesión vigente exige CSRF y permiso igual que `page`. Sin sesión solo rechaza un request
+    que el navegador declara cross-site. Sirve para acciones idempotentes como "Salir".
+    """
+    inner = require_session(permission)
+
+    async def dependency(request: Request) -> Principal | None:
+        try:
+            return await inner(request)
+        except HTTPException as exc:
+            if exc.status_code != 401:
+                raise PanelHTTPError(exc.status_code, exc.detail, headers=exc.headers) from None
+        try:
+            check_fetch_site(request)
+        except HTTPException as exc:
+            raise PanelHTTPError(exc.status_code, exc.detail) from None
+        return None
 
     setattr(dependency, PERMISSION_ATTR, getattr(inner, PERMISSION_ATTR))
     return dependency
@@ -286,6 +361,88 @@ def redirect(path: str, ok: str | None = None) -> RedirectResponse:
     return RedirectResponse(path, status_code=303)
 
 
+_PATH_PARAM_RE = re.compile(r"\{(\w+)(?::\w+)?\}")
+
+
+def _get_paths(routes: Sequence[Any]) -> set[str]:
+    """Plantillas de ruta que aceptan GET (entra en los routers que FastAPI incluye de forma perezosa)."""
+    out: set[str] = set()
+    for route in routes:
+        inner = getattr(route, "original_router", None)
+        if inner is not None:
+            out |= _get_paths(inner.routes)
+        elif "GET" in (getattr(route, "methods", None) or ()):
+            out.add(route.path)
+    return out
+
+
+def form_page_url(request: Request) -> str | None:
+    """Página GET que muestra el formulario de un POST: quita segmentos de acción del final de la ruta.
+
+    `/review/{item_id}/decide` -> `/review/{item_id}`; `/settings/users/{id}/role` -> `/settings`;
+    `/policies` -> `/policies` (la misma ruta acepta GET). Se compara la plantilla de la ruta y no la
+    URL concreta: `/review/next` no debe confundirse con `GET /review/{item_id}`.
+    """
+    template = getattr(request.scope.get("route"), "path", None)
+    if not isinstance(template, str) or not template.startswith("/"):
+        return None
+    get_paths = _get_paths(request.app.routes)
+    params = request.path_params
+    segments = template.split("/")
+    while segments:
+        candidate = "/".join(segments) or "/"
+        if candidate in get_paths:
+            names = _PATH_PARAM_RE.findall(candidate)
+            if all(name in params for name in names):
+                return _PATH_PARAM_RE.sub(lambda m: quote(str(params[m.group(1)]), safe=""), candidate)
+        segments.pop()
+    return None
+
+
+def section_link(request: Request) -> tuple[str, str] | None:
+    """(href, texto) hacia la sección del menú que contiene la ruta pedida, si el rol la ve.
+
+    `/generations/{id}` -> ("/generations", "Volver a generaciones"). La sección misma o una ruta fuera
+    del menú no tienen a dónde volver: None (la página de error ya ofrece "Ir al resumen").
+    """
+    principal: Principal | None = getattr(request.state, "principal", None)
+    path = request.url.path
+    best: tuple[str, str] | None = None
+    for _title, items in NAV:
+        for href, label, perm in items:
+            if href == "/" or not path.startswith(href + "/"):
+                continue
+            if principal is None or not principal.can(perm):
+                continue
+            if best is None or len(href) > len(best[0]):
+                best = (href, f"Volver a {label.lower()}")
+    return best
+
+
+def retry_link(request: Request, status: int) -> tuple[str, str] | None:
+    """(href, texto) del botón principal de la página de error; None si no hay una página GET válida.
+
+    Un GET se reintenta tal cual solo ante un error transitorio (5xx o 429). Ante un 4xx (404, 403,
+    datos inválidos) reintentar repite el mismo error: el botón lleva a la sección padre. Un POST vuelve
+    a la página de su formulario (un GET sobre la ruta del POST daría 405): con la sesión vencida, por
+    el login; con un 404, no hay a dónde volver.
+    """
+    if request.method in ("GET", "HEAD"):
+        if status != 429 and status < 500:
+            return section_link(request)
+        # safe_next: una ruta `//host/...` sería un enlace protocol-relative a otro sitio.
+        target = request.url.path + (f"?{request.url.query}" if request.url.query else "")
+        return safe_next(target), "Reintentar"
+    if status == 404:
+        return None
+    page_url = form_page_url(request)
+    if page_url is None:
+        return None
+    if status == 401:
+        return "/login?" + urlencode({"next": page_url}), "Iniciar sesión"
+    return page_url, "Volver al formulario"
+
+
 async def panel_error_handler(request: Request, exc: PanelHTTPError) -> Response:
     """Página HTML para errores del panel; los 3xx son redirecciones."""
     if 300 <= exc.status_code < 400:
@@ -304,6 +461,7 @@ async def panel_error_handler(request: Request, exc: PanelHTTPError) -> Response
         title=titles.get(exc.status_code, "Error"),
         message=exc.detail if isinstance(exc.detail, str) else "No se pudo completar la acción.",
         request_id=getattr(request.state, "request_id", None),
+        retry=retry_link(request, exc.status_code),
     )
     for key, value in (exc.headers or {}).items():
         response.headers[key] = value
@@ -404,6 +562,17 @@ def overhead_ratio(row: Mapping[str, Any]) -> float | None:
     return ovh / (lat - ovh)
 
 
+def overhead_percentiles(rows: Sequence[Mapping[str, Any]]) -> tuple[dict[str, float | None], int]:
+    """Percentiles del overhead por request (overhead / latencia sin Vigía) y cuántos requests entran.
+
+    Es la única definición de "Overhead pXX" del panel: el resumen y Rendimiento la comparten. No es
+    el cociente de percentiles de latencia (p95 con / p95 sin - 1), que da otro número.
+    """
+    ratios = [x for x in (overhead_ratio(r) for r in rows) if x is not None]
+    qs = {"p50": 0.5, "p95": 0.95, "p99": 0.99}
+    return {k: percentile(ratios, q) for k, q in qs.items()}, len(ratios)
+
+
 def summary_stats(rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     """KPIs y tendencia diaria (días locales UTC-3 con tráfico; un día sin tráfico no se inventa)."""
     total = len(rows)
@@ -414,7 +583,7 @@ def summary_stats(rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
         flagged += 1 if r["n_spans"] else 0
         degraded += 1 if r["degraded"] else 0
     lat = [r["latency_ms"] for r in rows if _finite(r["latency_ms"])]
-    ratios = [x for x in (overhead_ratio(r) for r in rows) if x is not None]
+    ovh, _n_measured = overhead_percentiles(rows)
     days: dict[date, list[int]] = {}
     recal_days: list[date] = []
     prev_cal: str | None = None
@@ -431,7 +600,7 @@ def summary_stats(rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     labels = [d.strftime("%d/%m") for d in trend_days]
     rates = [days[d][0] / days[d][1] for d in trend_days]
     recal_idx = [trend_days.index(d) for d in recal_days if d in trend_days]
-    ovh_p95 = percentile(ratios, 0.95)
+    ovh_p95 = ovh["p95"]
     return {
         "total": total,
         "flagged_pct": flagged / total if total else None,
@@ -442,7 +611,7 @@ def summary_stats(rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
         ],
         "lat_p50": percentile(lat, 0.5),
         "lat_p95": percentile(lat, 0.95),
-        "ovh_p50": percentile(ratios, 0.5),
+        "ovh_p50": ovh["p50"],
         "ovh_p95": ovh_p95,
         "ovh_alert": ovh_p95 is not None and ovh_p95 > OVERHEAD_TARGET,
         "trend_labels": labels,
@@ -701,6 +870,26 @@ def parse_playground(data: Mapping[str, Any], settings: Any) -> tuple[Playground
     return PlaygroundInput(prompt, system, max_tokens, temperature), errors
 
 
+def playground_quota_wait(runtime: Any, principal: Principal) -> int | None:
+    """Consume la cuota del tenant (la misma que la API, P-33); segundos de espera si no alcanza.
+
+    El playground usa el modelo compartido igual que la API: sin esta cuota, una org con un
+    revisor generaba sin límite y salteaba la de su tenant.
+    """
+    try:
+        enforce_rate_limit(runtime.auth.tenant_limiter, f"org:{principal.org_id}", scope="tenant")
+    except RateLimitExceeded as exc:
+        return max(1, math.ceil(exc.retry_after))
+    return None
+
+
+def quota_message(retry_after: int) -> str:
+    return (
+        "Tu organización alcanzó el límite de generaciones por minuto. "
+        f"Esperá {fmt_count(retry_after)} s y reintentá."
+    )
+
+
 def run_playground(runtime: Any, principal: Principal, inp: PlaygroundInput) -> dict[str, Any]:
     """Consume el stream completo (camino sin JavaScript, AT-E07)."""
     tokens: list[dict[str, Any]] = []
@@ -734,12 +923,37 @@ def sse_events(runtime: Any, principal: Principal, inp: PlaygroundInput) -> Iter
             close()
 
 
+class ClosingStreamingResponse(StreamingResponse):
+    """`StreamingResponse` sobre un iterador sync que lo cierra apenas termina la respuesta.
+
+    Starlette no llama `close()` sobre el iterador sync cuando el cliente se desconecta: el
+    generador queda suspendido en un `yield` y retiene el lock del modelo (compartido por todos
+    los tenants) hasta que lo finaliza el GC, minutos después. Acá el cierre corre siempre, en un
+    hilo y protegido de la cancelación que dispara la desconexión. Si la respuesta terminó
+    normal, `close()` no hace nada.
+    """
+
+    def __init__(self, content: Iterator[str], **kwargs: Any) -> None:
+        super().__init__(content, **kwargs)
+        self._sync_iterator = content
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        try:
+            await super().__call__(scope, receive, send)
+        finally:
+            close = getattr(self._sync_iterator, "close", None)
+            if callable(close):
+                with anyio.CancelScope(shield=True):
+                    await anyio.to_thread.run_sync(close)
+
+
 # Dependencias por permiso (a nivel de módulo: FastAPI resuelve las anotaciones por nombre).
 MetricsP = Annotated[Principal, Depends(page("metrics:read"))]
 TracesP = Annotated[Principal, Depends(page("traces:read"))]
 ModelP = Annotated[Principal, Depends(page("model:read"))]
 PlayP = Annotated[Principal, Depends(page("playground:use"))]
 SelfP = Annotated[Principal, Depends(page("account:self"))]
+OptionalSelfP = Annotated[Principal | None, Depends(optional_page("account:self"))]
 ReviewWriteP = Annotated[Principal, Depends(page("review:write"))]
 DeleteP = Annotated[Principal, Depends(page("data:delete"))]
 PlayApiP = Annotated[Principal, Depends(require_session("playground:use"))]
@@ -818,8 +1032,10 @@ def create_panel_router(runtime: Any) -> APIRouter:
         return response
 
     @router.post("/logout")
-    def logout_submit(request: Request, p: SelfP) -> Response:
-        logout(runtime.auth, request.cookies.get(SESSION_COOKIE))
+    def logout_submit(request: Request, p: OptionalSelfP) -> Response:
+        # Idempotente: con la sesión vencida no hay nada que validar; igual se borra la cookie.
+        if p is not None:
+            logout(runtime.auth, request.cookies.get(SESSION_COOKIE))
         response = redirect("/login", "logged_out")
         clear_cookie(response, secure=secure)
         return response
@@ -867,7 +1083,9 @@ def create_panel_router(runtime: Any) -> APIRouter:
         if stats["trend_rates"]:
             args = (stats["trend_labels"], stats["trend_rates"])
             kw = {"recalibrations": stats["trend_recal"], "title": "Tasa de tokens marcados por día"}
-            trend = Markup(charts.flag_trend_svg(*args, **kw) + charts.flag_trend_table(*args, **kw))  # noqa: S704
+            trend = Markup(  # noqa: S704 - SVG generado y escapado por vigia.charts
+                scrollable_chart(charts.flag_trend_svg(*args, **kw)) + charts.flag_trend_table(*args, **kw)
+            )
         pending = len(repo.list_review_items(state="pending", limit=200)) + len(
             repo.list_review_items(state="needs_other", limit=200)
         )
@@ -1044,6 +1262,20 @@ def create_panel_router(runtime: Any) -> APIRouter:
                 result=None,
                 settings=settings,
             )
+        retry_after = playground_quota_wait(runtime, p)
+        if retry_after is not None:
+            resp = render(
+                request,
+                "playground.html",
+                status=429,
+                values=values,
+                errors={},
+                result=None,
+                stream_error=quota_message(retry_after),
+                settings=settings,
+            )
+            resp.headers["Retry-After"] = str(retry_after)
+            return resp
         out = await run_in_threadpool(run_playground, runtime, p, inp)
         result = None
         if out["done"]:
@@ -1080,8 +1312,15 @@ def create_panel_router(runtime: Any) -> APIRouter:
             return JSONResponse(
                 {"error": "validation_error", "message": "Datos inválidos.", "fields": errors}, 422
             )
-        return StreamingResponse(
-            iterate_in_threadpool(sse_events(runtime, p, inp)),
+        retry_after = playground_quota_wait(runtime, p)
+        if retry_after is not None:
+            return JSONResponse(
+                {"error": "rate_limited", "message": quota_message(retry_after), "retry_after": retry_after},
+                status_code=429,
+                headers={"Retry-After": str(retry_after)},
+            )
+        return ClosingStreamingResponse(
+            sse_events(runtime, p, inp),
             media_type="text/event-stream",
             headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
         )
@@ -1097,7 +1336,7 @@ def create_panel_router(runtime: Any) -> APIRouter:
         if agg is not None:
             matrix, rows, cols, n_traces = agg
             kw = {"value_label": "fracción de selecciones", "title": "Uso por capa y experto"}
-            heatmap = Markup(charts.heatmap_svg(matrix, rows, cols, **kw))  # noqa: S704
+            heatmap = Markup(fixed_size_svg(charts.heatmap_svg(matrix, rows, cols, **kw)))  # noqa: S704
             table = Markup(charts.heatmap_table(matrix, rows, cols, **kw))  # noqa: S704
         info = runtime.model_info
         caps = None
@@ -1115,14 +1354,14 @@ def create_panel_router(runtime: Any) -> APIRouter:
         rows = trace_window(repo, utcnow() - timedelta(days=PERF_DAYS))
         lat = latency_percentiles(rows)
         figure = None
-        overhead = None
+        overhead, n_measured = overhead_percentiles(rows)
         if lat is not None:
             base, full = lat
             kw = {"target": OVERHEAD_TARGET, "unit": "ms", "title": "Latencia por request"}
             figure = Markup(  # noqa: S704
-                charts.latency_svg(base, full, **kw) + charts.latency_table(base, full, **kw)
+                scrollable_chart(charts.latency_svg(base, full, **kw))
+                + charts.latency_table(base, full, **kw)
             )
-            overhead = {k: full[k] / base[k] - 1.0 for k in ("p50", "p95", "p99")}
         tps = [
             r["n_tokens"] / (r["latency_ms"] / 1000.0)
             for r in rows
@@ -1133,7 +1372,7 @@ def create_panel_router(runtime: Any) -> APIRouter:
             "performance.html",
             figure=figure,
             overhead=overhead,
-            n=len([r for r in rows if _finite(r["latency_ms"]) and _finite(r["overhead_ms"])]),
+            n=n_measured,
             tps_p50=percentile(tps, 0.5),
             days=PERF_DAYS,
         )

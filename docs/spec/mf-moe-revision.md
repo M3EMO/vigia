@@ -47,6 +47,36 @@ investigación. Cada objeción nombra el dato o el experimento que falta.
    que la incertidumbre por token aumenta el acuerdo del usuario con la IA. Vigía usa una rampa de
    un solo tono (no rojo-verde), tres codificaciones por fragmento y una acción obligatoria.
 
+## Deriva de representación y alineación de Procrustes (insumo del 2026-10-04)
+
+El insumo propone dos remedios contra la deriva de un experto re-entrenado: una pérdida de anclaje
+al modelo base y una rotación de Procrustes de la salida del experto.
+
+1. **La pérdida de anclaje es sólida y tiene nombre.** Penalizar la distancia a los pesos base es
+   L2-SP; ponderarla por importancia es EWC. Las dos son técnicas medidas en aprendizaje continuo.
+   El protocolo debe compararlas contra un control sin anclaje.
+2. **Procrustes sirve para medir, no para corregir.** La salida de cada experto se suma al residual
+   stream compartido. Rotar la salida de un solo experto cambia lo que leen todas las capas
+   siguientes, así que cambia la función del modelo. Una rotación solo preserva la función si se
+   aplica la inversa en cada lector del residual, y eso afecta a todos los expertos. Procrustes y
+   CKA sí sirven como diagnóstico: miden cuánto se alejó un experto sobre un set fijo de entradas.
+3. **La deriva rompe la señal de consenso, y eso ya está previsto en Vigía.** `e_jsd` proyecta cada
+   experto por la norma final y la cabeza de salida compartidas. Si un experto deriva, su
+   proyección pierde sentido. Por eso `e_jsd` es opt-in y el detector la pondera con datos
+   calibrados, nunca como confianza directa.
+4. **Las citas `[0.4]`, `[0.3, 0.14]` y `[0.6]` no tienen fuente identificable.** Ninguna afirmación
+   del insumo entra al producto sin una referencia verificable o una medición propia.
+
+### Qué cambia en Vigía
+
+Vigía no re-entrena expertos: los hooks solo leen y AT-S11 verifica que la salida del modelo no
+cambia. El riesgo real para el producto es otro: un cliente ajusta (fine-tune) su modelo y conserva
+el mismo `model_id`. El detector calibrado dejaría de valer sin aviso. Vigía agrega dos controles:
+
+- El fingerprint del detector incluye un hash de los pesos de los routers. Un router que cambia
+  invalida la calibración (`DetectorMismatchError`).
+- El monitor de drift calcula PSI sobre el score, la tasa de marcado y features clave del router.
+
 ## Protocolo mínimo para retomar las fases 2 y 3
 
 - Hardware: 1 GPU de 80 GB, como pide el plan. Esta laptop no alcanza (8 GB, sin GPU).

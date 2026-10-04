@@ -145,18 +145,42 @@ def _prob_stats(
         }
 
 
+def _digamma(x: np.ndarray) -> np.ndarray:
+    """Función digamma para x > 0, numpy puro: recurrencia hasta x + 6 y serie asintótica."""
+    x = np.asarray(x, dtype=float)
+    shift = sum(1.0 / (x + i) for i in range(6))
+    z = x + 6.0
+    z2 = 1.0 / (z * z)
+    series = z2 * (
+        1 / 12 - z2 * (1 / 120 - z2 * (1 / 252 - z2 * (1 / 240 - z2 * (1 / 132 - z2 * 691 / 32760))))
+    )
+    return np.log(z) - 0.5 / z - series - shift
+
+
 def _aurc_stats(y: np.ndarray, p: np.ndarray, W: np.ndarray) -> dict[str, np.ndarray]:
-    """AURC: riesgo medio al aceptar respuestas de menor a mayor p_error (menor es mejor)."""
+    """AURC: riesgo medio al aceptar respuestas de menor a mayor p_error (menor es mejor).
 
-    def area(order: np.ndarray) -> np.ndarray:
-        Ws, ys = W[:, order], y[order]
-        cum_w = np.cumsum(Ws, axis=1)
-        with np.errstate(divide="ignore", invalid="ignore"):
-            risk = np.where(cum_w > 0, np.cumsum(Ws * ys, axis=1) / np.where(cum_w > 0, cum_w, 1.0), 0.0)
-        return np.sum(Ws * risk, axis=1) / Ws.sum(axis=1)
-
-    aurc = area(np.argsort(p, kind="stable"))
-    optimal = area(np.argsort(y, kind="stable"))
+    Un bloque de p_error empatados se acepta entero: todas sus filas llevan el riesgo acumulado al
+    final del bloque, así el valor no depende del orden de las filas (igual que AUROC). La
+    referencia óptima acepta primero todas las correctas, una por una. Una fila con peso k cuenta
+    como k filas: con C correctas y E erróneas, la k-ésima errónea tiene riesgo k / (C + k), y
+    sum_{k=1..E} k / (C + k) = E - C * (psi(C + E + 1) - psi(C + 1)). La forma cerrada hace que el
+    E-AURC de una réplica bootstrap sea igual al del dataset con las filas repetidas.
+    """
+    order = np.argsort(p, kind="stable")
+    Ws, ys, ks = W[:, order], y[order], p[order]
+    cum_w = np.cumsum(Ws, axis=1)
+    cum_err = np.cumsum(Ws * ys, axis=1)
+    ends = np.r_[np.nonzero(np.diff(ks))[0], len(ks) - 1]
+    block_end = np.repeat(ends, np.diff(np.r_[-1, ends]))
+    cum_w, cum_err = cum_w[:, block_end], cum_err[:, block_end]
+    with np.errstate(divide="ignore", invalid="ignore"):
+        risk = np.where(cum_w > 0, cum_err / np.where(cum_w > 0, cum_w, 1.0), 0.0)
+        n = W.sum(axis=1)
+        aurc = np.sum(Ws * risk, axis=1) / n
+        errors = W @ y
+        correct = n - errors
+        optimal = (errors - correct * (_digamma(n + 1.0) - _digamma(correct + 1.0))) / n
     return {"aurc": aurc, "e_aurc": aurc - optimal}
 
 
@@ -480,7 +504,7 @@ def evaluate_report(
     data = build_dataset(features, labels, groups, response_ids)
     _require_two_classes(data.y.astype(np.float64), what="las etiquetas del dataset")
     if split is None:
-        split = split_groups(data.groups, cal_frac=cal_frac, test_frac=test_frac, seed=seed)
+        split = split_groups(data.groups, cal_frac=cal_frac, test_frac=test_frac, seed=seed, labels=data.y)
     masks = split_masks(data.groups, split)
     test = data.subset(masks["test"])
     if len(test.y) == 0:

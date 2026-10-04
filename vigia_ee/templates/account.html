@@ -12,7 +12,7 @@
 </section>
 <section class="vg-card" aria-labelledby="acc-pw">
   <h2 id="acc-pw">Cambiar la contraseña</h2>
-  <p class="vg-hint">Mínimo 15 caracteres, sin reglas de composición. Una frase larga y propia es lo más seguro. Al cambiarla se cierran todas tus sesiones.</p>
+  <p class="vg-hint" id="pw-hint">Mínimo 15 caracteres, sin reglas de composición. Una frase larga y propia es lo más seguro. Al cambiarla se cierran todas tus sesiones.</p>
   {% if errors %}<div class="vg-alert vg-alert-error" role="alert"><p>Revisá los campos marcados.</p></div>{% endif %}
   <form method="post" action="/account/password" class="vg-form">
     {{ csrf() }}
@@ -24,12 +24,12 @@
     </div>
     <div class="vg-field">
       <label for="new_password">Contraseña nueva</label>
-      <input id="new_password" name="new_password" type="password" autocomplete="new-password" required minlength="15" maxlength="128"{{ invalid(errors, "new_password") }}>
+      <input id="new_password" name="new_password" type="password" autocomplete="new-password" required minlength="15" maxlength="128"{{ invalid(errors, "new_password", "pw-hint") }}>
       {{ field_error(errors, "new_password") }}
     </div>
     <div class="vg-field">
       <label for="confirm_password">Repetí la contraseña nueva</label>
-      <input id="confirm_password" name="confirm_password" type="password" autocomplete="new-password" required minlength="15" maxlength="128"{{ invalid(errors, "confirm_password") }}>
+      <input id="confirm_password" name="confirm_password" type="password" autocomplete="new-password" required minlength="15" maxlength="128"{{ invalid(errors, "confirm_password", "pw-hint") }}>
       {{ field_error(errors, "confirm_password") }}
     </div>
     <div class="vg-actions"><button type="submit" class="vg-btn">Cambiar la contraseña</button></div>

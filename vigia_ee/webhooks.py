@@ -4,15 +4,24 @@
   secreto es `whsec_<base64>`. `webhook-id` es el mismo en cada reintento: el receptor lo usa como
   clave de idempotencia. `webhook-timestamp` es la hora del intento, así un reintento a las 10 h
   sigue dentro de la tolerancia del receptor.
-- Cada evento se encola como un job `webhook` por webhook suscrito. La entrega corre en el worker
-  de `vigia_ee.jobs` con el calendario de reintentos de la spec (5 s, 5 min, 30 min, 2 h, 5 h,
-  10 h, 10 h). Solo un 2xx cuenta como éxito; un 3xx es fallo porque nunca se siguen redirects.
+- Cada evento se encola como un job `webhook` por webhook suscrito. La entrega corre en un carril
+  propio del worker de `vigia_ee.jobs` (`lane="webhook"`): un destino lento o caído no atrasa la
+  purga ni la calibración. Usa el calendario de reintentos de la spec (5 s, 5 min, 30 min, 2 h,
+  5 h, 10 h, 10 h). Solo un 2xx cuenta como éxito; un 3xx es fallo porque nunca se siguen redirects.
+- Aislamiento entre tenants: el carril tiene `LANE_WORKERS` hilos y cada tenant tiene a lo sumo una
+  entrega en curso, así el destino lento de un tenant no frena los webhooks de los demás. Cada
+  entrega tiene un plazo TOTAL de `timeout` segundos (conexión, TLS, envío y headers). httpx solo
+  acota cada lectura; un destino que gotea bytes la retendría sin límite. Superar el plazo es un
+  fallo: cuenta para el reintento y para la deshabilitación automática. El plazo total vale para el
+  cliente propio; un `http_client` inyectado conserva sus timeouts.
 - SSRF: la URL se valida con `vigia.policy.check_url` al crear el webhook y antes de cada entrega
   (https obligatorio salvo allowlist; localhost, redes privadas y 169.254.169.254 bloqueados).
   `ponytail:` queda una ventana TOCTOU de DNS entre la validación y la conexión de httpx; cerrarla
   exige conectar a la IP validada con SNI propio.
-- Tras `max_consecutive_failures` entregas fallidas seguidas, el webhook se deshabilita y el
-  evento queda en auditoría.
+- Tras `max_consecutive_failures` entregas seguidas cuyo último intento falló, el webhook se
+  deshabilita y el evento queda en auditoría. Cuenta en cada intento, no solo en el último: un
+  destino caído con mucho tráfico se corta en N intentos y no 28 h después. La entrega que lo
+  deshabilita termina `failed`; el resto de su cola se descarta sin tocar la red.
 """
 
 from __future__ import annotations
@@ -23,11 +32,14 @@ import hashlib
 import hmac
 import json
 import secrets
+import threading
 import time
-from collections.abc import Callable, Collection, Iterable, Mapping
+from collections.abc import Callable, Collection, Iterable, Iterator, Mapping
+from contextlib import contextmanager
 from datetime import datetime
 from typing import Any
 
+import httpcore
 import httpx
 
 from vigia.policy import UnsafeURLError, check_url
@@ -47,6 +59,8 @@ RETRY_SCHEDULE_S = (5.0, 300.0, 1800.0, 7200.0, 18000.0, 36000.0, 36000.0)
 MAX_ATTEMPTS = len(RETRY_SCHEDULE_S) + 1
 DEFAULT_MAX_CONSECUTIVE_FAILURES = 5
 USER_AGENT = "Vigia-Webhooks/1"
+LANE_WORKERS = 4  # hilos del carril de webhooks
+MAX_RUNNING_PER_ORG = 1  # entregas en curso por tenant dentro del carril
 
 Resolver = Callable[[str], list[str]]
 
@@ -260,19 +274,120 @@ def emit(db: Database, jobs: JobQueue, org_id: str, event_type: str, data: Mappi
     ]
 
 
+# --- plazo total de entrega -----------------------------------------------------------------------
+
+_deadline = threading.local()  # `at`: time.monotonic() límite de la entrega que corre en este hilo
+
+
+@contextmanager
+def _delivery_deadline(seconds: float) -> Iterator[None]:
+    """Fija el plazo total de la entrega que corre en este hilo."""
+    previous = getattr(_deadline, "at", None)
+    _deadline.at = time.monotonic() + seconds
+    try:
+        yield
+    finally:
+        _deadline.at = previous
+
+
+def _bounded(timeout: float | None, expired: type[Exception]) -> float | None:
+    """Timeout de una operación de red recortado al plazo total. Lanza `expired` si ya venció."""
+    deadline = getattr(_deadline, "at", None)
+    if deadline is None:
+        return timeout
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise expired("se venció el plazo total de la entrega")
+    return remaining if timeout is None else min(timeout, remaining)
+
+
+class _DeadlineStream(httpcore.NetworkStream):
+    """Conexión de httpcore que recorta cada lectura y escritura al plazo total del hilo."""
+
+    def __init__(self, inner: httpcore.NetworkStream) -> None:
+        self._inner = inner
+
+    def read(self, max_bytes: int, timeout: float | None = None) -> bytes:
+        return self._inner.read(max_bytes, _bounded(timeout, httpcore.ReadTimeout))
+
+    def write(self, buffer: bytes, timeout: float | None = None) -> None:
+        self._inner.write(buffer, _bounded(timeout, httpcore.WriteTimeout))
+
+    def close(self) -> None:
+        self._inner.close()
+
+    def start_tls(
+        self, ssl_context: Any, server_hostname: str | None = None, timeout: float | None = None
+    ) -> httpcore.NetworkStream:
+        bounded = _bounded(timeout, httpcore.ConnectTimeout)
+        return _DeadlineStream(self._inner.start_tls(ssl_context, server_hostname, bounded))
+
+    def get_extra_info(self, info: str) -> Any:
+        return self._inner.get_extra_info(info)
+
+
+class _DeadlineBackend(httpcore.NetworkBackend):
+    """Backend de red que acota la conexión al plazo total y abre `_DeadlineStream`."""
+
+    def __init__(self, inner: httpcore.NetworkBackend) -> None:
+        self._inner = inner
+
+    def connect_tcp(
+        self,
+        host: str,
+        port: int,
+        timeout: float | None = None,
+        local_address: str | None = None,
+        socket_options: Any = None,
+    ) -> httpcore.NetworkStream:
+        bounded = _bounded(timeout, httpcore.ConnectTimeout)
+        return _DeadlineStream(self._inner.connect_tcp(host, port, bounded, local_address, socket_options))
+
+    def connect_unix_socket(
+        self, path: str, timeout: float | None = None, socket_options: Any = None
+    ) -> httpcore.NetworkStream:
+        bounded = _bounded(timeout, httpcore.ConnectTimeout)
+        return _DeadlineStream(self._inner.connect_unix_socket(path, bounded, socket_options))
+
+    def sleep(self, seconds: float) -> None:
+        self._inner.sleep(seconds)
+
+
+def _delivery_client(timeout: float) -> httpx.Client:
+    """Cliente propio de entrega: sin redirects ni proxies del entorno y con plazo total.
+
+    httpx no expone el backend de red, así que se envuelve el del pool. Si httpcore cambia ese
+    atributo, falla al crear el handler en vez de entregar sin plazo total.
+    """
+    transport = httpx.HTTPTransport(trust_env=False)
+    pool = getattr(transport, "_pool", None)
+    backend = getattr(pool, "_network_backend", None)
+    if not isinstance(backend, httpcore.NetworkBackend):
+        raise RuntimeError("httpcore cambió: no se puede imponer el plazo total de entrega")
+    pool._network_backend = _DeadlineBackend(backend)  # type: ignore[union-attr]
+    return httpx.Client(transport=transport, timeout=timeout, follow_redirects=False, trust_env=False)
+
+
 # --- entrega --------------------------------------------------------------------------------------
 
 
-def _consecutive_failures(db: Database, org_id: str, webhook_id: str, limit: int) -> int:
-    """Entregas finalizadas en `failed` seguidas, de la más nueva hacia atrás (sin contar la actual)."""
+def _consecutive_failures(db: Database, org_id: str, webhook_id: str, limit: int, current: str) -> int:
+    """Entregas seguidas cuyo último intento falló, de la más nueva hacia atrás (sin la actual).
+
+    Cuenta las `failed` y las que esperan un reintento tras un fallo (`queued` con intentos y
+    error). Una `done` (éxito o descartada) corta la racha; las que nunca se intentaron no cuentan.
+    """
     rows = db.query(
-        "SELECT state FROM jobs WHERE org_id = ? AND kind = ? AND state IN ('done', 'failed') "
-        "AND json_extract(payload_json, '$.webhook_id') = ? ORDER BY updated_at DESC, rowid DESC LIMIT ?",
-        (org_id, JOB_KIND, webhook_id, limit),
+        "SELECT state FROM jobs WHERE org_id = ? AND kind = ? AND id != ? "
+        "AND json_extract(payload_json, '$.webhook_id') = ? "
+        "AND (state IN ('done', 'failed') OR (state = 'queued' AND attempts > 0 AND error IS NOT NULL "
+        "AND error NOT LIKE 'LeaseExpired:%')) "
+        "ORDER BY updated_at DESC, rowid DESC LIMIT ?",
+        (org_id, JOB_KIND, current, webhook_id, limit),
     )
     count = 0
     for r in rows:
-        if r["state"] != "failed":
+        if r["state"] == "done":
             break
         count += 1
     return count
@@ -291,13 +406,16 @@ def make_delivery_handler(
     """Handler del job `webhook`: valida destino, firma y hace el POST sin seguir redirects."""
     if max_consecutive_failures < 1:
         raise ValueError("max_consecutive_failures debe ser al menos 1")
-    client = http_client or httpx.Client(timeout=timeout, follow_redirects=False, trust_env=False)
+    if timeout <= 0:
+        raise ValueError("timeout debe ser positivo")
+    client = http_client or _delivery_client(timeout)
 
-    def disable_if_needed(org_id: str, webhook_id: str, error: str) -> None:
-        previous = _consecutive_failures(db, org_id, webhook_id, max_consecutive_failures)
+    def disable_if_needed(org_id: str, webhook_id: str, job_id: str, error: str) -> bool:
+        """Deshabilita el webhook si este intento completa la racha. True si quedó deshabilitado."""
+        previous = _consecutive_failures(db, org_id, webhook_id, max_consecutive_failures, job_id)
         failures = previous + 1  # la entrega actual sigue en `running`
         if failures < max_consecutive_failures:
-            return
+            return False
         repo = TenantScopedRepository(db, org_id)
         with db.transaction():
             if repo.set_webhook_disabled(webhook_id, True):
@@ -309,6 +427,7 @@ def make_delivery_handler(
                     webhook_id,
                     {"consecutive_failures": failures, "last_error": error},
                 )
+        return True
 
     def handler(job: dict[str, Any]) -> dict[str, Any]:
         org_id = job["org_id"]
@@ -321,12 +440,10 @@ def make_delivery_handler(
             return {"skipped": "webhook_deleted"}
         if hook["disabled"]:
             return {"skipped": "webhook_disabled"}
-        final = job["attempts"] >= job["max_attempts"]
         try:
             try:
                 validate_url(hook["url"], allowed_hosts=allowed_hosts, resolve=resolve)
             except UnsafeURLError as exc:
-                final = True
                 raise PermanentJobError(f"destino bloqueado: {exc}") from None
             body = payload["body"].encode()
             timestamp = int(jobs.now().timestamp())
@@ -338,19 +455,23 @@ def make_delivery_handler(
                 "webhook-signature": sign(hook["secret"], payload["msg_id"], timestamp, body),
             }
             try:
-                with client.stream(
+                with _delivery_deadline(timeout), client.stream(
                     "POST", hook["url"], content=body, headers=headers,
                     follow_redirects=False, timeout=timeout,
                 ) as response:
                     status = response.status_code
+            except httpx.TimeoutException:
+                raise DeliveryError(f"el destino superó el plazo de {timeout:g} s") from None
             except httpx.HTTPError as exc:
                 # Sin el mensaje: puede incluir la URL con tokens del cliente.
                 raise DeliveryError(f"falló la conexión ({type(exc).__name__})") from None
             if not 200 <= status < 300:
                 raise DeliveryError(f"el destino respondió HTTP {status}")
         except (DeliveryError, PermanentJobError) as exc:
-            if final:
-                disable_if_needed(org_id, webhook_id, str(exc)[:200])
+            if disable_if_needed(org_id, webhook_id, job["id"], str(exc)[:200]) and not isinstance(
+                exc, PermanentJobError
+            ):
+                raise PermanentJobError(f"webhook deshabilitado tras fallos seguidos: {exc}") from None
             raise
         return {"status": status, "attempt": job["attempts"], "webhook_id": webhook_id}
 
@@ -366,7 +487,11 @@ def register_delivery(
     timeout: float = DELIVERY_TIMEOUT_S,
     max_consecutive_failures: int = DEFAULT_MAX_CONSECUTIVE_FAILURES,
 ) -> None:
-    """Registra el handler `webhook` en la cola con el calendario de reintentos de la spec."""
+    """Registra el handler `webhook` en su carril propio con el calendario de reintentos de la spec.
+
+    El carril corre `LANE_WORKERS` hilos con a lo sumo `MAX_RUNNING_PER_ORG` entrega en curso por
+    tenant: el destino lento de un tenant nunca deja sin hilo a los demás.
+    """
     handler = make_delivery_handler(
         jobs.db,
         jobs,
@@ -376,4 +501,5 @@ def register_delivery(
         timeout=timeout,
         max_consecutive_failures=max_consecutive_failures,
     )
-    jobs.register(JOB_KIND, handler, retry_schedule=RETRY_SCHEDULE_S)
+    jobs.configure_lane(JOB_KIND, workers=LANE_WORKERS, max_running_per_org=MAX_RUNNING_PER_ORG)
+    jobs.register(JOB_KIND, handler, retry_schedule=RETRY_SCHEDULE_S, lane=JOB_KIND)

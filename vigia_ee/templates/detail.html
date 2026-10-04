@@ -26,7 +26,8 @@
     <form method="get" action="/generations/{{ trace.id }}" class="vg-card" aria-labelledby="th-label" data-threshold-form>
       <p id="th-label"><strong>Umbral de vista</strong></p>
       <div class="vg-threshold">
-        <input type="range" min="0" max="1" step="0.01" value="{{ '%.2f'|format(threshold) }}" aria-label="Umbral de vista (deslizador)" data-threshold-range hidden>
+        <input type="range" min="0" max="1" step="0.01" value="{{ '%.2f'|format(threshold) }}" aria-label="Umbral de vista (deslizador)" aria-describedby="th-range-hint th-hint" data-threshold-range hidden>
+        <span id="th-range-hint" hidden>Las flechas mueven el umbral; Enter lo aplica.</span>
         <label class="sr-only" for="umbral">Umbral de vista (número entre 0 y 1)</label>
         <input id="umbral" name="umbral" type="number" min="0" max="1" step="0.01" inputmode="decimal" value="{{ '%.2f'|format(threshold) }}" aria-describedby="th-hint"{% if threshold_error %} aria-invalid="true"{% endif %}>
         <button type="submit" class="vg-btn vg-btn-secondary vg-btn-small">Aplicar</button>
@@ -84,7 +85,7 @@
           <thead><tr><th scope="col">Token</th><th scope="col">P(error)</th><th scope="col">Entropía salida</th><th scope="col">Entropía router</th></tr></thead>
           <tbody>
             {% for t in f.tokens %}
-            <tr{% if t.flag %} class="vg-token-flagged"{% endif %}><th scope="row"><code>{{ t.text|clean if t.text else "·" }}</code></th><td>{{ t.p_error|num(3) }}</td><td>{{ t.out_entropy|num(3) }}</td><td>{{ t.r_ent_mean|num(3) }}</td></tr>
+            <tr{% if t.flag %} class="vg-token-flagged"{% endif %}><th scope="row"><code>{{ t.text|token_label }}</code></th><td>{{ t.p_error|num(3) }}</td><td>{{ t.out_entropy|num(3) }}</td><td>{{ t.r_ent_mean|num(3) }}</td></tr>
             {% endfor %}
           </tbody>
         </table>

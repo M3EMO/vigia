@@ -19,7 +19,8 @@ import httpx
 
 from vigia.contracts import ACTION_PRIORITY, Action, Policy, Span, VigiaError
 
-RAG_FALLBACK_ACTION: Action = "human_review"
+RAG_FALLBACK_ACTION: Action = "human_review"  # default de Policy.rag_fallback_action
+RAG_FALLBACK_ACTIONS: tuple[Action, ...] = ("human_review", "abstain")
 MAX_ABSTAIN_MESSAGE = 2000
 MAX_RAG_RETRIES = 5
 MAX_GAP = 1000
@@ -64,6 +65,12 @@ def decide(policy: Policy, response_p_error: float | None, spans: Sequence[Span]
     return min(matched, key=ACTION_PRIORITY.index)
 
 
+def rag_fallback(policy: Policy) -> Action:
+    """Acción cuando rag_retry no puede re-consultar o la re-consulta falla (`rag_fallback_action`)."""
+    action = policy.rag_fallback_action
+    return action if action in RAG_FALLBACK_ACTIONS else RAG_FALLBACK_ACTION
+
+
 # --- Validación ---------------------------------------------------------------------------------
 
 
@@ -101,6 +108,8 @@ def validate_policy(
     if not isinstance(msg, str) or not msg.strip() or len(msg) > MAX_ABSTAIN_MESSAGE:
         raise PolicyError(f"abstain_message: texto no vacío de {MAX_ABSTAIN_MESSAGE} caracteres o menos")
     _check_int("rag_max_retries", policy.rag_max_retries, 0, MAX_RAG_RETRIES)
+    if policy.rag_fallback_action not in RAG_FALLBACK_ACTIONS:
+        raise PolicyError("rag_fallback_action debe ser human_review o abstain")
     if policy.on_detector_error not in ("fail_closed", "fail_open"):
         raise PolicyError("on_detector_error debe ser fail_closed o fail_open")
     if policy.stream_policy not in ("annotate_only", "buffer"):

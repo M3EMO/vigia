@@ -8,13 +8,14 @@
 </div>
 
 {% if figure %}
-<dl class="vg-kpis">
+<dl class="vg-kpis" aria-describedby="ovh-def">
   {% for k in ("p50", "p95", "p99") %}
-  <div class="vg-kpi{% if overhead[k] > OVERHEAD_TARGET %} is-alert{% endif %}"><dt>Overhead {{ k }}</dt><dd>{{ overhead[k]|pct }}<span class="vg-kpi-note">meta {{ OVERHEAD_TARGET|pct(0) }}{% if overhead[k] > OVERHEAD_TARGET %} · no cumple{% else %} · cumple{% endif %}</span></dd></div>
+  <div class="vg-kpi{% if overhead[k] > OVERHEAD_TARGET %} is-alert{% endif %}"><dt>Overhead de Vigía {{ k }}</dt><dd>{{ overhead[k]|pct }}<span class="vg-kpi-note">meta {{ OVERHEAD_TARGET|pct(0) }}{% if overhead[k] > OVERHEAD_TARGET %} · no cumple{% else %} · cumple{% endif %}</span></dd></div>
   {% endfor %}
   <div class="vg-kpi"><dt>Tokens por segundo (p50)</dt><dd>{{ tps_p50|num(1) }}</dd></div>
   <div class="vg-kpi"><dt>Requests medidos</dt><dd>{{ n|count }}</dd></div>
 </dl>
+<p class="vg-hint" id="ovh-def">Overhead de un request: tiempo de Vigía dividido la latencia sin Vigía. Cada pXX es el percentil de ese valor sobre los requests medidos, igual que en el resumen.</p>
 <section class="vg-card" aria-labelledby="lat-title">
   <h2 id="lat-title">Latencia sin Vigía y con Vigía</h2>
   <p class="vg-hint">«Sin Vigía» descuenta el tiempo de extracción de señales y puntaje de cada request. La línea punteada es la meta de +{{ OVERHEAD_TARGET|pct(0) }}.</p>

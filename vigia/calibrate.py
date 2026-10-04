@@ -108,24 +108,86 @@ def dataset_sha256(data: Dataset) -> str:
 
 
 def split_groups(
-    groups: Sequence[Any] | np.ndarray, *, cal_frac: float = 0.2, test_frac: float = 0.2, seed: int = 0
+    groups: Sequence[Any] | np.ndarray,
+    *,
+    cal_frac: float = 0.2,
+    test_frac: float = 0.2,
+    seed: int = 0,
+    labels: Sequence[int] | np.ndarray | None = None,
 ) -> dict[str, list[str]]:
-    """Asigna cada id de pregunta a un solo split. Devuelve {split: [ids]} (ids como str)."""
+    """Asigna cada id de pregunta a un solo split. Devuelve {split: [ids]} (ids como str).
+
+    Con `labels` (una etiqueta por token, alineada con `groups`) el split se estratifica por la
+    clase mayoritaria de cada pregunta: cada estrato se permuta aparte y aporta a test y cal en
+    proporción a su tamaño, con al menos una pregunta por split si el estrato tiene tres o más.
+    Así train, cal y test reciben las dos clases mientras el dataset las tenga.
+    """
     if not (0 < cal_frac < 1 and 0 <= test_frac < 1 and cal_frac + test_frac < 1):
         raise ValueError("cal_frac en (0, 1), test_frac en [0, 1) y su suma < 1")
-    unique = np.unique(np.asarray(groups).astype(str))
-    rng = np.random.default_rng(seed)
-    order = unique[rng.permutation(len(unique))]
-    n = len(order)
+    g = np.asarray(groups).astype(str)
+    unique = np.unique(g)
+    n = len(unique)
     n_test = max(1, round(n * test_frac)) if test_frac > 0 else 0
     n_cal = max(1, round(n * cal_frac))
     if n - n_test - n_cal < 1:
         raise CalibrationError(f"{n} preguntas no alcanzan para tres splits")
-    return {
-        "test": sorted(order[:n_test].tolist()),
-        "cal": sorted(order[n_test : n_test + n_cal].tolist()),
-        "train": sorted(order[n_test + n_cal :].tolist()),
-    }
+    rng = np.random.default_rng(seed)
+    if labels is None:
+        order = unique[rng.permutation(n)]
+        return {
+            "test": sorted(order[:n_test].tolist()),
+            "cal": sorted(order[n_test : n_test + n_cal].tolist()),
+            "train": sorted(order[n_test + n_cal :].tolist()),
+        }
+    strata = [s[rng.permutation(len(s))] for s in _majority_strata(g, labels, unique)]
+    sizes = np.array([len(s) for s in strata])
+    test_q = _allocate(n_test, sizes, sizes)
+    cal_q = _allocate(n_cal, sizes, sizes - test_q)
+    out: dict[str, list[str]] = {"test": [], "cal": [], "train": []}
+    for s, t, c in zip(strata, test_q, cal_q, strict=True):
+        out["test"] += s[:t].tolist()
+        out["cal"] += s[t : t + c].tolist()
+        out["train"] += s[t + c :].tolist()
+    return {k: sorted(v) for k, v in out.items()}
+
+
+def _majority_strata(
+    g: np.ndarray, labels: Sequence[int] | np.ndarray, unique: np.ndarray
+) -> list[np.ndarray]:
+    """Ids de pregunta por clase mayoritaria de sus tokens (0 o 1; IGNORE_LABEL no cuenta)."""
+    y = np.asarray(labels)
+    if y.shape != g.shape:
+        raise ValueError("labels debe tener una etiqueta por token, alineada con groups")
+    valid = np.isin(y, (0, 1))
+    _, inverse = np.unique(g, return_inverse=True)
+    pos = np.bincount(inverse[valid], weights=(y[valid] == 1), minlength=len(unique))
+    tot = np.bincount(inverse[valid], minlength=len(unique))
+    majority = pos * 2 > tot  # empate o sin etiquetas: clase 0
+    return [unique[~majority], unique[majority]]
+
+
+def _allocate(total: int, sizes: np.ndarray, room: np.ndarray) -> np.ndarray:
+    """Reparte `total` preguntas entre estratos en proporción a `sizes` (mayor resto), sin superar
+    `room`. Un estrato con tres o más preguntas recibe al menos una si el total lo permite."""
+    quota = np.zeros(len(sizes), dtype=np.int64)
+    if total == 0 or sizes.sum() == 0:
+        return quota
+    share = total * sizes / sizes.sum()
+    quota = np.minimum(np.floor(share).astype(np.int64), room)
+    for i in np.argsort(-(share - np.floor(share)), kind="stable"):
+        if quota.sum() >= total:
+            break
+        if quota[i] < room[i]:
+            quota[i] += 1
+    for i in range(len(sizes)):
+        if quota[i] == 0 and sizes[i] >= 3 and room[i] > 0:
+            donor = int(np.argmax(quota))
+            if quota[donor] > 1:
+                quota[donor] -= 1
+                quota[i] += 1
+    while quota.sum() < total and (room - quota).max() > 0:  # algún estrato sin lugar: completar
+        quota[int(np.argmax(room - quota))] += 1
+    return quota
 
 
 def split_masks(groups: np.ndarray, split: Mapping[str, Sequence[str]]) -> dict[str, np.ndarray]:
@@ -339,13 +401,18 @@ def train_detector(
         raise ValueError("default_alpha debe ser >= al menor alpha calibrado")
     data = build_dataset(features, labels, groups, response_ids)
     if split is None:
-        split = split_groups(data.groups, cal_frac=cal_frac, test_frac=test_frac, seed=seed)
+        split = split_groups(data.groups, cal_frac=cal_frac, test_frac=test_frac, seed=seed, labels=data.y)
     masks = split_masks(data.groups, split)
     train, cal = data.subset(masks["train"]), data.subset(masks["cal"])
+    if len(np.unique(data.y)) < 2:
+        raise CalibrationError("las etiquetas tienen una sola clase: hacen falta tokens correctos y erróneos")
     for name, part in (("train", train), ("cal", cal)):
         if len(np.unique(part.y)) < 2:
+            n_groups = len(np.unique(part.groups))
             raise CalibrationError(
-                f"el split {name} tiene una sola clase: hacen falta tokens correctos y erróneos"
+                f"el split {name} quedó con una sola clase ({n_groups} preguntas), aunque el dataset "
+                "tiene tokens correctos y erróneos: probá otra semilla o sumá preguntas de la clase "
+                "minoritaria"
             )
 
     # Features utilizables: con valores finitos y varianza en train.

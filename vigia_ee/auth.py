@@ -21,6 +21,7 @@ por introspección (AT-P02). Las rutas con sesión validan CSRF en métodos no s
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
 import hmac
@@ -50,7 +51,9 @@ from vigia_ee.db import (
     utcnow,
 )
 from vigia_ee.security import (
+    SAFE_METHODS,
     SESSION_COOKIE,
+    CodedHTTPException,
     RateLimiter,
     RateLimitExceeded,
     csrf_token_for,
@@ -762,7 +765,14 @@ def reject_query_credentials(request: Request) -> None:
     """400 si el request trae una credencial en la URL (terminaría en logs de proxies)."""
     for name, value in request.query_params.multi_items():
         if name.lower() in _QUERY_CREDENTIAL_NAMES or API_KEY_PREFIX in value:
-            raise HTTPException(400, "No envíes credenciales en la URL; usá el header Authorization.")
+            raise CodedHTTPException(
+                400, "No envíes credenciales en la URL; usá el header Authorization.", "credentials_in_query"
+            )
+
+
+def _invalid_key(message: str) -> CodedHTTPException:
+    """401 de API key con el `code` de OpenAI (`invalid_api_key`), igual que `vigia serve`."""
+    return CodedHTTPException(401, message, "invalid_api_key", headers={"WWW-Authenticate": "Bearer"})
 
 
 def bearer_token(request: Request) -> str | None:
@@ -771,7 +781,7 @@ def bearer_token(request: Request) -> str | None:
         return None
     scheme, _, token = header.partition(" ")
     if scheme.lower() != "bearer" or not token.strip():
-        raise HTTPException(401, "Header Authorization inválido.", headers={"WWW-Authenticate": "Bearer"})
+        raise _invalid_key("Header Authorization inválido.")
     return token.strip()
 
 
@@ -781,9 +791,28 @@ def _bind(request: Request, principal: Principal) -> Principal:
     return principal
 
 
-async def _session_principal(request: Request, permission: str) -> Principal:
-    state = _auth_state(request)
-    raw = request.cookies.get(SESSION_COOKIE)
+BODY_READ_TIMEOUT = timedelta(seconds=30)
+
+
+async def _await_body(request: Request) -> bool:
+    """Lee el body completo de un método no seguro, con tope de tiempo. True si había que leerlo.
+
+    Las credenciales se vuelven a resolver después: una sesión o key revocada, o un rol degradado
+    mientras el body llegaba lento, no completa la acción. Starlette guarda el body en el request,
+    así que `form()` y `json()` del handler lo reusan.
+    """
+    if request.method in SAFE_METHODS:
+        return False
+    try:
+        await asyncio.wait_for(request.body(), BODY_READ_TIMEOUT.total_seconds())
+    except TimeoutError:
+        raise CodedHTTPException(
+            408, "El cuerpo del request tardó demasiado en llegar.", "request_timeout"
+        ) from None
+    return True
+
+
+def _resolve_session(state: AuthState, raw: str | None) -> SessionInfo:
     try:
         info = state.sessions.resolve(raw) if raw else None
     except Exception:  # noqa: BLE001 - fail-closed: un error interno nunca autentica
@@ -791,6 +820,15 @@ async def _session_principal(request: Request, permission: str) -> Principal:
         raise HTTPException(503, "Autenticación no disponible.") from None
     if info is None:
         raise HTTPException(401, "Sesión inválida o vencida.")
+    return info
+
+
+async def _session_principal(request: Request, permission: str) -> Principal:
+    state = _auth_state(request)
+    raw = request.cookies.get(SESSION_COOKIE)
+    info = _resolve_session(state, raw)
+    if await _await_body(request):
+        info = _resolve_session(state, raw)
     request.state.authenticated = True
     request.state.session = info
     request.state.csrf_token = info.csrf_token
@@ -800,12 +838,7 @@ async def _session_principal(request: Request, permission: str) -> Principal:
     return _bind(request, Principal(org_id=info.org_id, role=info.role, user_id=info.user_id))
 
 
-async def _key_principal(request: Request, scope: str) -> Principal:
-    state = _auth_state(request)
-    reject_query_credentials(request)
-    token = bearer_token(request)
-    if token is None:
-        raise HTTPException(401, "Falta la API key.", headers={"WWW-Authenticate": "Bearer"})
+def _resolve_key(state: AuthState, token: str) -> Principal:
     try:
         principal = verify_api_key(state, token)
     except Exception:  # noqa: BLE001 - fail-closed
@@ -813,12 +846,22 @@ async def _key_principal(request: Request, scope: str) -> Principal:
         raise HTTPException(503, "Autenticación no disponible.") from None
     if principal is None:
         log_event(_log, "api_key_rejected", level=logging.WARNING)
-        raise HTTPException(
-            401, "API key inválida, vencida o revocada.", headers={"WWW-Authenticate": "Bearer"}
-        )
+        raise _invalid_key("API key inválida, vencida o revocada.")
+    return principal
+
+
+async def _key_principal(request: Request, scope: str) -> Principal:
+    state = _auth_state(request)
+    reject_query_credentials(request)
+    token = bearer_token(request)
+    if token is None:
+        raise _invalid_key("Falta la API key.")
+    principal = _resolve_key(state, token)
+    if await _await_body(request):
+        principal = _resolve_key(state, token)
     request.state.authenticated = True
     if not principal.has_scope(scope):
-        raise HTTPException(403, "La API key no tiene el scope requerido.")
+        raise CodedHTTPException(403, "La API key no tiene el scope requerido.", "insufficient_scope")
     enforce_rate_limit(state.key_limiter, f"key:{principal.key_id}", scope="key")
     enforce_rate_limit(state.tenant_limiter, f"org:{principal.org_id}", scope="tenant")
     return _bind(request, principal)

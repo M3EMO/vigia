@@ -371,8 +371,10 @@ class Detector:
         return float(sigmoid(a * logit(max(values)) + b))
 
     def tau(self, alpha: float) -> float:
-        """Umbral por token para FNR <= alpha; interpola linealmente entre los alphas guardados.
+        """Umbral por token para FNR <= alpha: el tau del mayor alpha guardado que no supera alpha.
 
+        No interpola: la FNR es la CDF de los p de los tokens erróneos, que puede ser cóncava, y un
+        tau interpolado puede superar alpha. El escalón conserva FNR <= alpha guardado <= alpha.
         Un alpha menor que el mínimo guardado no tiene garantía y se rechaza. Un alpha mayor que
         el máximo usa el tau del máximo (más conservador).
         """
@@ -380,7 +382,7 @@ class Detector:
             raise ValueError(f"alpha debe estar en (0, 1), llegó {alpha!r}")
         if alpha < self._alphas[0]:
             raise ValueError(f"alpha {alpha} es menor que el mínimo calibrado ({self._alphas[0]})")
-        return float(np.interp(alpha, self._alphas, self._taus))
+        return float(self._taus[np.searchsorted(self._alphas, alpha, side="right") - 1])
 
     def check_model(self, info: ModelInfo) -> None:
         """Lanza DetectorMismatchError si el detector fue calibrado para otro modelo."""

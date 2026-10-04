@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import base64
 import json
+import socket
+import threading
+import time
 from datetime import UTC, datetime, timedelta
 
 import httpx
@@ -11,6 +14,7 @@ import pytest
 
 from vigia.policy import UnsafeURLError
 from vigia_ee import audit, webhooks
+from vigia_ee import jobs as job_queue
 from vigia_ee.db import Database, TenantScopedRepository, create_org
 from vigia_ee.jobs import JobQueue
 from vigia_ee.webhooks import (
@@ -415,3 +419,158 @@ def test_a_success_resets_the_consecutive_failure_count(db, jobs, orgs, clock):
     receiver.statuses = [500]
     _fail_one_delivery(db, jobs, orgs[0], clock)
     assert TenantScopedRepository(db, orgs[0]).get_webhook(wid)["disabled"] == 0
+
+
+# --- un webhook caído o lento no frena al resto -----------------------------------------------------
+
+
+def test_broken_destination_is_disabled_after_n_failed_attempts_not_after_28_hours(db, jobs, orgs):
+    """Regresión: 'El webhook caído de un solo tenant satura el único worker: atrasa la purga de
+    los demás tenants y pone /readyz en rojo para toda la plataforma'. Cada intento fallido cuenta;
+    tras N seguidos el webhook se desactiva y el resto de su cola se descarta sin tocar la red."""
+    receiver = Receiver(error=httpx.ConnectError("rechazada"))
+    _setup(jobs, receiver, max_consecutive_failures=5)
+    wid, _ = _hook(db, orgs[0])
+    for i in range(40):
+        emit(db, jobs, orgs[0], "trace.flagged", {"trace_id": f"tr_{i}"})
+    jobs.run_until_idle()
+    assert len(receiver.requests) == 5, "solo N intentos llegan a la red"
+    assert TenantScopedRepository(db, orgs[0]).get_webhook(wid)["disabled"] == 1
+    assert jobs.depth() == 0, "la cola vencida drena entera"
+    event = audit.export_range(db, orgs[0])[-1]
+    assert event["action"] == "webhook_auto_disabled" and event["detail"]["consecutive_failures"] == 5
+
+
+def test_slow_webhook_does_not_delay_purge_or_calibration_of_other_tenants(db, orgs):
+    """Regresión: 'El webhook caído de un solo tenant satura el único worker: atrasa la purga de
+    los demás tenants y pone /readyz en rojo para toda la plataforma'. Los webhooks corren en su
+    propio carril: la purga y la calibración no esperan detrás de ellos."""
+    gate = threading.Event()
+
+    def slow(request: httpx.Request) -> httpx.Response:
+        gate.wait(10)  # destino colgado hasta el final del test
+        return httpx.Response(200)
+
+    jobs = JobQueue(db, poll_interval=0.01)
+    _setup(jobs, slow)
+    _hook(db, orgs[0])
+    for i in range(20):
+        emit(db, jobs, orgs[0], "trace.flagged", {"trace_id": f"tr_{i}"})
+    jobs.register("purge", lambda job: {"ok": True})
+    jobs.register("calibrate", lambda job: {"ok": True})
+    purge = jobs.enqueue("purge", {})
+    calib = jobs.enqueue("calibrate", {}, org_id=orgs[1])
+    jobs.start()
+    try:
+        deadline = time.monotonic() + 3
+        while time.monotonic() < deadline and jobs.get_system(purge)["state"] != "done":
+            time.sleep(0.01)
+        assert jobs.get_system(purge)["state"] == "done"
+        assert jobs.get(orgs[1], calib)["state"] == "done"
+        assert jobs.depth(lane=job_queue.DEFAULT_LANE) == 0, "la readiness no cuenta la cola de webhooks"
+        assert jobs.depth() == 20, "la métrica sigue viendo todos los webhooks pendientes"
+        assert jobs.is_alive(max_age=60)
+    finally:
+        gate.set()
+        assert jobs.stop(timeout=10)
+
+
+# --- aislamiento del carril entre tenants -----------------------------------------------------------
+
+
+def _trickle_server(pads: int, interval: float):
+    """Destino que responde 200 pero gotea un header cada `interval` s (cada lectura cabe en el
+    timeout por lectura de httpx). Devuelve `(url, cerrar)`."""
+    server = socket.socket()
+    server.bind(("127.0.0.1", 0))
+    server.listen(8)
+    stop = threading.Event()
+
+    def handle(conn: socket.socket) -> None:
+        with conn:
+            data = b""
+            while b"\r\n\r\n" not in data:
+                chunk = conn.recv(65536)
+                if not chunk:
+                    return
+                data += chunk
+            try:
+                conn.sendall(b"HTTP/1.1 200 OK\r\n")
+                for i in range(pads):
+                    if stop.wait(interval):
+                        return
+                    conn.sendall(f"X-Pad-{i}: a\r\n".encode())
+                conn.sendall(b"Content-Length: 0\r\n\r\n")
+            except OSError:
+                return  # el cliente cortó por el plazo total
+
+    def accept_loop() -> None:
+        while not stop.is_set():
+            try:
+                conn, _ = server.accept()
+            except OSError:
+                return
+            threading.Thread(target=handle, args=(conn,), daemon=True).start()
+
+    threading.Thread(target=accept_loop, daemon=True).start()
+
+    def close() -> None:
+        stop.set()
+        server.close()
+
+    return f"http://127.0.0.1:{server.getsockname()[1]}/hook", close
+
+
+def test_trickling_destination_is_cut_at_the_total_delivery_deadline(db, jobs, orgs):
+    """Regresión: 'Carril de webhooks FIFO compartido y sin plazo total: el destino lento de un
+    tenant frena los webhooks de los demás'. httpx acota cada lectura, no la entrega: un destino
+    que gotea headers retenía el hilo sin límite y su 200 contaba como éxito. El plazo total corta
+    la entrega en `timeout` segundos y la cuenta como fallo."""
+    url, close = _trickle_server(pads=12, interval=0.3)  # 3,6 s goteando; cada lectura < 1 s
+    try:
+        register_delivery(jobs, allowed_hosts=("127.0.0.1",), timeout=1.0)
+        create_webhook(db, orgs[0], url, ["trace.flagged"], ACTOR, allowed_hosts=("127.0.0.1",))
+        emit(db, jobs, orgs[0], "trace.flagged", {"trace_id": "tr_1"})
+        started = time.monotonic()
+        job = jobs.run_once(lane=webhooks.JOB_KIND)
+        elapsed = time.monotonic() - started
+    finally:
+        close()
+    assert elapsed < 2.5, f"la entrega duró {elapsed:.1f} s con plazo total de 1 s"
+    assert job["state"] == "queued" and job["attempts"] == 1, "superar el plazo es un fallo con reintento"
+    assert "plazo" in job["error"]
+
+
+def test_slow_tenant_webhooks_do_not_delay_webhooks_of_other_tenants(db, orgs):
+    """Regresión: 'Carril de webhooks FIFO compartido y sin plazo total: el destino lento de un
+    tenant frena los webhooks de los demás'. El claim era FIFO global con un solo hilo: el webhook
+    de B esperaba detrás de toda la cola colgada de A."""
+    gate = threading.Event()
+    delivered: list[str] = []
+
+    def receiver(request: httpx.Request) -> httpx.Response:
+        if request.url.host == "hooks-a.example.com":
+            gate.wait(10)  # destino de A colgado hasta el final del test
+        else:
+            delivered.append(request.url.host)
+        return httpx.Response(200)
+
+    jobs = JobQueue(db, poll_interval=0.01)
+    _setup(jobs, receiver)
+    _hook(db, orgs[0], url="https://hooks-a.example.com/vigia")
+    _hook(db, orgs[1], url="https://hooks-b.example.com/vigia")
+    for i in range(10):
+        emit(db, jobs, orgs[0], "trace.flagged", {"trace_id": f"a_{i}"})
+    (b_job,) = emit(db, jobs, orgs[1], "trace.flagged", {"trace_id": "b_0"})
+    jobs.start()
+    try:
+        deadline = time.monotonic() + 3
+        while time.monotonic() < deadline and jobs.get(orgs[1], b_job)["state"] != "done":
+            time.sleep(0.01)
+        assert jobs.get(orgs[1], b_job)["state"] == "done", "el webhook de B no espera detrás de A"
+        assert delivered == ["hooks-b.example.com"]
+        states = [j["state"] for j in jobs.list(orgs[0])]
+        assert states.count("running") == 1, "A ocupa a lo sumo un hilo del carril"
+    finally:
+        gate.set()
+        assert jobs.stop(timeout=10)

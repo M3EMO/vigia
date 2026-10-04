@@ -8,7 +8,10 @@ CLI (`python -m vigia_ee.app <comando>`):
 - `init --org NOMBRE --email EMAIL`: crea la organización y su owner. La contraseña se pide por
   `getpass` o se lee de `VIGIA_OWNER_PASSWORD_FILE`; nunca va como argumento.
 - `create-key --org-id ID --name NOMBRE [--scopes ingest,read]`: imprime el token una sola vez.
-- `serve [--host 127.0.0.1] [--port 8000] [--proxy-headers]`: uvicorn sin header `Server`.
+- `serve [--host 127.0.0.1] [--port 8000] [--proxy-headers]`: uvicorn sin header `Server`. Ctrl+C o
+  SIGTERM marcan el runtime como cerrando (las generaciones nuevas responden 503) y el cierre espera
+  a lo sumo `VIGIA_SHUTDOWN_TIMEOUT` segundos (30 por defecto) antes de cancelar lo pendiente. Los
+  logs de uvicorn y asyncio salen en el mismo JSON que los de Vigía, sin stack traces.
 
 Rutas:
 
@@ -55,9 +58,9 @@ from vigia_ee.auth import (
     register_user,
     require_api_key,
 )
-from vigia_ee.db import STORE_TEXT_MODES, Database, create_org, utcnow
+from vigia_ee.db import STORE_TEXT_MODES, create_org, utcnow
 from vigia_ee.metrics import CONTENT_TYPE, Metrics, MetricsMiddleware
-from vigia_ee.runtime import Runtime, Settings, SettingsError
+from vigia_ee.runtime import Runtime, Settings, SettingsError, open_database
 from vigia_ee.security import BodySizeLimitMiddleware, configure_json_logging, install_security
 
 _log = logging.getLogger("vigia.app")
@@ -67,6 +70,7 @@ UPLOAD_PATHS = ("/calibration/datasets",)
 MULTIPART_MARGIN = 65_536  # boundaries, headers y el campo csrf_token alrededor del archivo
 PURGE_EVERY_HOURS = 24
 EXIT_OK, EXIT_ERROR, EXIT_USAGE = 0, 1, 2
+FOREIGN_LOGGERS = ("uvicorn", "asyncio")  # loggers de terceros que pasan al formato JSON
 
 
 # --- Middlewares propios ---------------------------------------------------------------------------
@@ -115,7 +119,6 @@ class StatusMetricsMiddleware:
         await self.app(scope, receive, send_wrapper)
 
 
-
 def _runtime(request: Request) -> Runtime:
     runtime = getattr(request.app.state, "runtime", None)
     if runtime is None:
@@ -131,7 +134,10 @@ def _context_dependency(scope: str) -> Any:
     key_principal = Depends(require_api_key(scope))
 
     async def get_context(request: Request, principal: Principal = key_principal) -> RequestContext:
-        return await run_in_threadpool(_runtime(request).context_for, principal)
+        runtime = _runtime(request)
+        if runtime.shutting_down:
+            raise HTTPException(503, "La plataforma se está cerrando.", headers={"Retry-After": "5"})
+        return await run_in_threadpool(runtime.context_for, principal)
 
     return get_context
 
@@ -286,9 +292,7 @@ def _read_owner_password(environ: Any) -> str:
 
 def _admin_state(settings: Settings) -> AuthState:
     """Base y auth sin cargar el modelo (para `init` y `create-key`)."""
-    if str(settings.db_path) != ":memory:":
-        settings.db_path.parent.mkdir(parents=True, exist_ok=True)
-    db = Database(settings.db_path)
+    db = open_database(settings)
     try:
         return AuthState(db=db, peppers=settings.peppers or PepperRing.from_env())
     except BaseException:
@@ -331,13 +335,42 @@ def cmd_create_key(args: argparse.Namespace, settings: Settings, environ: Any) -
     return EXIT_OK
 
 
-def cmd_serve(args: argparse.Namespace, settings: Settings, environ: Any) -> int:
+def _configure_logging() -> None:
+    """Logs en JSON: el logger `vigia` y también `uvicorn` y `asyncio`.
+
+    Con `log_config=None`, uvicorn no instala handlers y sus avisos (por ejemplo "Invalid HTTP
+    request received.") y los de asyncio caían en texto plano con stack traces. Comparten el handler
+    de `vigia`, cuyo formateador descarta `exc_info`.
+    """
+    configure_json_logging()
+    handler = next((h for h in logging.getLogger("vigia").handlers if getattr(h, "_vigia_json", False)), None)
+    if handler is None:
+        return
+    for name in FOREIGN_LOGGERS:
+        logger = logging.getLogger(name)
+        if handler not in logger.handlers:
+            logger.addHandler(handler)
+        logger.propagate = False
+
+
+def _server(app: FastAPI, runtime: Runtime, **kwargs: Any) -> Any:
+    """`uvicorn.Server` que marca el runtime como cerrando apenas llega la señal de salida."""
     import uvicorn
 
-    configure_json_logging()
+    class ClosingServer(uvicorn.Server):
+        def handle_exit(self, sig: int, frame: Any) -> None:
+            runtime.begin_shutdown()
+            super().handle_exit(sig, frame)
+
+    return ClosingServer(uvicorn.Config(app, **kwargs))
+
+
+def cmd_serve(args: argparse.Namespace, settings: Settings, environ: Any) -> int:
+    _configure_logging()
     app = create_app(settings)
-    uvicorn.run(
+    server = _server(
         app,
+        app.state.runtime,
         host=args.host,
         port=args.port,
         server_header=False,
@@ -345,7 +378,9 @@ def cmd_serve(args: argparse.Namespace, settings: Settings, environ: Any) -> int
         forwarded_allow_ips=args.forwarded_allow_ips,
         workers=1,  # el modelo y los rate limiters viven en este proceso
         log_config=None,
+        timeout_graceful_shutdown=settings.shutdown_timeout_s,
     )
+    server.run()
     return EXIT_OK
 
 

@@ -247,7 +247,8 @@ def test_load_mkqa_es_filters_and_samples(tmp_path):
         ("El 29 de agosto de 2019", ["2019-08-29", "08/29/2019"], "date", True),
         ("El 11 de agosto de 2017", ["2017-08-11", "08/11/2017"], "date", True),
         ("El 8 de noviembre de 2017", ["2017-08-11", "08/11/2017"], "date", False),  # alias US no se usa
-        ("Apolo 12", ["Apolo 11"], "entity", True),  # F1 0,5: regla documentada
+        ("Apolo 12", ["Apolo 11"], "entity", False),  # F1 0,5, pero el número difiere
+        ("La misión Apolo 11", ["Apolo 11"], "entity", True),  # F1 con el mismo número
         ("Ringo Starr", ["Chris Young"], "entity", False),
         ("   ", ["Chris Young"], "entity", False),
     ],
@@ -287,6 +288,9 @@ def test_at_m09_evidence_report_end_to_end(backend, items, tmp_path):
         max_tokens=8,
         n_boot=200,
         bench_prompts=[it["messages"] for it in items[:2]],
+        # En el diminuto, out_entropy sola no discrimina en todos los cal de 6 preguntas (Platt <= 0
+        # en la mitad de las semillas del split estratificado); esta semilla entrena los 3 baselines.
+        seed=3,
     )
     for name in (
         "rows.jsonl",
@@ -477,3 +481,111 @@ def test_at_m11_at_m12_granite_evidence(tmp_path):
     assert set(report["baselines"]) == {"out_entropy", "out_nll", "h_probe"}
     assert "latency" in report and {"p50", "p95"} <= set(report["latency"]["vigia"])
     assert (out / "report.html").is_file()
+
+
+def test_arithmetic_items_have_exact_gold_and_are_reproducible():
+    from vigia.datasets import arithmetic_items
+    from vigia.labels import numeric_match
+
+    items = arithmetic_items(30, seed=7)
+    assert items == arithmetic_items(30, seed=7) and len({i["id"] for i in items}) == 30
+    for it in items:
+        q = it["question"].replace("¿", "").replace("?", "").split()
+        a, op, b = int(q[2]), q[3], int(q[4])
+        expected = {"+": a + b, "más": a + b, "-": a - b, "menos": a - b, "×": a * b, "por": a * b}[op]
+        assert it["answers"] == [str(expected)] and numeric_match(str(expected), it["answers"][0])
+
+
+@pytest.mark.parametrize(
+    ("prediction", "answers", "kind", "expected"),
+    [
+        ("15", ["1,5"], "number", False),  # la normalización borraba la coma: EM falso positivo
+        ("5 metros", ["1.234 metros"], "number_with_unit", False),  # F1 0,5 por la unidad
+        ("12 o 15", ["12"], "arit+", False),  # el último número manda
+        ("8 de mayo de 1944", ["8 de mayo de 1945"], "date", False),  # F1 0,8 con otro año
+        ("15", ["1,5"], None, False),  # gold numérico sin tipo: también decide el número
+        ("Es 1,5", ["1,5"], "number", True),
+        ("Mide 1.234 metros", ["1.234 metros"], "number_with_unit", True),
+        ("12 + 3 = 15", ["15"], "arit+", True),
+        ("Terminó el 8 de mayo de 1945.", ["8 de mayo de 1945"], "date", True),
+        ("Fue en 1945", ["1945"], "date", True),
+        ("Apolo 12", ["Apolo 11"], "entity", False),  # texto con número: el número debe coincidir
+        ("No lo sé", ["dos mil"], "number", False),  # gold no numérico: decide EM/F1
+        ("dos mil", ["dos mil"], "number", True),
+        # Gold sin tipo que es una fecha o un número con unidad: decide la fecha o el número.
+        ("8 de mayo de 1946", ["8 de mayo de 1945"], None, False),  # F1 0,8 con otro año
+        ("4,2 millones", ["3,2 millones"], None, False),  # F1 0,5 por la unidad
+        ("Terminó el 8 de mayo de 1945.", ["8 de mayo de 1945", "1945-05-08"], None, True),
+        ("Unos 3,2 millones", ["3,2 millones"], None, True),
+        ("El 11 de agosto de 2017", ["08/11/2017"], None, False),  # gold ambiguo: sigue EM/F1
+        ("08/11/2017", ["08/11/2017"], None, True),
+        ("Apolo 12", ["Apolo 11"], None, False),  # gold de texto con número: debe coincidir
+        ("Fue Johannes de Mol", ["Johannes Hubert de Mol"], None, True),  # gold sin números: F1 vale
+    ],
+)
+def test_gold_correct_typed_items_ignore_em_and_f1(prediction, answers, kind, expected):
+    """Regresión: "gold_correct marca como correctas respuestas numéricas y de fecha con valor
+    incorrecto: EM y F1 >= 0,5 pisan la comparación tipada" y "gold_correct sin tipo sigue
+    aceptando por F1 un año o un número distinto cuando el gold es una fecha o un número con
+    unidad (arreglo previo incompleto)"."""
+    assert gold_correct(prediction, answers, kind)[0] is expected
+
+
+@pytest.mark.parametrize(
+    ("prediction", "answers", "kind", "expected"),
+    [
+        ("mayo de 1946", ["mayo de 1945"], "date", False),
+        ("junio de 1945", ["mayo de 1945"], "date", False),
+        ("el año 1946", ["el año 1945"], None, False),
+        ("Apolo 13", ["Apolo 11"], "entity", False),
+        ("unos 300 km", ["unos 200 km"], None, False),
+        ("15 km", ["unos 1,5 km"], None, False),  # la normalización borraba la coma
+        ("Apolo 13", ["Apolo 11", "el Apolo once"], "entity", False),  # otro alias sin número
+        # Lo correcto sigue valiendo.
+        ("Fue en mayo de 1945", ["mayo de 1945"], "date", True),
+        ("El 8 de mayo de 1945", ["mayo de 1945"], "date", True),
+        ("mayo de 1945", ["mayo de 1945"], None, True),  # gold sin tipo de mes y año: es fecha
+        ("junio de 1945", ["mayo de 1945"], None, False),
+        ("el año 1945", ["el año 1945"], None, True),
+        ("Fueron unos 200 km", ["unos 200 km"], None, True),
+        ("El Apolo once", ["Apolo 11", "el Apolo once"], "entity", True),
+    ],
+)
+def test_gold_correct_rejects_other_year_month_or_number(prediction, answers, kind, expected):
+    """Regresión: "gold_correct acepta por F1 >= 0,5 respuestas con otro año, mes o número cuando el
+    gold no es un número puro ni una fecha completa (el arreglo previo quedó incompleto)"."""
+    assert gold_correct(prediction, answers, kind)[0] is expected
+
+
+@pytest.mark.parametrize(
+    ("prediction", "answers", "expected"),
+    [
+        ("En 1945, el 8 de mayo.", ["1945"], True),
+        ("1945-05-08", ["1945"], True),
+        ("8 de mayo de 1945", ["1945"], True),
+        ("En el año 1945", ["el año 1945"], True),
+        ("En 1944, el 8 de mayo.", ["1945"], False),
+        ("1944-05-08", ["1945"], False),
+        ("Entre 1944 y 1946", ["1945"], False),
+    ],
+)
+def test_gold_year_only_date_compares_the_year(prediction, answers, expected):
+    """Regresión: "Item de fecha con gold de solo el año marca como incorrecta una respuesta
+    correcta que termina en el día ('En 1945, el 8 de mayo') o que está en formato ISO"."""
+    assert gold_correct(prediction, answers, "date")[0] is expected
+
+
+def test_resume_rejects_item_whose_content_changed(backend, items, tmp_path):
+    """Regresión: "Al reanudar, extract reutiliza filas viejas aunque el contenido del item cambió
+    (mismo id), y el reporte publica el hash del dataset nuevo"."""
+    first = items[-3:]
+    extract(backend, first, tmp_path, max_tokens=8)
+    gold = first[-1]
+    assert gold["mode"] == "gold"
+    for change in ({"answers": ["otra respuesta"]}, {"group": "otro-grupo"}, {"type": "entity"}):
+        edited = [*first[:-1], validate_item(item_to_json(gold) | change)]
+        with pytest.raises(EvidenceError, match=rf"cambiaron de contenido \({gold['id']}\)"):
+            extract(backend, edited, tmp_path, max_tokens=8)
+    counting = CountingBackend(backend)
+    rows = extract(counting, [*first, items[0]], tmp_path, max_tokens=8)  # agregar items sigue valiendo
+    assert counting.calls == 1 and [r["id"] for r in rows] == [*(it["id"] for it in first), items[0]["id"]]

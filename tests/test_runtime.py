@@ -1,7 +1,10 @@
 """Runtime de la plataforma: configuración, detector y política por tenant, trazas y playground."""
 
+import base64
 import json
 
+import httpx
+import numpy as np
 import pytest
 from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
@@ -15,8 +18,8 @@ from vigia_platform_support import (
     shared_backend,
 )
 
-from vigia.api import create_api_router
-from vigia.contracts import Span, VigiaResult
+from vigia.api import TraceRecord, create_api_router
+from vigia.contracts import Generation, Span, VigiaResult
 from vigia.policy import HttpRetriever, PolicyError
 from vigia_ee import db as dbmod
 from vigia_ee.auth import PepperConfigError, Principal
@@ -110,7 +113,7 @@ def test_settings_from_env_reads_every_variable(tmp_path):
         ({"VIGIA_MODEL": "x", "VIGIA_BACKEND": "tgi"}, "VIGIA_BACKEND"),
         ({"VIGIA_MODEL": "x", "VIGIA_BACKEND": "vllm"}, "VIGIA_VLLM_URL"),
         ({"VIGIA_MODEL": "x", "VIGIA_MAX_TOKENS_LIMIT": "mucho"}, "entero"),
-        ({"VIGIA_MODEL": "x", "VIGIA_DEFAULT_MAX_TOKENS": "2048"}, "default_max_tokens"),
+        ({"VIGIA_MODEL": "x", "VIGIA_DEFAULT_MAX_TOKENS": "2048"}, "VIGIA_DEFAULT_MAX_TOKENS"),
         ({"VIGIA_MODEL": "x", "VIGIA_SECURE_COOKIES": "quizas"}, "true o false"),
         ({"VIGIA_MODEL": "x", "VIGIA_METRICS_TOKEN": "corto"}, "16 caracteres"),
         ({"VIGIA_MODEL": "x", "VIGIA_METRICS_TOKEN_FILE": "/no/existe"}, "_FILE"),
@@ -120,6 +123,111 @@ def test_settings_reject_invalid_configuration(env, fragment):
     with pytest.raises(SettingsError) as exc:
         Settings.from_env(env)
     assert fragment in str(exc.value)
+
+
+VLLM_ENV = {
+    "VIGIA_MODEL": "x",
+    "VIGIA_BACKEND": "vllm",
+    "VIGIA_VLLM_URL": "http://127.0.0.1:8118/v1",
+    "VIGIA_VLLM_MODEL": "m",
+    "VIGIA_VLLM_N_EXPERTS": "8",
+    "VIGIA_VLLM_TOP_K": "2",
+    "VIGIA_VLLM_N_LAYERS": "2",
+}
+
+
+@pytest.mark.parametrize(
+    ("env", "expected"),
+    [
+        ({"VIGIA_SHUTDOWN_TIMEOUT": "0"}, "VIGIA_SHUTDOWN_TIMEOUT debe ser un entero entre 1 y 3600."),
+        ({"VIGIA_KEY_RATE_PER_MINUTE": "-1"}, "VIGIA_KEY_RATE_PER_MINUTE debe ser un entero entre"),
+        ({"VIGIA_TENANT_RATE_PER_MINUTE": "0"}, "VIGIA_TENANT_RATE_PER_MINUTE debe ser un entero entre"),
+        ({"VIGIA_MAX_QUEUE_DEPTH": "0"}, "VIGIA_MAX_QUEUE_DEPTH debe ser un entero entre"),
+        ({"VIGIA_REVIEW_MIN_REVIEWERS": "0"}, "VIGIA_REVIEW_MIN_REVIEWERS debe ser un entero entre"),
+        ({"VIGIA_MAX_TOKENS_LIMIT": "0"}, "VIGIA_MAX_TOKENS_LIMIT debe ser un entero entre"),
+        ({"VIGIA_MAX_BODY_BYTES": "1"}, "VIGIA_MAX_BODY_BYTES debe ser un entero entre"),
+        ({"VIGIA_MAX_UPLOAD_BYTES": "1"}, "VIGIA_MAX_UPLOAD_BYTES debe ser un entero entre"),
+        (
+            {"VIGIA_DEFAULT_MAX_TOKENS": "2000", "VIGIA_MAX_TOKENS_LIMIT": "1000"},
+            "VIGIA_DEFAULT_MAX_TOKENS no puede superar VIGIA_MAX_TOKENS_LIMIT.",
+        ),
+        ({**VLLM_ENV, "VIGIA_VLLM_URL": "notaurl"}, "VIGIA_VLLM_URL debe ser una URL http(s) con host."),
+        ({**VLLM_ENV, "VIGIA_VLLM_N_EXPERTS": "1"}, "VIGIA_VLLM_N_EXPERTS debe ser un entero entre"),
+        ({**VLLM_ENV, "VIGIA_VLLM_TOP_K": "9"}, "VIGIA_VLLM_TOP_K no puede superar VIGIA_VLLM_N_EXPERTS."),
+    ],
+)
+def test_settings_range_errors_name_the_env_var(env, expected):
+    """Regresión: 'Los errores de rango de configuración nombran el campo interno y no la variable
+    de entorno (shutdown_timeout_s en lugar de VIGIA_SHUTDOWN_TIMEOUT)'."""
+    with pytest.raises(SettingsError) as exc:
+        Settings.from_env({"VIGIA_MODEL": "x", **env})
+    assert expected in str(exc.value)
+    for field_name in ("shutdown_timeout_s", "key_rate_per_minute", "default_max_tokens", "base_url"):
+        assert field_name not in str(exc.value)
+
+
+@pytest.mark.parametrize("missing", ["VIGIA_VLLM_N_EXPERTS", "VIGIA_VLLM_TOP_K", "VIGIA_VLLM_N_LAYERS"])
+def test_settings_vllm_requires_served_model_shape(missing):
+    """Regresión: 'Modo vLLM de la plataforma: sin forma de configurar n_experts, las features U se
+    normalizan con el máximo ID de cada respuesta y el p_error de un token depende de los tokens
+    futuros'. Sin la forma del modelo servido el arranque falla y nombra la variable."""
+    env = {k: v for k, v in VLLM_ENV.items() if k != missing}
+    with pytest.raises(SettingsError) as exc:
+        Settings.from_env(env)
+    assert missing in str(exc.value)
+
+
+def _routed_vllm_client() -> httpx.Client:
+    """vLLM falso: `routed_experts[i][l] = [(i+l+k) % 8 for k in 0..1]`, largo según max_tokens."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        n = json.loads(request.content)["max_tokens"]
+        routed = np.array(
+            [[[(i + layer + k) % 8 for k in range(2)] for layer in range(2)] for i in range(n)], dtype="<u1"
+        )
+        content = [
+            {
+                "token": f"t{i}",
+                "logprob": -0.5,
+                "bytes": list(f"t{i}".encode()),
+                "top_logprobs": [{"token": f"t{i}", "logprob": -0.5}, {"token": "z", "logprob": -1.5}],
+            }
+            for i in range(n)
+        ]
+        choice = {
+            "index": 0,
+            "message": {"role": "assistant", "content": "".join(c["token"] for c in content)},
+            "finish_reason": "length",
+            "logprobs": {"content": content},
+            "routed_experts": {
+                "dtype": "uint8",
+                "shape": list(routed.shape),
+                "data": base64.b64encode(routed.tobytes()).decode(),
+            },
+        }
+        return httpx.Response(200, json={"choices": [choice], "usage": {"prompt_tokens": 3}})
+
+    return httpx.Client(transport=httpx.MockTransport(handler))
+
+
+def test_vllm_backend_uses_configured_shape_and_u_features_are_causal():
+    """Regresión: 'Modo vLLM de la plataforma: sin forma de configurar n_experts, las features U se
+    normalizan con el máximo ID de cada respuesta y el p_error de un token depende de los tokens
+    futuros'. Con VIGIA_VLLM_N_EXPERTS fijo, U del token 0 no depende del largo de la respuesta."""
+    from vigia.contracts import Tier
+    from vigia_ee.runtime import build_backend
+
+    backend = build_backend(Settings.from_env(VLLM_ENV))
+    info = backend.model_info()
+    assert (info.n_experts, info.top_k, info.n_layers) == (8, 2, 2)
+    assert not any("n_experts" in d for d in backend.capabilities().disabled)
+    backend._client = _routed_vllm_client()  # el cliente HTTP propio apunta al vLLM falso
+    messages = [{"role": "user", "content": "hola"}]
+    first = {}
+    for max_tokens in (6, 3):
+        events = list(backend.stream(messages, max_tokens=max_tokens, tiers=(Tier.F0, Tier.U)))
+        first[max_tokens] = {k: v for k, v in events[0].features.items() if "u_" in k}
+    assert first[6] and first[6] == first[3]
 
 
 def test_runtime_requires_peppers(tmp_path, monkeypatch):
@@ -184,6 +292,40 @@ def test_base_detector_is_installed_for_new_orgs(tmp_path):
         rt2.close()
 
 
+@pytest.mark.parametrize("case", ["missing", "broken_json", "bad_hash"])
+def test_unreadable_base_detector_is_a_settings_error(tmp_path, case):
+    """Regresión: 'VIGIA_BASE_DETECTOR inexistente o ilegible no frena el arranque y /startupz dice
+    detectors:true'. Un archivo que falta o no es un detector es un error de configuración."""
+    path = tmp_path / "base.json"
+    if case == "broken_json":
+        path.write_text('{"roto": ', encoding="utf-8")
+    elif case == "bad_hash":
+        artifact = json.loads(constant_detector(shared_backend().model_info()).to_json())
+        artifact["bias"] = 0.123  # el hash ya no valida
+        path.write_text(json.dumps(artifact), encoding="utf-8")
+    with pytest.raises(SettingsError) as exc:
+        make_runtime(tmp_path / "rt", base_detector_path=path)
+    message = str(exc.value)
+    assert f"VIGIA_BASE_DETECTOR={path}" in message and len(message.splitlines()) == 1
+    assert ("No existe" in message) if case == "missing" else ("inválido" in message)
+
+
+@pytest.mark.parametrize("kind", ["empty_dir", "missing_path"])
+def test_unloadable_model_is_a_settings_error(tmp_path, kind):
+    """Regresión: 'VIGIA_MODEL inválido (ruta o repo inexistente) aborta el arranque con traceback
+    crudo y sin nombrar la variable'."""
+    from vigia_ee.runtime import build_backend
+
+    model = tmp_path / "modelo"
+    if kind == "empty_dir":
+        model.mkdir()
+    with pytest.raises(SettingsError) as exc:
+        build_backend(make_settings(tmp_path, model=str(model)))
+    message = str(exc.value)
+    assert message.startswith(f"No se puede cargar el modelo (VIGIA_MODEL={model}): ")
+    assert len(message.splitlines()) == 1 and len(message) < 500
+
+
 # --- Política -------------------------------------------------------------------------------------
 
 
@@ -231,7 +373,7 @@ def test_context_for_stores_redacted_trace_and_isolates_lookup(rt, org, owner):
     assert "juan.perez@example.com" not in stored["prompt_text"] and "[EMAIL]" in stored["prompt_text"]
     assert stored["prompt_text"].startswith("user: ")
     view = rt.trace_view(org, trace_id)
-    assert view["id"] == trace_id and len(view["tokens"]) == 6 and "prompt_text" not in view
+    assert view["id"] == trace_id and len(view["vigia"]["tokens"]) == 6 and "prompt_text" not in view
     other_org = rt.create_org("Otra")
     assert rt.trace_view(other_org, trace_id) is None
     assert rt.context_for(Principal(org_id=other_org, role="owner")).trace_lookup(trace_id) is None
@@ -266,6 +408,60 @@ def test_human_review_creates_span_items_emits_webhook_and_metrics(rt, org, owne
     assert "vigia_review_queue_depth " + str(len(items)) in text
     usage = json.loads(rt.repo(org).get_trace(trace_id)["usage_json"])
     assert usage["layers"] == [0, 1] and sum(map(sum, usage["counts"])) == 6 * 2 * 2
+
+
+def test_trace_view_hides_text_tokens_and_spans_on_abstain(rt, org, owner):
+    """Regresión: 'GET /v1/vigia/traces/{id} de la plataforma devuelve el texto original y los
+    tokens de una respuesta en abstain'."""
+    install_detector(rt, org, constant_detector(rt.model_info, 0.9))
+    rt.save_policy(owner, {"abstain_at": 0.5, "abstain_message": "NO SE"})
+    rt.emit_event = lambda o, e, d: []
+    resp = chat(api_client(rt, owner), vigia={})
+    choice = resp.json()["choices"][0]
+    assert choice["vigia"]["action"] == "abstain" and choice["message"]["content"] == "NO SE"
+    trace_id = resp.headers["X-Vigia-Trace-Id"]
+    stored = rt.repo(org).get_trace(trace_id)
+    assert stored["response_text"] and stored["tokens"], "el panel conserva la traza completa"
+    view = rt.trace_view(org, trace_id)
+    assert view["vigia"]["action"] == "abstain"
+    assert view["response"] is None and view["vigia"]["tokens"] == [] and view["vigia"]["spans"] == []
+    via_api = api_client(rt, owner).get(f"/v1/vigia/traces/{trace_id}")
+    assert via_api.status_code == 200
+    body = via_api.json()
+    assert body["response"] is None and body["vigia"]["tokens"] == [] and body["vigia"]["spans"] == []
+
+
+def test_trace_view_has_the_core_shape(rt, org, owner):
+    """Regresión: 'GET /v1/vigia/traces/{id} de la plataforma pierde rag_status y no tiene la forma
+    del núcleo'. La traza por ID tiene la forma de `vigia.serve.trace_view` y el campo `vigia`
+    coincide con el de la respuesta (salvo rag_status, que la base todavía no guarda)."""
+    from vigia.serve import trace_view as core_trace_view
+
+    install_detector(rt, org, constant_detector(rt.model_info, 0.9))
+    rt.emit_event = lambda o, e, d: []
+    resp = chat(api_client(rt, owner), vigia={})
+    choice = resp.json()["choices"][0]
+    trace_id = resp.headers["X-Vigia-Trace-Id"]
+    body = api_client(rt, owner).get(f"/v1/vigia/traces/{trace_id}").json()
+    record = TraceRecord(
+        trace_id=trace_id,
+        org_id=org,
+        key_id=None,
+        created_at="",
+        model=rt.model_info,
+        prompt_messages=[],
+        generation=Generation(text="", tokens=[], finish_reason="stop", prompt_tokens=0, model=rt.model_info),
+        result=VigiaResult(**{**choice["vigia"], "tokens": [], "spans": []}),
+        latency_ms=0.0,
+        overhead_ms=0.0,
+    )
+    assert list(body) == list(core_trace_view(record))
+    assert list(body["vigia"]) == list(choice["vigia"])
+    assert body["response"] == choice["message"]["content"] and body["model"] == "tiny:mixtral"
+    assert body["vigia"]["spans"] and body["vigia"]["spans"] == choice["vigia"]["spans"]
+    assert body["vigia"]["tokens"] == choice["vigia"]["tokens"]
+    for key in ("action", "response_p_error", "calibration_id", "calibrated", "mode", "alpha", "tau"):
+        assert body["vigia"][key] == choice["vigia"][key], key
 
 
 def test_whole_response_review_when_no_span_reaches_tau(rt, org):
@@ -324,6 +520,25 @@ def test_playground_with_detector_flags_and_queues_review(rt, org, owner):
     assert done["calibrated"] and done["action"] == "human_review" and done["spans"]
     assert done["response_p_error"] == pytest.approx(0.9)
     assert rt.repo(org).list_review_items()[0]["trace_id"] == done["trace_id"]
+
+
+@pytest.mark.parametrize("fallback", ["abstain", "human_review"])
+def test_playground_rag_retry_uses_policy_fallback(tmp_path, fallback):
+    """Regresión: 'El playground ignora policy.rag_fallback_action y siempre usa human_review'."""
+    rt = make_runtime(tmp_path, rag_allowed_hosts=("rag.interno",))
+    try:
+        org = rt.create_org("Acme")
+        owner = add_user(rt, org, "o@acme.com.ar", "owner")
+        install_detector(rt, org, constant_detector(rt.model_info, 0.9))
+        rt.save_policy(
+            owner,
+            {"rag_retry_at": 0.8, "rag_url": "http://rag.interno/ok", "rag_fallback_action": fallback},
+        )
+        done = list(rt.playground_stream(owner, MESSAGES, max_tokens=4))[-1]
+        assert done["type"] == "done" and done["action"] == fallback
+        assert rt.repo(org).get_trace(done["trace_id"])["action"] == fallback
+    finally:
+        rt.close()
 
 
 @pytest.mark.parametrize(
@@ -394,6 +609,30 @@ def test_readiness_checks_db_worker_and_queue(tmp_path):
     finally:
         rt.close()
         rt.close()  # idempotente
+
+
+def test_readiness_ignores_the_webhook_lane(tmp_path):
+    """Regresión: '/readyz cuenta la cola de webhooks: el backlog de webhooks de un tenant saca el nodo
+    para todos' y 'el webhook colgado de un solo tenant saca al nodo de servicio'."""
+    from vigia_ee import webhooks
+    from vigia_ee.app import create_app
+    from vigia_ee.jobs import DEFAULT_LANE
+
+    rt = make_runtime(tmp_path, max_queue_depth=3)
+    try:
+        org = rt.create_org("A")
+        rt.repo(org).insert_webhook("https://hooks-a.example.com/x", "whsec_" + "A" * 43, ["trace.flagged"])
+        for i in range(6):
+            webhooks.emit(rt.db, rt.jobs, org, "trace.flagged", {"trace_id": f"t{i}"})
+        assert rt.jobs.depth() == 6 and rt.jobs.depth(lane=DEFAULT_LANE) == 0
+        assert rt.readiness()["queue"] is True
+        body = TestClient(create_app(runtime=rt)).get("/readyz").json()  # sin lifespan: sin worker
+        assert body["checks"] == {"db": True, "worker": False, "queue": True}
+        for _ in range(3):  # el carril por defecto (purga, calibración) sí cuenta
+            rt.jobs.enqueue("sin_handler", {})
+        assert rt.readiness()["queue"] is False
+    finally:
+        rt.close()
 
 
 def test_render_prompt_is_readable_transcript():

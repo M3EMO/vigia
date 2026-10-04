@@ -312,3 +312,30 @@ def test_openai_compatible_judge_validates_configuration():
     with pytest.raises(ValueError):
         OpenAICompatibleJudge("https://juez.example", "k\nX-Inyectado: 1", "m")
     OpenAICompatibleJudge("http://juez.interno/v1", "k", "m", allow_insecure_http=True)
+
+
+def test_parse_number_es_leading_zero_is_decimal():
+    """Regresión: "parse_number_es lee '0.500' como 500: un cero a la izquierda se toma como grupo
+    de miles"."""
+    assert parse_number_es("0.500") == 0.5
+    assert parse_number_es("-0.250") == -0.25
+    assert numeric_match("La probabilidad es 0.500", 0.5)
+    assert parse_number_es("1.234") == 1234 and parse_number_es("12.345") == 12345
+    assert parse_number_es("999.000") == 999000
+
+
+def test_parse_date_parts_es_reads_partial_dates():
+    """Regresión de "Item de fecha con gold de solo el año marca como incorrecta una respuesta
+    correcta..." y "gold_correct acepta por F1 >= 0,5 respuestas con otro año, mes o número...":
+    fechas completas, mes y año, y año suelto, sin superponerse."""
+    from vigia.labels import parse_date_parts_es
+
+    assert parse_date_parts_es("En 1945, el 8 de mayo.") == [(1945, None, None)]
+    assert parse_date_parts_es("1945-05-08") == [(1945, 5, 8)]
+    assert parse_date_parts_es("Del 8 de mayo de 1945 a septiembre del 1946") == [
+        (1945, 5, 8),
+        (1946, 9, None),
+    ]
+    assert parse_date_parts_es("Setiembre de 1810") == [(1810, 9, None)]
+    assert parse_date_parts_es("1.945 personas, 12345 y 19,45") == []
+    assert parse_date_parts_es("unos 300 km") == [(300, None, None)]

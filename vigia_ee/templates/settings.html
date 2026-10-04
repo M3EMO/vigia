@@ -25,12 +25,12 @@
     </fieldset>
     <div class="vg-field">
       <label for="retention_days">Retención (días)</label>
-      <input id="retention_days" name="retention_days" type="number" min="1" max="3650" step="1" required value="{{ org.retention_days }}"{{ invalid(errors, "retention_days") }}>
+      <input id="retention_days" name="retention_days" type="number" min="1" max="3650" step="1" required value="{{ org.retention_days }}"{{ invalid(errors, "retention_days", "retention-hint") }}>
       {{ field_error(errors, "retention_days") }}
-      <p class="vg-hint">Las generaciones más viejas se purgan solas (Ley 25.326 art. 4).</p>
+      <p class="vg-hint" id="retention-hint">Las generaciones más viejas se purgan solas (Ley 25.326 art. 4).</p>
     </div>
-    <label class="vg-check"><input type="checkbox" name="external_judge_allowed"{% if org.external_judge_allowed %} checked{% endif %}> Permitir un juez LLM externo para etiquetar calibraciones</label>
-    <p class="vg-hint">Enviar texto a una API fuera del país puede ser una transferencia internacional (Ley 25.326 art. 12). El cambio queda en auditoría.</p>
+    <label class="vg-check"><input type="checkbox" name="external_judge_allowed" aria-describedby="judge-hint"{% if org.external_judge_allowed %} checked{% endif %}> Permitir un juez LLM externo para etiquetar calibraciones</label>
+    <p class="vg-hint" id="judge-hint">Enviar texto a una API fuera del país puede ser una transferencia internacional (Ley 25.326 art. 12). El cambio queda en auditoría.</p>
     <div class="vg-actions"><button type="submit" class="vg-btn">Guardar</button></div>
   </form>
   {% else %}
@@ -53,7 +53,7 @@
       <tbody>
         {% for u in users %}
         <tr>
-          <th scope="row" data-label="Email">{{ u.email }}{% if u.id == principal.user_id %} (vos){% endif %}</th>
+          <th scope="row" data-label="Email" class="vg-break">{{ u.email }}{% if u.id == principal.user_id %} (vos){% endif %}</th>
           <td data-label="Rol">{{ role_labels.get(u.role, u.role) }}</td>
           <td data-label="Estado">{% if u.disabled %}<span class="vg-badge vg-badge-danger">Deshabilitada</span>{% elif u.locked_until and u.locked_until > now_iso %}<span class="vg-badge vg-badge-warn">Bloqueada</span>{% else %}<span class="vg-badge vg-badge-ok">Activa</span>{% endif %}</td>
           <td data-label="Alta">{{ u.created_at|dt }}</td>
@@ -115,7 +115,7 @@
         {% for k in keys %}
         {% set expired = k.expires_at and k.expires_at <= now_iso %}
         <tr>
-          <th scope="row" data-label="Nombre">{{ k.name|clean }}</th>
+          <th scope="row" data-label="Nombre" class="vg-break">{{ k.name|clean }}</th>
           <td data-label="Id"><code>{{ k.id }}</code></td>
           <td data-label="Scopes">{{ k.scopes.replace(",", ", ") }}</td>
           <td data-label="Último uso">{{ k.last_used_at|dt if k.last_used_at else "nunca" }}</td>
@@ -171,7 +171,7 @@
         {% for h in hooks %}
         {% set last = deliveries.get(h.id) %}
         <tr>
-          <th scope="row" data-label="Destino"><code>{{ h.url|clean }}</code></th>
+          <th scope="row" data-label="Destino" class="vg-break"><code>{{ h.url|clean }}</code></th>
           <td data-label="Eventos">{{ h.events.replace(",", ", ") }}</td>
           <td data-label="Última entrega">{% if last %}{{ job_labels.get(last.state, last.state) }} · {{ last.updated_at|dt }}{% if last.state == "failed" and last.error %} · {{ last.error|clean }}{% endif %}{% else %}sin entregas{% endif %}</td>
           <td data-label="Estado">{% if h.disabled %}<span class="vg-badge vg-badge-danger">Deshabilitado</span>{% else %}<span class="vg-badge vg-badge-ok">Activo</span>{% endif %}</td>

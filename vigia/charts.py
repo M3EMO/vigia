@@ -30,8 +30,10 @@ OKABE_ITO = {
     "reddish_purple": "#CC79A7",
 }
 # Orden de series en modo claro: azul, bermellón, tinta, púrpura, verde azulado, celeste, naranja.
-# El par principal es azul/bermellón (seguro para deficiencias rojo-verde).
-CATEGORY_LIGHT = ("#0072B2", "#D55E00", "#1F2328", "#CC79A7", "#009E73", "#56B4E9", "#E69F00")
+# El par principal es azul/bermellón (seguro para deficiencias rojo-verde). Celeste y naranja son
+# variantes oscurecidas de Okabe-Ito: #56B4E9 y #E69F00 dan ~2,3:1 sobre blanco y WCAG 1.4.11
+# pide 3:1 para trazos de datos. Cada serie conserva además su patrón de trazo (DASHES).
+CATEGORY_LIGHT = ("#0072B2", "#D55E00", "#1F2328", "#CC79A7", "#009E73", "#3388C2", "#B07400")
 CATEGORY_DARK = ("#56B4E9", "#E69F00", "#E6EDF3", "#CC79A7", "#009E73", "#F0E442", "#D55E00")
 DASHES = ("", "6 3", "2 3", "8 3 2 3", "1 2", "10 4", "4 2 1 2")
 # Diez muestras equiespaciadas de cividis (de azul oscuro a amarillo, L* monótono).
@@ -75,7 +77,8 @@ CHART_CSS = (
         f".vg-s{i + 1}{{stroke:var(--vg-cat-{i + 1},{c})}}.vg-f{i + 1}{{fill:var(--vg-cat-{i + 1},{c})}}"
         for i, c in enumerate(CATEGORY_LIGHT)
     )
-    + ".vg-data table{border-collapse:collapse}.vg-data th,.vg-data td{padding:2px 8px;text-align:right}"
+    + ".vg-data .vg-table-wrap{overflow-x:auto;max-width:100%}"
+    ".vg-data table{border-collapse:collapse}.vg-data th,.vg-data td{padding:2px 8px;text-align:right}"
     ".vg-data th[scope=row]{text-align:left}"
 )
 
@@ -95,16 +98,16 @@ def _finite(x: Any) -> bool:
 
 
 def fmt_num(x: Any, digits: int = 3) -> str:
-    """Número con coma decimal (locale es-AR); 's/d' si falta."""
+    """Número con separador de miles `.` y coma decimal (locale es-AR); 's/d' si falta."""
     if not _finite(x):
         return "s/d"
-    return f"{x:.{digits}f}".replace(".", ",")
+    return f"{x:,.{digits}f}".replace(",", "\x00").replace(".", ",").replace("\x00", ".")
 
 
 def fmt_pct(x: Any, digits: int = 1) -> str:
     if not _finite(x):
         return "s/d"
-    return f"{x * 100:.{digits}f}".replace(".", ",") + " %"
+    return fmt_num(x * 100, digits) + " %"
 
 
 def cividis(t: float) -> str:
@@ -205,6 +208,30 @@ class _Frame:
 
 
 UNIT_TICKS = (0.0, 0.2, 0.4, 0.6, 0.8, 1.0)
+NICE_STEPS = (1.0, 2.0, 5.0, 10.0)
+
+
+def nice_ticks(vmax: float, max_intervals: int = 5) -> list[float]:
+    """Marcas 0, paso, 2·paso… hasta cubrir vmax, con paso 1, 2 o 5 × 10^k.
+
+    Elige el paso más chico que cubre vmax con a lo sumo `max_intervals` intervalos. La última marca
+    es el tope del eje (por ejemplo vmax = 0,89 da 0; 0,2; 0,4; 0,6; 0,8; 1,0).
+    """
+    if not _finite(vmax) or vmax <= 0:
+        raise ValueError("vmax debe ser un número finito positivo")
+    mag = 10.0 ** math.floor(math.log10(vmax / max_intervals))
+    for m in NICE_STEPS:
+        step = m * mag
+        n = math.ceil(vmax / step - 1e-9)
+        if n <= max_intervals:
+            return [round(i * step, 12) for i in range(n + 1)]
+    raise AssertionError("inalcanzable: el paso 10 × 10^k siempre cubre vmax")  # pragma: no cover
+
+
+def _tick_digits(ticks: Sequence[float], scale: float = 1.0) -> int:
+    """Decimales justos para escribir el paso de las marcas (multiplicado por `scale`) sin redondeo."""
+    step = (ticks[1] - ticks[0]) * scale
+    return max(0, math.ceil(-math.log10(step) - 1e-9))
 
 
 def _unit_frame() -> _Frame:
@@ -230,7 +257,11 @@ def _empty(kind: str, title: str) -> str:
 
 
 def data_table(caption: str, headers: Sequence[str], rows: Sequence[Sequence[Any]]) -> str:
-    """Tabla de datos accesible dentro de `<details>`. La primera columna es encabezado de fila."""
+    """Tabla de datos accesible dentro de `<details>`. La primera columna es encabezado de fila.
+
+    La tabla va en un contenedor enfocable con scroll horizontal propio: una tabla ancha no hace
+    scroll en la página entera a 375 px.
+    """
     head = "".join(f'<th scope="col">{_esc(h)}</th>' for h in headers)
     body = []
     for row in rows:
@@ -238,8 +269,9 @@ def data_table(caption: str, headers: Sequence[str], rows: Sequence[Sequence[Any
         body.append("<tr>" + "".join(cells) + "</tr>")
     return (
         f'<details class="vg-data"><summary>Ver datos: {_esc(caption)}</summary>'
+        f'<div class="vg-table-wrap" tabindex="0" role="region" aria-label="{_esc(caption)}">'
         f"<table><caption>{_esc(caption)}</caption><thead><tr>{head}</tr></thead>"
-        f"<tbody>{''.join(body)}</tbody></table></details>"
+        f"<tbody>{''.join(body)}</tbody></table></div></details>"
     )
 
 
@@ -262,6 +294,31 @@ def _clean_bins(bins: Sequence[Mapping[str, Any]]) -> list[Mapping[str, Any]]:
     ]
 
 
+MIN_BIN_WIDTH = 0.01  # tope visual de la densidad: un bin más angosto cuenta como de ancho 0,01
+
+
+def _bin_density(pts: Sequence[Mapping[str, Any]]) -> list[tuple[float, float, float, float]]:
+    """(borde inferior, borde superior, densidad, puntaje medio) por bin, ordenados por puntaje medio.
+
+    Los bordes caen a mitad de camino entre bins vecinos (`hi` del anterior y `lo` del siguiente,
+    o sus puntajes medios si faltan); los extremos son `lo` del primero y `hi` del último, o 0 y 1.
+    La densidad es fracción de tokens / ancho, con ancho mínimo `MIN_BIN_WIDTH`: 1 = uniforme.
+    """
+    bins = sorted(pts, key=lambda b: b["mean_pred"])
+    lo = [b["lo"] if _finite(b.get("lo")) else b["mean_pred"] for b in bins]
+    hi = [b["hi"] if _finite(b.get("hi")) else b["mean_pred"] for b in bins]
+    first = lo[0] if _finite(bins[0].get("lo")) else 0.0
+    last = hi[-1] if _finite(bins[-1].get("hi")) else 1.0
+    edges = [first] + [(hi[i] + lo[i + 1]) / 2 for i in range(len(bins) - 1)] + [last]
+    edges = [min(1.0, max(0.0, e)) for e in edges]
+    total = float(sum(b["count"] for b in bins))
+    out = []
+    for i, b in enumerate(bins):
+        a, z = edges[i], max(edges[i], edges[i + 1])
+        out.append((a, z, b["count"] / total / max(z - a, MIN_BIN_WIDTH), b["mean_pred"]))
+    return out
+
+
 def _calibration_word(ece: float) -> str:
     if ece < 0.05:
         return "El puntaje está bien calibrado"
@@ -273,7 +330,7 @@ def _calibration_word(ece: float) -> str:
 def reliability_svg(
     bins: Sequence[Mapping[str, Any]], ece: float, *, title: str = "Curva de confiabilidad"
 ) -> str:
-    """Puntaje medio por bin contra frecuencia observada, con diagonal, histograma de conteos y ECE.
+    """Puntaje medio por bin contra frecuencia observada, con diagonal, densidad de tokens y ECE.
 
     `bins`: dicts con `mean_pred`, `frac_pos`, `count` y opcionalmente `lo`, `hi`. Los bins vacíos se omiten.
     """
@@ -281,11 +338,14 @@ def reliability_svg(
     if not pts or not _finite(ece):
         return _empty("reliability", title)
     worst = max(pts, key=lambda b: abs(b["frac_pos"] - b["mean_pred"]))
+    dens = _bin_density(pts)
+    densest = max(dens, key=lambda e: e[2])
     desc = (
         f"ECE = {fmt_num(ece)} con {len(pts)} bins de igual masa. {_calibration_word(ece)}: la frecuencia "
         f"observada se aparta en promedio {fmt_num(ece * 100, 1)} puntos del puntaje. La mayor brecha "
         f"está en el bin de puntaje medio {fmt_num(worst['mean_pred'], 2)}, con frecuencia observada "
-        f"{fmt_num(worst['frac_pos'], 2)}."
+        f"{fmt_num(worst['frac_pos'], 2)}. La mayor densidad de tokens está en el bin de puntaje "
+        f"medio {fmt_num(densest[3], 3)}."
     )
     frame = _Frame(ML, MT, W - ML - MR, 220, (0.0, 1.0), (0.0, 1.0))
     parts = [_open("reliability", (list(map(dict, pts)), ece), title, desc)]
@@ -308,23 +368,25 @@ def reliability_svg(
             f'<circle cx="{frame.x(x):.1f}" cy="{frame.y(y):.1f}" r="3" class="vg-f{k}" fill="{color}"/>'
         )
     parts.append(_text(frame.x0 + 8, frame.y0 + 14, f"ECE = {fmt_num(ece)}", anchor="start"))
-    # Histograma de conteos por bin.
-    hist = _Frame(ML, MT + 250, W - ML - MR, 50, (0.0, 1.0), (0.0, float(max(b["count"] for b in pts))))
+    # Densidad por bin: con bins de igual masa el conteo es casi constante y no informa; la
+    # densidad (fracción de tokens / ancho del bin, 1 = uniforme) muestra dónde se concentran.
+    top = densest[2]
+    hist = _Frame(ML, MT + 250, W - ML - MR, 50, (0.0, 1.0), (0.0, top))
     k2, color2, _ = _cat(2)
-    for b in pts:
-        lo = b["lo"] if _finite(b.get("lo")) else b["mean_pred"] - 0.01
-        hi = b["hi"] if _finite(b.get("hi")) else b["mean_pred"] + 0.01
-        x0, x1 = hist.x(max(0.0, lo)), hist.x(min(1.0, hi))
-        width = max(1.0, x1 - x0 - 1)
-        y = hist.y(b["count"])
+    for lo, hi, d, _ in dens:
+        x0, x1 = hist.x(lo), hist.x(hi)
+        y = hist.y(d)
         parts.append(
-            f'<rect x="{x0:.1f}" y="{y:.1f}" width="{width:.1f}" height="{hist.y0 + hist.h - y:.1f}" '
-            f'class="vg-f{k2}" fill="{color2}" fill-opacity="0.5"/>'
+            f'<rect x="{x0:.1f}" y="{y:.1f}" width="{max(1.0, x1 - x0 - 1):.1f}" '
+            f'height="{hist.y0 + hist.h - y:.1f}" class="vg-f{k2}" fill="{color2}" fill-opacity="0.5"/>'
         )
     parts.append(_line(hist.x0, hist.y0 + hist.h, hist.x0 + hist.w, hist.y0 + hist.h, "vg-axis", INK))
+    parts.append(_line(hist.x0, hist.y0, hist.x0, hist.y0 + hist.h, "vg-axis", INK))
+    for v in (0.0, top):
+        parts.append(_text(hist.x0 - 6, hist.y(v) + 4, fmt_num(v, 1), anchor="end", size=11))
     for t in UNIT_TICKS:
         parts.append(_text(hist.x(t), hist.y0 + hist.h + 14, fmt_num(t, 1), size=11))
-    parts.append(_text(W / 2, H - 4, "Puntaje medio del bin (barras: conteo por bin)"))
+    parts.append(_text(W / 2, H - 4, "Puntaje medio del bin (barras: densidad de tokens, 1 = uniforme)"))
     return "".join(parts) + "</svg>"
 
 
@@ -441,16 +503,9 @@ def pr_svg(
     )
     yb = frame.y(prevalence)
     parts.append(_line(frame.x(0), yb, frame.x(1), yb, "vg-ref", MUTED, "4 4"))
-    parts.append(
-        _text(
-            frame.x(1) - 4,
-            yb - 4,
-            f"Base: prevalencia {fmt_pct(prevalence)}",
-            anchor="end",
-            cls="vg-muted",
-            size=11,
-        )
-    )
+    legend = [f"{c['name']} ({fmt_num(c['ap'])})" for c in cs]
+    obstacles = [_legend_box(frame, legend)]
+    base_at = len(parts)
     for i, c in enumerate(cs):
         parts.append(frame.polyline(c["recall"], c["precision"], i))
     if tp:
@@ -462,13 +517,54 @@ def pr_svg(
         )
         near_right = x > frame.x0 + frame.w - 80
         label = f"τ = {fmt_num(tp['tau'])}"
-        parts.append(
-            _text(
-                x - 9 if near_right else x + 9, y - 8, label, anchor="end" if near_right else "start", size=11
-            )
-        )
-    parts.append(_legend(frame, [f"{c['name']} ({fmt_num(c['ap'])})" for c in cs], corner="bl"))
+        lx, anchor = (x - 9, "end") if near_right else (x + 9, "start")
+        parts.append(_text(lx, y - 8, label, anchor=anchor, size=11))
+        obstacles += [(x - 6, y - 6, x + 6, y + 6), _text_box(lx, y - 8, label, anchor, 11)]
+    parts.insert(base_at, _baseline_label(frame, yb, f"Base: prevalencia {fmt_pct(prevalence)}", obstacles))
+    parts.append(_legend(frame, legend, corner="bl"))
     return "".join(parts) + "</svg>"
+
+
+def _text_box(x: float, y: float, text: str, anchor: str, size: int) -> tuple[float, float, float, float]:
+    """Caja estimada (x0, y0, x1, y1) de un texto con línea base en y."""
+    w = _text_width(text, size)
+    x0 = x - w if anchor == "end" else x - w / 2 if anchor == "middle" else x
+    return (x0, y - 0.8 * size, x0 + w, y + 0.25 * size)
+
+
+def _overlaps(a: Sequence[float], b: Sequence[float]) -> bool:
+    return a[0] < b[2] and b[0] < a[2] and a[1] < b[3] and b[1] < a[3]
+
+
+def _legend_box(frame: _Frame, labels: Sequence[str]) -> tuple[float, float, float, float]:
+    """Caja de la leyenda que `_legend` dibuja en la esquina inferior izquierda."""
+    y = frame.y0 + frame.h - 14 * len(labels) - 6
+    w = 28 + max((_text_width(t, 11) for t in labels), default=0.0)
+    return (frame.x0 + 10, y - 9, frame.x0 + 10 + w, y + 14 * (len(labels) - 1) + 3)
+
+
+def _baseline_label(frame: _Frame, yb: float, text: str, obstacles: Sequence[Sequence[float]]) -> str:
+    """Etiqueta de la línea base: arriba a la derecha salvo que pise el umbral τ o la leyenda.
+
+    Prueba arriba y abajo de la línea, primero a la derecha y después a la izquierda, y por último
+    una fila más arriba a la derecha. Si ninguna posición queda libre dentro del área, usa la primera.
+    """
+    right, left = frame.x(1) - 4, frame.x(0) + 4
+    spots = [
+        (right, yb - 4, "end"),
+        (right, yb + 16, "end"),
+        (left, yb - 4, "start"),
+        (left, yb + 16, "start"),
+        (right, yb - 22, "end"),
+    ]
+    for x, y, anchor in spots:
+        box = _text_box(x, y, text, anchor, 11)
+        inside = frame.y0 <= box[1] and box[3] <= frame.y0 + frame.h
+        if inside and not any(_overlaps(box, o) for o in obstacles):
+            break
+    else:
+        x, y, anchor = spots[0]
+    return _text(x, y, text, anchor=anchor, cls="vg-muted", size=11)
 
 
 def pr_table(
@@ -538,11 +634,11 @@ def score_histogram_svg(
             f"{fmt_pct(_share_above(edges, counts_error, tau))} de los tokens "
             f"erróneos y el {fmt_pct(_share_above(edges, counts_correct, tau))} de los correctos."
         )
-    top = max(share_ok + share_err) or 1.0
+    yticks = nice_ticks((max(share_ok + share_err) or 1.0) * 1.05)
     frame = _Frame(
-        ML, MT + 18, W - ML - MR, H - MT - MB - 18, (float(edges[0]), float(edges[-1])), (0.0, top * 1.05)
+        ML, MT + 18, W - ML - MR, H - MT - MB - 18, (float(edges[0]), float(edges[-1])), (0.0, yticks[-1])
     )
-    yticks = [top * 1.05 * i / 4 for i in range(5)]
+    pct_digits = _tick_digits(yticks, 100.0)
     parts = [_open("hist", (list(edges), list(counts_correct), list(counts_error), tau), title, desc)]
     parts.append(
         frame.axes(
@@ -551,7 +647,7 @@ def score_histogram_svg(
             "Puntaje p_error",
             "Proporción de la clase",
             lambda t: fmt_num(t, 1),
-            lambda t: fmt_pct(t, 0),
+            lambda t: fmt_pct(t, pct_digits),
         )
     )
     for lo, hi, so, se in zip(edges[:-1], edges[1:], share_ok, share_err, strict=True):
@@ -630,11 +726,11 @@ def latency_svg(
     if bad and ok:
         desc += "; no cumple en " + ", ".join(bad)
     desc += "."
-    top = max(max(v, b * (1 + target)) for _, b, v, _ in rows) * 1.15
-    frame = _Frame(ML, MT + 18, W - ML - MR, H - MT - MB - 18, (0.0, 3.0), (0.0, top))
+    yticks = nice_ticks(max(max(v, b * (1 + target)) for _, b, v, _ in rows) * 1.15)
+    frame = _Frame(ML, MT + 18, W - ML - MR, H - MT - MB - 18, (0.0, 3.0), (0.0, yticks[-1]))
     parts = [_open("latency", (rows, target, unit), title, desc)]
-    yticks = [top * i / 4 for i in range(5)]
-    parts.append(frame.axes([], yticks, "Percentil", f"Latencia ({unit})", str, lambda t: fmt_num(t, 1)))
+    digits = _tick_digits(yticks)
+    parts.append(frame.axes([], yticks, "Percentil", f"Latencia ({unit})", str, lambda t: fmt_num(t, digits)))
     for i, (p, b, v, o) in enumerate(rows):
         cx = frame.x(i + 0.5)
         for j, value in enumerate((b, v)):
@@ -713,20 +809,23 @@ def flag_trend_svg(
         f"a {fmt_pct(rates[-1])} ({labels[-1]}). "
         f"Máximo {fmt_pct(rates[imax])} en {labels[imax]}. Recalibraciones marcadas: {len(recalibrations)}."
     )
-    top = max(rates) * 1.15 or 0.05
+    yticks = nice_ticks(max(rates) * 1.15 or 0.05)
+    pct_digits = _tick_digits(yticks, 100.0)
     n = len(rates)
-    frame = _Frame(ML, MT, W - ML - MR, H - MT - MB, (0.0, float(max(1, n - 1))), (0.0, top))
+    # Un solo día: el punto va al centro del área y no sobre el eje Y.
+    xlim = (-0.5, 0.5) if n == 1 else (0.0, float(n - 1))
+    frame = _Frame(ML, MT, W - ML - MR, H - MT - MB, xlim, (0.0, yticks[-1]))
     step = max(1, n // 5)
     xticks = sorted(set(list(range(0, n, step)) + [n - 1]))
     parts = [_open("trend", (list(labels), list(rates), list(recalibrations)), title, desc)]
     parts.append(
         frame.axes(
             xticks,
-            [top * i / 4 for i in range(5)],
+            yticks,
             "Fecha",
             "Tokens marcados",
             lambda t: str(labels[int(t)]),
-            lambda t: fmt_pct(t, 1),
+            lambda t: fmt_pct(t, pct_digits),
         )
     )
     for i in recalibrations:
@@ -735,9 +834,11 @@ def flag_trend_svg(
         parts.append(_text(x + 3, frame.y0 + 12, "recal.", anchor="start", cls="vg-muted", size=10))
     parts.append(frame.polyline(list(range(n)), rates, 0))
     k, color, _ = _cat(0)
+    radius = 4 if n == 1 else 2.5  # sin línea que una los puntos, el marcador tiene que verse solo
     for i, r in enumerate(rates):
         parts.append(
-            f'<circle cx="{frame.x(i):.1f}" cy="{frame.y(r):.1f}" r="2.5" class="vg-f{k}" fill="{color}"/>'
+            f'<circle cx="{frame.x(i):.1f}" cy="{frame.y(r):.1f}" r="{radius}" '
+            f'class="vg-f{k}" fill="{color}"/>'
         )
     return "".join(parts) + "</svg>"
 
@@ -767,6 +868,14 @@ def _check_matrix(matrix: Sequence[Sequence[float]], rows: Sequence[Any], cols: 
     return [v for r in matrix for v in r if _finite(v)]
 
 
+HEATMAP_LEGEND_MIN_W = 120.0
+
+
+def _text_width(text: str, size: int) -> float:
+    """Ancho estimado de un texto: 0,62 em por carácter cubre system-ui y sans-serif con margen."""
+    return len(text) * size * 0.62
+
+
 def heatmap_svg(
     matrix: Sequence[Sequence[float]],
     row_labels: Sequence[Any],
@@ -792,8 +901,12 @@ def heatmap_svg(
     cell = max(4.0, min(24.0, 640.0 / ncol))
     ch = max(4.0, min(24.0, 480.0 / nrow))
     left, top = 64, 16
-    width = int(left + ncol * cell + 16)
-    height = int(top + nrow * ch + 64)
+    # Leyenda: rampa de ancho lw, mínimo y máximo debajo y el nombre del valor en una línea propia.
+    lw = max(HEATMAP_LEGEND_MIN_W, min(200.0, ncol * cell))
+    legend_text = f"Color: {value_label}"
+    content_w = max(ncol * cell, lw, _text_width(legend_text, 10))
+    width = int(math.ceil(left + content_w + 16))
+    height = int(top + nrow * ch + 84)
     parts = [
         _open(
             "heatmap",
@@ -816,20 +929,21 @@ def heatmap_svg(
     rstep = max(1, int(12 // ch) + 1)
     for i in range(0, nrow, rstep):
         parts.append(_text(left - 4, top + i * ch + ch / 2 + 4, str(row_labels[i]), anchor="end", size=10))
-    cstep = max(1, int(24 // cell) + 1)
+    cstep = max(1, math.ceil(24 / cell - 1e-9))
     for j in range(0, ncol, cstep):
         parts.append(_text(left + j * cell + cell / 2, top + nrow * ch + 12, str(col_labels[j]), size=10))
-    parts.append(_text(left + ncol * cell / 2, top + nrow * ch + 26, "Experto"))
-    parts.append(_text(12, top + nrow * ch / 2, "Capa", rot=True))
+    parts.append(_text(left + ncol * cell / 2, top + nrow * ch + 30, "Experto"))
+    parts.append(_text(16, top + nrow * ch / 2, "Capa", rot=True))
     # Leyenda de color.
-    ly, lw = top + nrow * ch + 36, min(200.0, ncol * cell)
+    ly = top + nrow * ch + 40
     for s in range(20):
         parts.append(
             f'<rect x="{left + s * lw / 20:.1f}" y="{ly:.1f}" width="{lw / 20 + 0.5:.1f}" '
             f'height="8" fill="{cividis(s / 19)}"/>'
         )
     parts.append(_text(left, ly + 20, fmt_num(vmin), anchor="start", size=10))
-    parts.append(_text(left + lw, ly + 20, f"{fmt_num(vmax)} ({value_label})", anchor="end", size=10))
+    parts.append(_text(left + lw, ly + 20, fmt_num(vmax), anchor="end", size=10))
+    parts.append(_text(left, ly + 36, legend_text, anchor="start", size=10))
     return "".join(parts) + "</svg>"
 
 

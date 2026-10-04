@@ -186,10 +186,13 @@ def test_score_response_uses_max_and_response_calibrator():
         det.score_response([1.5])
 
 
-def test_tau_interpolates_and_refuses_unsupported_alpha():
+def test_tau_steps_and_refuses_unsupported_alpha():
+    """Regresión: "Detector.tau interpola τ linealmente entre alphas guardados y rompe la garantía
+    FNR <= alpha": un alpha entre dos guardados usa el tau del alpha guardado inferior."""
     det = _hand_detector()
     assert det.tau(0.1) == pytest.approx(0.2)
-    assert det.tau(0.2) == pytest.approx(0.4)
+    assert det.tau(0.2) == pytest.approx(0.2)  # entre 0,1 y 0,3 guardados: tau de 0,1
+    assert det.tau(0.2999) == pytest.approx(0.2)
     assert det.tau(0.3) == pytest.approx(0.6)
     assert det.tau(0.5) == pytest.approx(0.6)
     with pytest.raises(ValueError, match="mínimo"):
@@ -205,4 +208,5 @@ def test_runtime_does_not_import_sklearn_or_scipy():
 
 
 def test_tau_accepts_numpy_scalars():
-    assert _hand_detector().tau(np.float32(0.2)) == pytest.approx(0.4, abs=1e-6)
+    assert _hand_detector().tau(np.float32(0.3)) == pytest.approx(0.6, abs=1e-6)
+    assert _hand_detector().tau(np.float32(0.2)) == pytest.approx(0.2, abs=1e-6)

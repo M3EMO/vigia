@@ -1,7 +1,9 @@
 """Composición de la app: permisos, health, métricas, errores, límites, calibración de punta a punta y CLI."""
 
 import json
+import os
 import re
+import stat
 
 import pytest
 from fastapi.routing import APIRoute
@@ -196,10 +198,14 @@ def test_AT_P17_internal_errors_are_generic_with_request_id(rt, app, monkeypatch
     monkeypatch.setattr(rt, "context_for", boom)
     dependency = chat(client, token)  # falla en la dependencia: lo ataja el middleware de seguridad
     assert dependency.status_code == 500
-    assert dependency.json() == {
-        "error": "internal_error",
-        "message": "Error interno.",
-        "request_id": dependency.headers["x-request-id"],
+    assert dependency.json() == {  # bajo /v1, el sobre de OpenAI (mismo formato que vigia.api)
+        "error": {
+            "message": "Error interno.",
+            "type": "server_error",
+            "code": "internal_error",
+            "param": None,
+            "request_id": dependency.headers["x-request-id"],
+        }
     }
     monkeypatch.setattr(rt, "readiness", boom)
     health = client.get("/readyz")
@@ -233,6 +239,25 @@ def test_body_limit_is_strict_except_on_dataset_upload(rt, app):
     )
     assert up.status_code == 303, up.text[:300]
     assert [d["n_items"] for d in rt.repo(org).list_datasets()] == [80]
+
+
+def test_deeply_nested_dataset_upload_is_422_not_500(rt, app):
+    """Regresión: 'Subida de dataset de calibración con JSON profundamente anidado lanza
+    RecursionError no capturada y devuelve HTTP 500 en vez de 422' (AT-P16, AT-P17)."""
+    org = rt.create_org("Acme")
+    add_user(rt, org, "owner@acme.com.ar", "owner")
+    panel, csrf = login(app, "owner@acme.com.ar")
+    prefix = '{"id":"a","question":"q","response":"r","label":0,"x":'
+    deep = (prefix + "[" * 6000 + "]" * 6000 + "}").encode()
+    up = panel.post(
+        "/calibration/datasets",
+        data={"csrf_token": csrf, "name": "hondo"},
+        files={"file": ("hondo.jsonl", deep, "application/jsonl")},
+        follow_redirects=False,
+    )
+    assert up.status_code == 422, up.text[:300]
+    assert "anidamiento excesivo" in up.text
+    assert rt.repo(org).list_datasets() == []
 
 
 # --- AT-P16: calibración de punta a punta ---------------------------------------------------------
@@ -376,14 +401,157 @@ def test_cli_create_key_prints_token_once(tmp_path, capsys):
     assert "VIGIA_MODEL" in capsys.readouterr().err
 
 
-def test_cli_serve_hides_server_header_and_binds_localhost(tmp_path, monkeypatch):
+def _capture_server(monkeypatch):
+    """Reemplaza `uvicorn.Server.run`: guarda el servidor armado por `serve` sin abrir el puerto."""
     import uvicorn
 
     seen = {}
-    monkeypatch.setattr(uvicorn, "run", lambda app, **kw: seen.update(kw, app=app))
+    monkeypatch.setattr(uvicorn.Server, "run", lambda self, sockets=None: seen.update(server=self))
     monkeypatch.setattr(appmod, "configure_json_logging", lambda: None)  # no tocar el logging global
+    return seen
+
+
+def test_cli_serve_hides_server_header_and_binds_localhost(tmp_path, monkeypatch):
+    seen = _capture_server(monkeypatch)
     assert main(["serve", "--port", "8123"], environ=cli_env(tmp_path)) == 0
-    assert seen["server_header"] is False and seen["host"] == "127.0.0.1" and seen["port"] == 8123
-    assert seen["proxy_headers"] is False and seen["workers"] == 1
-    assert undeclared_routes(seen["app"]) == []
-    seen["app"].state.runtime.close()
+    config = seen["server"].config
+    assert config.server_header is False and config.host == "127.0.0.1" and config.port == 8123
+    assert config.proxy_headers is False and config.workers == 1
+    assert undeclared_routes(config.app) == []
+    config.app.state.runtime.close()
+
+
+def test_cli_serve_bounds_shutdown_and_rejects_new_generations(tmp_path, monkeypatch):
+    """Regresión: 'Ctrl+C espera sin tope a todas las generaciones en cola y hasta arranca
+    generaciones nuevas después de la señal'. El cierre tiene tope (VIGIA_SHUTDOWN_TIMEOUT) y la
+    señal marca el runtime: la API responde 503 y el playground no genera."""
+    import signal
+
+    seen = _capture_server(monkeypatch)
+    env = cli_env(tmp_path, VIGIA_SHUTDOWN_TIMEOUT="7")
+    assert main(["serve", "--port", "8123"], environ=env) == 0
+    server = seen["server"]
+    app = server.config.app
+    rt = app.state.runtime
+    try:
+        assert server.config.timeout_graceful_shutdown == 7
+        rt.auth.scrypt_n = 2**10  # scrypt barato: el test no mide el costo del hash
+        org = rt.create_org("Acme")
+        token, _ = create_api_key(rt.auth, org, "k", ["ingest"])
+        owner = add_user(rt, org, "o@acme.com.ar", "owner")
+        client = TestClient(app)
+        body = {"model": "tiny:mixtral", "messages": [{"role": "user", "content": "hola"}], "max_tokens": 2}
+        headers = {"Authorization": f"Bearer {token}"}
+        assert client.post("/v1/chat/completions", json=body, headers=headers).status_code == 200
+        assert not rt.shutting_down
+        server.handle_exit(signal.SIGINT, None)
+        assert rt.shutting_down and server.should_exit
+        assert client.post("/v1/chat/completions", json=body, headers=headers).status_code == 503
+        events = list(rt.playground_stream(owner, [{"role": "user", "content": "hola"}], max_tokens=2))
+        assert [e["type"] for e in events] == ["error"] and "cerrando" in events[0]["message"]
+    finally:
+        rt.close()
+
+
+def test_cli_serve_routes_uvicorn_and_asyncio_logs_to_json(tmp_path, monkeypatch, capsys):
+    """Regresión: 'Los logs de uvicorn y asyncio salen en texto plano, fuera del formato JSON, con
+    stack traces'."""
+    import io
+    import logging
+
+    from vigia_ee.security import configure_json_logging as real_configure
+
+    stream = io.StringIO()
+    names = ("vigia", *appmod.FOREIGN_LOGGERS)
+    saved = {n: (list(logging.getLogger(n).handlers), logging.getLogger(n).propagate) for n in names}
+    for n in names:
+        logging.getLogger(n).handlers = []
+    try:
+        seen = _capture_server(monkeypatch)
+        monkeypatch.setattr(appmod, "configure_json_logging", lambda: real_configure(stream=stream))
+        assert main(["serve", "--port", "8123"], environ=cli_env(tmp_path)) == 0
+        seen["server"].config.app.state.runtime.close()
+        logging.getLogger("uvicorn.error").warning("Invalid HTTP request received.")
+        try:
+            raise AssertionError("detalle interno")
+        except AssertionError:
+            logging.getLogger("asyncio").error("Exception in callback x", exc_info=True)
+        lines = [ln for ln in stream.getvalue().splitlines() if ln.strip()]
+        records = [json.loads(ln) for ln in lines]  # cada línea es un objeto JSON
+        assert [r["logger"] for r in records[-2:]] == ["uvicorn.error", "asyncio"]
+        assert records[-2]["msg"] == "Invalid HTTP request received."
+        assert "Traceback" not in stream.getvalue() and "detalle interno" not in stream.getvalue()
+        assert "Invalid HTTP request" not in capsys.readouterr().err
+    finally:
+        for n, (handlers, propagate) in saved.items():
+            logging.getLogger(n).handlers = handlers
+            logging.getLogger(n).propagate = propagate
+
+
+def _storage_env(tmp_path, case):
+    """Arma cada caso de almacenamiento roto y devuelve (env, variable que el mensaje debe nombrar)."""
+    secret = tmp_path / "owner.txt"
+    secret.write_text(PASSWORD, encoding="utf-8")
+    if case == "missing_parent":
+        missing = tmp_path / "no-existe.txt"
+        missing.write_text("x", encoding="utf-8")  # un archivo como carpeta: mkdir falla (OSError)
+        env = cli_env(tmp_path, VIGIA_DATA_DIR=str(missing / "sub"), VIGIA_OWNER_PASSWORD_FILE=str(secret))
+        return env, "VIGIA_DATA_DIR"
+    if case == "not_sqlite":
+        bad = tmp_path / "basura.db"
+        bad.write_bytes(b"esto no es una base SQLite " * 64)
+        env = cli_env(tmp_path, VIGIA_DB_PATH=str(bad), VIGIA_OWNER_PASSWORD_FILE=str(secret))
+        return env, "VIGIA_DB_PATH"
+    assert case == "readonly"
+    data = tmp_path / "ro"
+    env = cli_env(data, VIGIA_OWNER_PASSWORD_FILE=str(secret))
+    assert main(["init", "--org", "A", "--email", "a@acme.com.ar"], environ=env) == 0
+    for extra in data.glob("vigia.db-*"):
+        extra.unlink()
+    os.chmod(data / "vigia.db", stat.S_IREAD)
+    return env, "VIGIA_DATA_DIR"
+
+
+@pytest.mark.parametrize("case", ["missing_parent", "not_sqlite", "readonly"])
+@pytest.mark.parametrize("command", ["init", "create-key", "serve"])
+def test_cli_storage_errors_exit_2_with_clear_message(tmp_path, monkeypatch, capsys, case, command):
+    """Regresión: 'Un error de almacenamiento al arrancar (carpeta inválida, base de solo lectura o
+    corrupta) sale como traceback crudo en vez de un mensaje claro'."""
+    import uvicorn
+
+    monkeypatch.setattr(
+        uvicorn.Server, "run", lambda self, sockets=None: pytest.fail("serve no debe arrancar")
+    )
+    monkeypatch.setattr(appmod, "configure_json_logging", lambda: None)
+    env, variable = _storage_env(tmp_path, case)
+    capsys.readouterr()
+    argv = {
+        "init": ["init", "--org", "B", "--email", "b@acme.com.ar"],
+        "create-key": ["create-key", "--org-id", "f" * 32, "--name", "x"],
+        "serve": ["serve", "--port", "8123"],
+    }[command]
+    try:
+        assert main(argv, environ=env) == 2
+    finally:
+        for db_file in tmp_path.rglob("vigia.db"):
+            os.chmod(db_file, stat.S_IREAD | stat.S_IWRITE)
+    err = capsys.readouterr().err
+    assert err.startswith("error: ") and variable in err and "Traceback" not in err
+    if case == "readonly":
+        assert "solo lectura" in err
+    if case == "not_sqlite":
+        assert "no es una base SQLite" in err
+
+
+@pytest.mark.parametrize("variable", ["VIGIA_MODEL", "VIGIA_BASE_DETECTOR"])
+def test_cli_serve_bad_model_or_base_detector_exits_2(tmp_path, monkeypatch, capsys, variable):
+    """Regresión: 'VIGIA_MODEL inválido (ruta o repo inexistente) aborta el arranque con traceback
+    crudo y sin nombrar la variable' y 'VIGIA_BASE_DETECTOR inexistente o ilegible no frena el
+    arranque y /startupz dice detectors:true'."""
+    _capture_server(monkeypatch)
+    missing = tmp_path / "no-existe"
+    env = cli_env(tmp_path / "datos", **{variable: str(missing)})
+    capsys.readouterr()
+    assert main(["serve", "--port", "8123"], environ=env) == 2
+    err = capsys.readouterr().err
+    assert err.startswith("error: ") and f"{variable}={missing}" in err and "Traceback" not in err

@@ -340,3 +340,35 @@ def test_bench_command_writes_json(dataset, tmp_path, capsys):
     assert code == 0, err
     result = json.loads(out.read_text(encoding="utf-8"))
     assert {"p50", "p95", "p99"} <= set(result["baseline"]) and {"p50", "p95", "p99"} <= set(result["vigia"])
+
+
+def test_serve_rag_allowed_hosts_enables_policy_retriever(capsys, monkeypatch, tmp_path):
+    """vigia serve acepta una política con rag_retry pero nunca re-consulta: --rag-allowed-hosts
+    habilita un retriever local y, sin la allowlist, la política se rechaza al arrancar."""
+    import uvicorn
+
+    import vigia.serve as serve_mod
+
+    built = []
+    monkeypatch.setattr(uvicorn, "run", lambda app, **kw: None)
+    monkeypatch.setattr(
+        serve_mod, "HttpRetriever", lambda url, *, allowed_hosts=(): built.append((url, tuple(allowed_hosts)))
+    )
+    pol = tmp_path / "pol.json"
+    pol.write_text(
+        json.dumps({"rag_retry_at": 0.8, "rag_url": "http://rag.local:9000/rag"}), encoding="utf-8"
+    )
+    code, _, err = run(capsys, "serve", "--model", "tiny:mixtral", "--policy", str(pol))
+    assert code == 1 and "rag_url" in err and built == []
+    code, _, err = run(
+        capsys,
+        "serve",
+        "--model",
+        "tiny:mixtral",
+        "--policy",
+        str(pol),
+        "--rag-allowed-hosts",
+        "rag.local, otro",
+    )
+    assert code == 0, err
+    assert built == [("http://rag.local:9000/rag", ("rag.local", "otro"))]

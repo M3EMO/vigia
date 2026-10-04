@@ -21,10 +21,10 @@
   <pre><code>from openai import OpenAI
 client = OpenAI(base_url="https://TU-HOST/v1", api_key="vg_live_…")
 client.chat.completions.create(model="…", messages=[{"role": "user", "content": "Hola"}], extra_body={"vigia": {}})</code></pre>
-  <p>
+  <div class="vg-actions">
     {% if can("keys:write") %}<a class="vg-btn" href="/settings#keys">Crear una API key</a>{% endif %}
     {% if can("playground:use") %}<a class="vg-btn vg-btn-secondary" href="/playground">Probar en el playground</a>{% endif %}
-  </p>
+  </div>
 </section>
 {% else %}
 <dl class="vg-kpis">
@@ -36,16 +36,16 @@ client.chat.completions.create(model="…", messages=[{"role": "user", "content"
   <div class="vg-kpi"><dt>Pendientes de revisión</dt><dd>{{ pending|count }}</dd></div>
 </dl>
 
-<div class="vg-grid-2">
+<div class="vg-grid-charts">
   <section class="vg-card" aria-labelledby="by-action">
     <h2 id="by-action">Acción por respuesta</h2>
     <div class="vg-table-wrap">
-      <table class="vg-table">
+      <table class="vg-table vg-table-cards">
         <caption class="sr-only">Distribución de acciones en el período</caption>
         <thead><tr><th scope="col">Acción</th><th scope="col" class="vg-num">Requests</th><th scope="col" class="vg-num">%</th></tr></thead>
         <tbody>
           {% for row in stats.by_action %}
-          <tr><th scope="row">{{ row.label }}</th><td class="vg-num">{{ row.count|count }}</td><td class="vg-num">{{ row.pct|pct }}</td></tr>
+          <tr><th scope="row" data-label="Acción">{{ row.label }}</th><td class="vg-num" data-label="Requests">{{ row.count|count }}</td><td class="vg-num" data-label="%">{{ row.pct|pct }}</td></tr>
           {% endfor %}
         </tbody>
       </table>

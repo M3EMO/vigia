@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Calibración en curso{% endblock %}
+{% block title %}{{ job_titles.get(job.state, "Calibración") }} ({{ job.id[:12] }}){% endblock %}
 {% block page_id %}calibration-job{% endblock %}
 {% block content %}
 <div class="vg-page-head">
@@ -8,7 +8,7 @@
 </div>
 
 {% set running = job.state in ("queued", "running") %}
-<section class="vg-card" aria-labelledby="job-state-title" data-job-status="/calibration/jobs/{{ job.id }}/status" aria-busy="{{ 'true' if running else 'false' }}">
+<section class="vg-card" aria-labelledby="job-state-title" data-job-status="/calibration/jobs/{{ job.id }}/status" data-title-done="{{ job_titles.done }} ({{ job.id[:12] }}) · Vigía" data-title-failed="{{ job_titles.failed }} ({{ job.id[:12] }}) · Vigía" aria-busy="{{ 'true' if running else 'false' }}">
   <h2 id="job-state-title">Estado</h2>
   <p class="vg-status" aria-live="polite" data-job-label>
     {{ job_labels.get(job.state, job.state) }}{% if running %}: el entrenamiento corre en segundo plano.{% endif %}

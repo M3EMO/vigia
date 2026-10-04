@@ -272,3 +272,15 @@ class HookNotFiredError(VigiaError):
 
 class DetectorMismatchError(VigiaError):
     """El detector fue calibrado para otro modelo o su hash no valida."""
+
+
+class InvalidRequestError(VigiaError, ValueError):
+    """El backend rechaza la entrada del cliente (prompt fuera del contexto, texto inválido).
+
+    La API lo responde como 400 `invalid_request_error` con este mensaje y `code`; no es un error
+    interno. El mensaje no debe incluir datos internos (rutas, pesos, configuración).
+    """
+
+    def __init__(self, message: str, *, code: str = "invalid_prompt") -> None:
+        super().__init__(message)
+        self.code = code

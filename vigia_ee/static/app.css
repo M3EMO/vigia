@@ -102,14 +102,26 @@
 
 *, *::before, *::after { box-sizing: border-box; }
 
-html { -webkit-text-size-adjust: 100%; }
+/* La barra superior es sticky: sin scroll-padding, Chrome deja el elemento enfocado con Shift+Tab
+   justo debajo de ella, tapado (WCAG 2.4.11). 4rem cubre la barra (unos 45 px). Con el aviso sticky
+   .vg-unverified (detalle, revisión, playground) se suma su altura. */
+html { -webkit-text-size-adjust: 100%; scroll-padding-top: 4rem; }
+html:has(.vg-unverified) { scroll-padding-top: 7.5rem; }
 
+/* body es una columna: .vg-shell ocupa el alto que deja la barra superior, mida lo que mida (la
+   barra crece si sus botones se parten en dos líneas). Con un calc fijo quedaba una franja abajo. */
 body {
   margin: 0;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
   background: var(--vg-page-bg);
   color: var(--vg-text);
   font: 15px/1.55 var(--vg-font);
-  overflow-wrap: anywhere;
+  /* break-word y no anywhere: anywhere achica el min-content y el layout automático de las tablas
+     parte palabras, números y fechas. Donde un texto largo sin espacios debe cortarse igual (ids,
+     JSON, URLs, texto del modelo), lo pide `.vg-break` o la regla del componente. */
+  overflow-wrap: break-word;
 }
 
 h1, h2, h3 { line-height: 1.25; margin: 0 0 .6rem; }
@@ -123,6 +135,9 @@ a:hover { text-decoration-thickness: 2px; }
 
 code, pre, .vg-mono { font-family: var(--vg-mono); font-size: .9em; }
 code { background: var(--vg-code-bg); padding: 0 .25em; border-radius: 3px; }
+/* Dentro de <pre> el code es inline: su padding izquierdo correría solo la primera línea. */
+pre code { padding: 0; background: none; border-radius: 0; }
+.vg-break, .vg-break code { overflow-wrap: anywhere; }
 pre { background: var(--vg-code-bg); padding: .75rem; border-radius: var(--vg-radius); overflow-x: auto; white-space: pre-wrap; }
 
 :focus-visible {
@@ -159,7 +174,7 @@ pre { background: var(--vg-code-bg); padding: .75rem; border-radius: var(--vg-ra
 .vg-user { color: var(--vg-text-muted); font-size: .9rem; }
 .vg-topbar form { margin: 0; }
 
-.vg-shell { display: flex; min-height: calc(100vh - 3.2rem); }
+.vg-shell { display: flex; flex: 1 0 auto; min-width: 0; }
 
 .vg-nav {
   flex: 0 0 var(--vg-nav-w); background: var(--vg-surface); border-right: 1px solid var(--vg-border);
@@ -207,7 +222,8 @@ pre { background: var(--vg-code-bg); padding: .75rem; border-radius: var(--vg-ra
 
 .vg-card { background: var(--vg-surface); border: 1px solid var(--vg-border); border-radius: var(--vg-radius); padding: 1rem 1.1rem; margin: 0 0 1rem; }
 .vg-card > :last-child { margin-bottom: 0; }
-.vg-card h2:first-child, .vg-card h3:first-child { margin-top: 0; }
+.vg-card h2:first-child, .vg-card h3:first-child,
+.vg-card > input[type="hidden"]:first-child + :is(h2, h3) { margin-top: 0; }
 
 .vg-page-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: .5rem 1rem; margin-bottom: 1rem; }
 .vg-page-head h1 { margin: 0; }
@@ -237,6 +253,8 @@ pre { background: var(--vg-code-bg); padding: .75rem; border-radius: var(--vg-ra
 
 .vg-empty { text-align: center; padding: 2rem 1rem; color: var(--vg-text-muted); }
 .vg-empty p:first-child { font-size: 1.05rem; color: var(--vg-text); }
+.vg-empty pre { text-align: left; }
+.vg-empty .vg-actions { justify-content: center; }
 
 .vg-badge { display: inline-block; padding: .05rem .5rem; border-radius: 999px; font-size: .8rem; font-weight: 600; border: 1px solid var(--vg-border); background: var(--vg-surface-2); color: var(--vg-text); white-space: nowrap; }
 .vg-badge-ok { border-color: var(--vg-ok); color: var(--vg-ok); background: var(--vg-ok-soft); }
@@ -253,20 +271,24 @@ pre { background: var(--vg-code-bg); padding: .75rem; border-radius: var(--vg-ra
 .vg-table thead th { background: var(--vg-surface-2); font-size: .85rem; color: var(--vg-text-muted); font-weight: 600; }
 .vg-table tbody tr:last-child > * { border-bottom: 0; }
 .vg-table .vg-num { text-align: right; white-space: nowrap; }
-.vg-table form { margin: 0; display: inline-flex; gap: .35rem; flex-wrap: wrap; align-items: center; }
+.vg-table form { margin: 0; display: inline-flex; gap: .35rem; flex-wrap: wrap; align-items: center; vertical-align: middle; }
+/* Filas con controles: el texto se centra con ellos y el select mide lo mismo que .vg-btn-small. */
+.vg-table tr:has(form) > * { vertical-align: middle; }
+.vg-table form select { height: 1.75rem; min-height: 1.75rem; font-size: .88rem; }
 
 @media (max-width: 639px) {
   .vg-table-cards thead { display: none; }
   .vg-table-cards tr { display: block; border-bottom: 1px solid var(--vg-border); padding: .4rem 0; }
   .vg-table-cards tbody tr:last-child { border-bottom: 0; }
-  .vg-table-cards td, .vg-table-cards th { display: flex; justify-content: space-between; gap: 1rem; border: 0; padding: .25rem .75rem; text-align: right; }
-  .vg-table-cards td::before, .vg-table-cards th::before { content: attr(data-label); font-weight: 600; color: var(--vg-text-muted); text-align: left; }
+  .vg-table-cards td, .vg-table-cards th { display: flex; justify-content: space-between; gap: 1rem; border: 0; padding: .25rem .75rem; text-align: right; overflow-wrap: anywhere; }
+  .vg-table-cards td::before, .vg-table-cards th::before { content: attr(data-label); font-weight: 600; color: var(--vg-text-muted); text-align: left; white-space: normal; }
   .vg-table-cards .vg-num { text-align: right; }
 }
 
 /* --- formularios ------------------------------------------------------------------------------ */
 
-.vg-form { display: grid; gap: .9rem; max-width: 44rem; }
+/* align-content: start fija los espacios aunque la grilla vecina estire la tarjeta (playground). */
+.vg-form { display: grid; gap: .9rem; max-width: 44rem; align-content: start; }
 .vg-form-inline { display: flex; flex-wrap: wrap; gap: .75rem; align-items: flex-end; }
 .vg-field { display: grid; gap: .25rem; grid-template-columns: minmax(0, 1fr); }
 input[type="file"] { width: 100%; }
@@ -280,6 +302,10 @@ input[type="date"], input[type="file"], select, textarea {
   border: 1px solid var(--vg-border); border-radius: var(--vg-radius);
   padding: .4rem .55rem; min-height: 2.25rem; max-width: 100%;
 }
+input[type="text"], input[type="email"], input[type="password"], input[type="number"], input[type="url"],
+input[type="date"], select { height: 2.5rem; line-height: 1.25; padding-top: 0; padding-bottom: 0; }
+.vg-form-inline .vg-btn { min-height: 2.5rem; }
+::placeholder { color: var(--vg-text-muted); opacity: 1; }
 textarea { min-height: 7rem; width: 100%; resize: vertical; }
 input[aria-invalid="true"], select[aria-invalid="true"], textarea[aria-invalid="true"] { border-color: var(--vg-danger); border-width: 2px; }
 input[type="checkbox"], input[type="radio"] { width: 1.15rem; height: 1.15rem; accent-color: var(--vg-accent); }
@@ -287,7 +313,9 @@ input[type="range"] { accent-color: var(--vg-accent); min-height: 1.5rem; }
 fieldset { border: 1px solid var(--vg-border); border-radius: var(--vg-radius); padding: .6rem .9rem .8rem; margin: 0; min-width: 0; }
 .vg-form > *, .vg-grid > *, .vg-grid-2 > *, .vg-field { min-width: 0; }
 .vg-field input, .vg-field select, .vg-field textarea { max-width: 100%; }
-.vg-check { display: flex; align-items: center; gap: .5rem; min-height: 1.75rem; }
+.vg-check { display: flex; align-items: flex-start; gap: .5rem; min-height: 1.75rem; }
+/* Sin flex-shrink: 0, un label de dos líneas comprimía el checkbox a 13 px. */
+.vg-check > input { flex-shrink: 0; margin: .2rem 0 0; }
 .vg-actions { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; }
 
 /* --- resaltado de fragmentos (codificación triple: fondo, subrayado y texto oculto) ------------ */
@@ -311,6 +339,20 @@ fieldset { border: 1px solid var(--vg-border); border-radius: var(--vg-radius); 
 .vg-legend { display: flex; flex-wrap: wrap; gap: .4rem 1rem; padding: 0; margin: 0 0 .75rem; list-style: none; font-size: .9rem; }
 .vg-legend li { display: flex; align-items: center; gap: .4rem; }
 
+/* Contraste alto de Windows: el sistema fuerza fondo y subrayado, y los tres niveles quedaban iguales
+   (el subrayado con offset caía fuera del fondo). Se usan colores del sistema y un borde por nivel. */
+@media (forced-colors: active) {
+  .vg-mark, .vg-token-flag {
+    forced-color-adjust: none; background: Mark; color: MarkText;
+    text-decoration-color: MarkText; text-underline-offset: 0;
+  }
+  .vg-mark { border: 1px solid MarkText; }
+  .vg-lvl-low { border-style: dotted; }
+  .vg-lvl-medium { border-style: dashed; }
+  .vg-lvl-high { border-width: 3px; border-style: double; }
+  .vg-mark.is-current { outline-color: Highlight; }
+}
+
 .vg-unverified {
   position: sticky; top: 3.4rem; z-index: 10;
   border: 1px solid var(--vg-hl-low-line); border-left-width: 4px; border-radius: var(--vg-radius);
@@ -333,10 +375,11 @@ fieldset { border: 1px solid var(--vg-border); border-radius: var(--vg-radius); 
 .vg-threshold { display: flex; flex-wrap: wrap; gap: .75rem; align-items: center; }
 .vg-threshold input[type="range"] { flex: 1 1 10rem; }
 .vg-threshold input[type="number"] { width: 6.5rem; }
+.vg-threshold .vg-btn { min-height: 2.5rem; }
 
 dl.vg-meta { display: grid; grid-template-columns: max-content 1fr; gap: .25rem 1rem; margin: 0; }
 dl.vg-meta dt { color: var(--vg-text-muted); }
-dl.vg-meta dd { margin: 0; font-variant-numeric: tabular-nums; }
+dl.vg-meta dd { margin: 0; min-width: 0; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
 
 /* --- cola de revisión ------------------------------------------------------------------------- */
 
@@ -349,14 +392,21 @@ dl.vg-meta dd { margin: 0; font-variant-numeric: tabular-nums; }
 /* --- gráficos --------------------------------------------------------------------------------- */
 
 .vg-figure { margin: 0 0 1rem; background: var(--vg-surface); border: 1px solid var(--vg-border); border-radius: var(--vg-radius); padding: .75rem; }
-.vg-figure svg { display: block; width: 100%; height: auto; }
+/* Los SVG de vigia.charts miden 480 de ancho en su viewBox y usan texto de 10 a 12 unidades. Dentro
+   de .vg-chart-scroll el SVG mide siempre 30rem (escala 1): el texto queda en 10 a 12 px en cualquier
+   ancho y, si falta lugar, la región hace scroll horizontal. .vg-grid-charts evita columnas angostas. */
+.vg-figure svg { display: block; width: 100%; max-width: 30rem; height: auto; margin: 0 auto; }
+.vg-chart-scroll { overflow-x: auto; max-width: 100%; }
+.vg-chart-scroll svg { min-width: 30rem; }
+.vg-grid-charts { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(min(34rem, 100%), 1fr)); }
+.vg-grid-charts > * { min-width: 0; }
 .vg-data summary { cursor: pointer; min-height: 1.75rem; color: var(--vg-accent); font-weight: 600; margin-top: .5rem; }
 .vg-data table { font-size: .86rem; margin-top: .5rem; }
 .vg-data caption { text-align: left; font-weight: 600; padding-bottom: .25rem; }
 .vg-scroll-x { overflow-x: auto; max-width: 100%; }
 .vg-scroll-x svg { min-width: 32rem; }
-.vg-heatmap-wrap { overflow: auto; max-width: 100%; max-height: 40rem; border: 1px solid var(--vg-border); border-radius: var(--vg-radius); background: var(--vg-surface); padding: .5rem; }
-.vg-heatmap-wrap svg { width: auto; max-width: none; min-width: 20rem; }
+.vg-heatmap-wrap { overflow: auto; max-width: 100%; border: 1px solid var(--vg-border); border-radius: var(--vg-radius); background: var(--vg-surface); padding: .5rem; }
+.vg-heatmap-wrap svg { display: block; max-width: none; }
 
 /* --- playground ------------------------------------------------------------------------------- */
 

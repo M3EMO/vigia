@@ -6,11 +6,15 @@ Pipeline de `run_evidence`:
    `response` pasa por `backend.teacher_force`. Cada respuesta deja una fila en `rows.jsonl` y su
    matriz de features en `chunks/`. La corrida es reanudable: una fila escrita no se recalcula y una
    línea final cortada se descarta. El manifiesto (`manifest.json`) impide mezclar corridas con otro
-   modelo, otros niveles, otra semilla u otra fuente de etiquetas.
-2. Etiquetas. Gold: la respuesta es correcta si coincide por EM, F1 de tokens >= 0,5, número o
-   fecha (`vigia.labels`). Todos los tokens `final` de la respuesta llevan la etiqueta de la
-   respuesta. `response + label`: igual. `hallucinated_spans`: etiqueta por solapamiento. Con un
-   juez, el juez etiqueta cada respuesta y el gold queda como auditoría.
+   modelo, otros niveles, otra semilla u otra fuente de etiquetas. Cada fila guarda el hash de su
+   item: si un id ya escrito cambió de contenido, la reanudación falla en lugar de reusar la fila.
+2. Etiquetas. Gold: un item tipado (número, fecha, aritmética; sin tipo, el que implica su gold)
+   con gold legible como número o fecha es correcto solo si coincide el último número o la última
+   fecha. Los demás items son
+   correctos por EM, F1 de tokens >= 0,5, número o fecha (`vigia.labels`). Todos los tokens
+   `final` de la respuesta llevan la etiqueta de la respuesta. `response + label`: igual.
+   `hallucinated_spans`: etiqueta por solapamiento. Con un juez, el juez etiqueta cada respuesta y
+   el gold queda como auditoría.
 3. Matriz `features.npz`, detector F0+F1 (`detector.json`), reporte con IC por bootstrap de
    pregunta (`report.json`, `report.html`), benchmark de latencia opcional y `summary.txt`.
 """
@@ -42,20 +46,21 @@ from vigia.evaluate import SingleClassError, evaluate_report, render_report_html
 from vigia.labels import (
     IGNORE_LABEL,
     JUDGE_PROMPT_SHA256,
+    DateParts,
     Judge,
-    date_match,
     exact_match,
     extract_numbers,
     label_tokens_from_answer,
     label_with_judge,
     numeric_match,
+    parse_date_parts_es,
     parse_dates_es,
     parse_number_es,
     spans_to_token_labels,
     token_f1,
 )
 
-RUN_SCHEMA_VERSION = "1"
+RUN_SCHEMA_VERSION = "2"  # 2: cada fila guarda `item_sha256`
 ROWS_FILE = "rows.jsonl"
 FEATURES_FILE = "features.npz"
 MANIFEST_FILE = "manifest.json"
@@ -71,6 +76,8 @@ GOLD_F1_THRESHOLD = 0.5
 DETECTOR_TIERS = (Tier.F0, Tier.F1)
 _ISO_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _LEADING_NUMBER = re.compile(r"^\s*[-+−]?\d")
+_NUMERIC_DMY = re.compile(r"\b\d{1,2}[/.-]\d{1,2}[/.-]\d{4}\b")
+TYPED_ITEM_TYPES = ("number", "number_with_unit", "date")
 
 ProgressCallback = Callable[[int, int, str], None]
 
@@ -94,9 +101,78 @@ def _gold_numbers(answers: Sequence[str], item_type: str | None) -> list[float]:
     return values
 
 
-def _gold_dates(answers: Sequence[str]) -> list[str]:
-    """Solo alias ISO completos: los formatos 08/11/2017 del gold son ambiguos (mes/día)."""
-    return [a.strip() for a in answers if _ISO_DATE.match(a.strip()) and len(parse_dates_es(a)) == 1]
+def _gold_date_parts(answers: Sequence[str], *, partial: bool) -> list[DateParts]:
+    """Fechas del gold: alias con una sola mención de fecha (`parse_date_parts_es`).
+
+    Sin `partial`, solo fechas completas. Con `partial` (items `date`) también mes y año
+    ("mayo de 1945") y año solo ("1945", "el año 1945"). Los formatos 08/11/2017 del gold son
+    ambiguos (mes/día) y no se usan.
+    """
+    out: list[DateParts] = []
+    for alias in (a.strip() for a in answers):
+        if _NUMERIC_DMY.search(alias) and not _ISO_DATE.match(alias):
+            continue
+        mentions = parse_date_parts_es(alias)
+        if len(mentions) == 1 and (partial or mentions[0][2] is not None) and mentions[0] not in out:
+            out.append(mentions[0])
+    return out
+
+
+def _date_parts_match(prediction: str, gold: DateParts) -> bool:
+    """La última mención de la predicción con al menos el detalle del gold coincide en sus partes.
+
+    Gold de año solo: cuenta cualquier mención (fecha completa, mes y año o año suelto). Gold de
+    mes y año: menciones con mes. Gold completo: fechas completas (igual que `date_match`).
+    """
+    year, month, day = gold
+    eligible = [
+        m for m in parse_date_parts_es(prediction) if (month is None or m[1]) and (day is None or m[2])
+    ]
+    if not eligible:
+        return False
+    last = eligible[-1]
+    return last[0] == year and (month is None or last[1] == month) and (day is None or last[2] == day)
+
+
+def _implicit_type(answers: Sequence[str]) -> str | None:
+    """Tipo de un gold sin tipo: `date` si todos los alias son fechas legibles y no ambiguas con al
+    menos mes y año, `number_with_unit` si todos empiezan con un número y ninguno tiene una fecha,
+    o None."""
+    aliases = [a.strip() for a in answers]
+    if not aliases:
+        return None
+    dated = [a for a in aliases if any(p[1] for p in _gold_date_parts([a], partial=True))]
+    if len(dated) == len(aliases):
+        return "date"
+    if all(
+        _LEADING_NUMBER.match(a) and not _NUMERIC_DMY.search(a) and not parse_dates_es(a) for a in aliases
+    ):
+        return "number_with_unit"
+    return None
+
+
+def _is_typed(item_type: str | None) -> bool:
+    """Item cuyo gold es un número o una fecha: tipo numérico o de fecha (dado o implícito) o aritmética."""
+    return item_type in TYPED_ITEM_TYPES or (item_type or "").startswith("arit")
+
+
+def _text_match(candidate: str, answers: Sequence[str]) -> bool:
+    """EM o F1 de tokens >= 0,5 contra algún alias cuyos números estén todos en la predicción.
+
+    El F1 trata "1945" y "1946" como palabras intercambiables: un alias con números solo cuenta si
+    la predicción contiene esos números. Un alias sin números no cuenta si la predicción da números
+    y ninguno coincide con los del gold (otro alias dice el número correcto).
+    """
+    predicted = set(extract_numbers(candidate))
+    gold_numbers = {v for a in answers for v in extract_numbers(a)}
+    contradicts = bool(predicted and gold_numbers and not predicted & gold_numbers)
+    for alias in answers:
+        numbers = set(extract_numbers(alias))
+        if (numbers and not numbers <= predicted) or (not numbers and contradicts):
+            continue
+        if exact_match(candidate, [alias]) or token_f1(candidate, [alias]) >= GOLD_F1_THRESHOLD:
+            return True
+    return False
 
 
 def gold_correct(
@@ -104,8 +180,18 @@ def gold_correct(
 ) -> tuple[bool, dict[str, Any]]:
     """¿La predicción coincide con el gold? Evalúa el texto completo y su primera línea no vacía.
 
-    Correcta si hay EM, F1 de tokens >= 0,5, el último número coincide con un alias numérico
-    (para `number_with_unit`, el número inicial del alias) o la última fecha coincide con un alias ISO.
+    Item tipado (`number`, `number_with_unit`, `date`, `arit*`) con gold legible como número o
+    fecha: correcta solo si el último número coincide con un alias numérico (para
+    `number_with_unit`, el número inicial del alias) o la última fecha coincide con un alias de
+    fecha. Un item `date` acepta también gold parcial: mes y año ("mayo de 1945") o año solo
+    ("1945"); se compara la última mención de la predicción con ese detalle, y un año solo se
+    compara con el año de una fecha completa ("8 de mayo de 1945", "1945-05-08"). EM y F1 no
+    deciden: la normalización borra la coma de "1,5" y el F1 premia la unidad o el mes aunque el
+    número o el año difieran. Un item sin tipo recibe el tipo implícito de su gold
+    (`_implicit_type`): fecha si todos los alias son fechas con mes y año, número con unidad si
+    todos empiezan con un número. Resto de los items: correcta si hay EM o F1 de tokens >= 0,5
+    contra un alias cuyos números aparecen en la predicción (`_text_match`), coincidencia
+    numérica o coincidencia de fecha completa.
     """
     text = prediction.strip()
     first = next((ln.strip() for ln in text.splitlines() if ln.strip()), "")
@@ -115,15 +201,14 @@ def gold_correct(
         return False, detail
     detail["exact_match"] = any(exact_match(c, answers) for c in candidates)
     detail["token_f1"] = max(token_f1(c, answers) for c in candidates)
-    numbers = _gold_numbers(answers, item_type)
+    kind = item_type or _implicit_type(answers)
+    dates = _gold_date_parts(answers, partial=kind == "date")
+    numbers = [] if kind == "date" and dates else _gold_numbers(answers, kind)
     detail["numeric"] = any(numeric_match(c, v) for c in candidates for v in numbers)
-    dates = _gold_dates(answers)
-    detail["date"] = any(date_match(c, d) for c in candidates for d in dates)
-    correct = (
-        detail["exact_match"]
-        or detail["token_f1"] >= GOLD_F1_THRESHOLD
-        or detail["numeric"]
-        or detail["date"]
+    detail["date"] = any(_date_parts_match(c, d) for c in candidates for d in dates)
+    typed_decision = _is_typed(kind) and bool(numbers or dates)
+    correct = (detail["numeric"] or detail["date"]) or (
+        not typed_decision and any(_text_match(c, answers) for c in candidates)
     )
     return bool(correct), detail
 
@@ -414,6 +499,9 @@ def extract(
 ) -> list[dict[str, Any]]:
     """Genera o fuerza cada item, lo etiqueta y lo guarda. Reanudable: saltea los ids ya escritos.
 
+    Un id ya escrito con otro contenido (respuestas, etiqueta, spans, grupo, mensajes...) lanza
+    `EvidenceError`: su fila se etiquetó con datos que ya no son los del dataset.
+
     Devuelve las filas de los items pedidos, en el orden de `items`. Un item que el backend rechaza
     (por ejemplo, prompt más largo que el contexto) queda como fila con `skipped` y sin tokens.
     """
@@ -426,6 +514,14 @@ def extract(
     store = RunStore(out_dir)
     store.open(build_manifest(backend, items, tiers=wanted, max_tokens=max_tokens, seed=seed, judge=judge))
     done = {r["id"]: r for r in store.load_rows()}
+    hashes = {it["id"]: items_sha256([it]) for it in items}
+    changed = [i for i in ids if i in done and done[i].get("item_sha256") != hashes[i]]
+    if changed:
+        shown = ", ".join(changed[:5]) + (" …" if len(changed) > 5 else "")
+        raise EvidenceError(
+            f"la corrida en {store.dir} tiene filas de items que cambiaron de contenido ({shown}); "
+            "usá otro directorio de salida para no mezclar etiquetas viejas con el dataset nuevo"
+        )
     total = len(items)
     count = sum(1 for i in ids if i in done)
     for item in items:
@@ -433,6 +529,7 @@ def extract(
             continue
         base = {
             "id": item["id"],
+            "item_sha256": hashes[item["id"]],
             "group": item["group"],
             "type": item.get("type"),
             "mode": item["mode"],

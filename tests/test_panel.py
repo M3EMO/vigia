@@ -606,7 +606,9 @@ def test_panel_errors_render_as_html_with_request_id(env):
     resp = login(app, users["viewer"]).get("/generations/no-existe-123456")
     assert resp.status_code == 404
     assert resp.headers["content-type"].startswith("text/html")
-    assert 'role="alert"' in resp.text and "Código para soporte" in resp.text and "Reintentar" in resp.text
+    assert 'role="alert"' in resp.text and "Código para soporte" in resp.text
+    # Un 404 no se reintenta: la acción principal vuelve al listado (ver test_panel_r3).
+    assert "Volver a generaciones" in resp.text and "Reintentar" not in resp.text
 
 
 # --- playground (AT-E07 sin JS y SSE con JS) ------------------------------------------------------
@@ -752,5 +754,425 @@ def test_full_app_composition_serves_panel(tmp_path, monkeypatch):
         assert resp.status_code == 200 and "Ingresar al panel" in resp.text
         assert "unsafe-inline" not in resp.headers["content-security-policy"]
         assert client.get("/", follow_redirects=False).status_code == 303
+    finally:
+        runtime.close()
+
+
+# --- streaming: desconexión del cliente ------------------------------------------------------------
+
+
+class _LockedStream:
+    """Como `HFBackend._run`: toma el lock del modelo y lo suelta solo cuando el generador termina."""
+
+    def __init__(self, lock, closed) -> None:
+        self._it = self._gen(lock, closed)
+        self.finish_reason = None
+        self.prompt_tokens = 3
+
+    @staticmethod
+    def _gen(lock, closed):
+        from vigia.contracts import TokenEvent
+
+        with lock:
+            try:
+                idx = pos = 0
+                while True:  # una generación larga: nunca termina sola
+                    yield TokenEvent(idx, 10, "x", pos, pos + 1, {"out_nll": 0.5, "out_entropy": 0.25})
+                    idx, pos = idx + 1, pos + 1
+            finally:
+                closed.set()
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        return next(self._it)
+
+    def close(self) -> None:
+        self._it.close()
+
+
+def test_playground_stream_client_disconnect_releases_model_lock(env):
+    """Regresión: 'Si el cliente se desconecta durante un streaming, el lock del modelo queda tomado
+    y se bloquea toda generación de todos los tenants'. Al cortar la conexión, el generador se
+    cierra enseguida (no cuando corre el GC) y el lock del modelo queda libre."""
+    import gc
+    import threading
+
+    import anyio
+
+    runtime, org, users, app = env
+    lock, closed = threading.Lock(), threading.Event()
+    runtime.backend.stream = lambda *a, **kw: _LockedStream(lock, closed)
+    client = login(app, users["owner"])
+    token = csrf_of(client, "/playground")
+    cookie = "; ".join(f"{k}={v}" for k, v in client.cookies.items())
+    body = json.dumps({"prompt": "una respuesta larga", "max_tokens": 1000, "temperature": 0}).encode()
+    scope = {
+        "type": "http",
+        "asgi": {"version": "3.0", "spec_version": "2.3"},  # lo que anuncia uvicorn 0.54
+        "http_version": "1.1",
+        "method": "POST",
+        "scheme": "https",
+        "path": "/playground/stream",
+        "raw_path": b"/playground/stream",
+        "root_path": "",
+        "query_string": b"",
+        "headers": [
+            (b"host", b"testserver"),
+            (b"content-type", b"application/json"),
+            (b"content-length", str(len(body)).encode()),
+            (b"cookie", cookie.encode()),
+            (b"x-csrf-token", token.encode()),
+        ],
+        "client": ("127.0.0.1", 50000),
+        "server": ("testserver", 443),
+    }
+    sent: list[dict] = []
+
+    async def drive() -> None:
+        five_chunks = anyio.Event()
+        body_done = False
+
+        async def receive() -> dict:
+            nonlocal body_done
+            if not body_done:
+                body_done = True
+                return {"type": "http.request", "body": body, "more_body": False}
+            await five_chunks.wait()
+            return {"type": "http.disconnect"}  # la usuaria cierra la pestaña
+
+        async def send(message: dict) -> None:
+            sent.append(message)
+            if sum(1 for m in sent if m.get("body")) >= 5:
+                five_chunks.set()
+
+        with anyio.fail_after(10):
+            await app(scope, receive, send)
+
+    gc.disable()  # sin el arreglo, solo el GC cerraba el generador colgado
+    try:
+        anyio.run(drive)
+        assert sent[0]["status"] == 200
+        assert closed.wait(2), "el generador del backend sigue suspendido tras la desconexión"
+        assert lock.acquire(timeout=2), "el lock del modelo quedó tomado tras la desconexión"
+        lock.release()
+    finally:
+        gc.enable()
+
+
+def test_detail_control_token_row_header_is_never_empty(env):
+    """Regresión: 'Celda de token vacía en la tabla de señales para tokens de control (th sin nombre
+    accesible)'. Un token de control queda vacío tras `clean`: el th muestra su code point."""
+    from _panel_support import PanelBackend
+
+    runtime, org, users, app = env
+    activate_detector(runtime, org)
+    runtime.backend = PanelBackend(["Belgrano", "\x1d", " nació", " en", " 18", "20", "\x00", "."])
+    done = play(runtime, users["owner"])
+    html = login(app, users["viewer"]).get(f"/generations/{done['trace_id']}?umbral=0.2").text
+    signals = html.split('id="sig-title"')[1]
+    headers = re.findall(r'<th scope="row"><code>(.*?)</code></th>', signals, re.S)
+    assert headers and all(h.strip() for h in headers), headers
+    assert "U+001D" in headers
+    assert panel.token_label("\x00") == "U+0000" and panel.token_label(" ") == "U+0020"
+    assert panel.token_label("") == "·" and panel.token_label(None) == "·"
+    assert panel.token_label(" en") == " en"
+
+
+# --- regresiones de layout y accesibilidad (estructura; la medida real está en tests/e2e/test_e2e_layout.py)
+
+
+STATIC = TEMPLATES.parent / "static"
+
+
+def _css_rule(css: str, selector: str) -> str:
+    match = re.search(r"(?:^|\})\s*" + re.escape(selector) + r"\s*\{([^}]*)\}", css, re.M)
+    assert match, f"falta la regla {selector}"
+    return match.group(1)
+
+
+def test_every_table_scroll_wrapper_stacks_or_is_focusable():
+    """Regresión: 'Tablas angostas de alphas sin foco: violación serious scrollable-region-focusable
+    a 375 px y a 320 px (reflow)'. Un `.vg-table-wrap` que puede scrollear necesita apilarse en
+    tarjetas (vg-table-cards con data-label) o recibir foco de teclado."""
+    offenders = []
+    for path in sorted(TEMPLATES.glob("*.html")):
+        html = path.read_text(encoding="utf-8")
+        for m in re.finditer(r'<div class="vg-table-wrap"([^>]*)>\s*<table class="([^"]*)"', html):
+            attrs, table_cls = m.groups()
+            focusable = 'tabindex="0"' in attrs and "role=" in attrs
+            if "vg-table-cards" not in table_cls.split() and not focusable:
+                offenders.append(path.name)
+    assert offenders == []
+    for name in ("policies.html", "detector.html"):
+        html = (TEMPLATES / name).read_text(encoding="utf-8")
+        for row in re.findall(r"\{% for t in thresholds %\}\s*(<tr.*?</tr>)", html, re.S):
+            cells = re.findall(r"<t[hd] [^>]*>", row)
+            assert cells and all("data-label=" in c for c in cells), (name, cells)
+
+
+def test_table_cells_do_not_break_inside_words():
+    """Regresión: 'overflow-wrap:anywhere global en body parte palabras y números dentro de las
+    tablas'. anywhere achica el min-content: solo va en componentes puntuales, nunca en body."""
+    css = (STATIC / "app.css").read_text(encoding="utf-8")
+    body = _css_rule(css, "body")
+    assert "overflow-wrap: anywhere" not in body and "overflow-wrap: break-word" in body
+    assert "overflow-wrap: anywhere" in _css_rule(css, ".vg-break, .vg-break code")
+    audit = (TEMPLATES / "audit.html").read_text(encoding="utf-8")
+    assert '<td data-label="Detalle" class="vg-break">' in audit
+
+
+def test_placeholder_uses_muted_token():
+    """Regresión: 'El placeholder de los inputs no cumple 4,5:1 en tema oscuro (3,75:1)'. El token
+    --vg-text-muted ya cumple 4,5:1 en claro y oscuro (lo valida test_contrast)."""
+    css = (STATIC / "app.css").read_text(encoding="utf-8")
+    rule = _css_rule(css, "::placeholder")
+    assert "color: var(--vg-text-muted)" in rule and "opacity: 1" in rule
+
+
+def test_form_card_heading_after_csrf_input_has_no_top_margin():
+    """Regresión: 'La tarjeta Editar la política tiene un hueco superior de unos 42 px: el h2
+    conserva su margin-top'. En un form.vg-card el primer hijo es el input hidden del CSRF."""
+    css = (STATIC / "app.css").read_text(encoding="utf-8")
+    assert re.search(
+        r'\.vg-card > input\[type="hidden"\]:first-child \+ :is\(h2, h3\)[^{]*\{\s*margin-top: 0;', css
+    )
+    html = (TEMPLATES / "policies.html").read_text(encoding="utf-8")
+    assert re.search(r'class="vg-card vg-form"[^>]*>\s*\{\{ csrf\(\) \}\}\s*<h2', html)
+
+
+def test_single_line_controls_share_one_height():
+    """Regresión: 'Los controles del filtro de Generaciones y Auditoría tienen alturas distintas y
+    desalinean los labels'."""
+    css = (STATIC / "app.css").read_text(encoding="utf-8")
+    rule = re.search(r'input\[type="date"\], select \{([^}]*)\}', css)
+    assert rule and "height: 2.5rem" in rule.group(1)
+    assert "min-height: 2.5rem" in _css_rule(css, ".vg-form-inline .vg-btn")
+
+
+def test_charts_keep_readable_scale():
+    """Regresión: 'Los gráficos SVG escalan al ancho del contenedor: texto de 6,7 px en el reporte
+    del detector, de 21 px en Rendimiento y de 58 px en el heatmap'."""
+    css = (STATIC / "app.css").read_text(encoding="utf-8")
+    assert "max-width: 30rem" in _css_rule(css, ".vg-figure svg")  # viewBox de 480: escala <= 1
+    assert "minmax(min(34rem, 100%), 1fr)" in _css_rule(css, ".vg-grid-charts")
+    assert 'class="vg-grid-charts"' in (TEMPLATES / "detector.html").read_text(encoding="utf-8")
+    from vigia import charts
+
+    svg = panel.fixed_size_svg(charts.heatmap_svg([[0.5, 0.5], [0.25, 0.75]], ["0", "1"], ["0", "1"]))
+    vb_w, vb_h = map(float, re.search(r'viewBox="0 0 (\S+) (\S+)"', svg).groups())
+    w, h = map(int, re.search(r'width="(\d+)" height="(\d+)"', svg).groups())
+    assert (w, h) == (round(vb_w * panel.HEATMAP_SCALE), round(vb_h * panel.HEATMAP_SCALE))
+    assert 'width="100%"' not in svg and svg.endswith("</svg>")
+    assert panel.fixed_size_svg("<svg>x</svg>") == "<svg>x</svg>"
+
+
+def test_model_page_heatmap_has_pixel_size(env):
+    """Regresión del heatmap de /model: sin tamaño intrínseco se estiraba a 937 px (escala 5,3)."""
+    runtime, _, users, app = env
+    play(runtime, users["owner"])
+    html = login(app, users["viewer"]).get("/model").text
+    tag = re.search(r'<svg [^>]*class="vg-chart vg-heatmap"[^>]*>', html).group(0)
+    assert re.search(r'width="\d+" height="\d+"', tag) and 'width="100%"' not in tag
+
+
+def test_playground_js_keeps_focus_on_submit_while_busy():
+    """Regresión: 'El foco se pierde al body al generar en el playground con teclado'. Un botón con
+    `disabled` pierde el foco; el doble envío lo bloquea `busy`."""
+    js = (STATIC / "app.js").read_text(encoding="utf-8")
+    assert "submit.disabled" not in js
+    assert 'submit.setAttribute("aria-disabled", "true")' in js and "if (busy) { return; }" in js
+
+
+# --- regresiones de la ronda 2 del panel -----------------------------------------------------------
+
+MAIN_RE = re.compile(r"<main\b.*?</main>", re.S)
+
+
+def _main_links(html: str) -> list[str]:
+    main = MAIN_RE.search(html)
+    assert main, "la página no tiene <main>"
+    return re.findall(r'<a [^>]*href="([^"]+)"', main.group(0))
+
+
+def _expire_sessions(runtime, email: str) -> None:
+    from datetime import timedelta
+
+    from vigia_ee.db import lookup_user_by_email, to_iso, utcnow
+
+    uid = lookup_user_by_email(runtime.db, email)["id"]
+    ago = to_iso(utcnow() - timedelta(minutes=31))
+    runtime.db.execute("UPDATE sessions SET last_seen_at = ? WHERE user_id = ?", (ago, uid))
+
+
+def test_error_page_after_a_failed_post_links_to_the_form_page_never_to_the_post_route(env):
+    """Regresión: 'La página de error del panel ofrece Reintentar hacia la ruta POST-only que falló;
+    el enlace da 405 en JSON'. Un POST fallido vuelve a la página del formulario; un 401, por el login."""
+    runtime, org, users, app = env
+    trace_id = play(runtime, users["owner"])["trace_id"]
+    owner = login(app, users["owner"])
+    token = csrf_of(owner)
+    resp = owner.post(f"/generations/{trace_id}/delete", data={"csrf_token": token})
+    assert resp.status_code == 422 and "Confirmá el borrado" in resp.text
+    links = _main_links(resp.text)
+    assert f"/generations/{trace_id}" in links and f"/generations/{trace_id}/delete" not in links
+    assert "Volver al formulario" in resp.text
+    # Un POST de la cola de revisión con la sesión vencida: el enlace pasa por el login con next.
+    item_id = runtime.repo(org).create_review_item(trace_id, span_idx=None, min_reviewers=1)
+    _expire_sessions(runtime, users["owner"])
+    expired = owner.post(f"/review/{item_id}/decide", data={"csrf_token": token, "label": "correct"})
+    assert expired.status_code == 401 and "Sesión vencida" in expired.text
+    assert f"/login?next=%2Freview%2F{item_id}" in _main_links(expired.text)
+    # /review/next es una ruta literal: no puede volver a GET /review/{item_id} con id "next".
+    anon = TestClient(app, base_url="https://testserver")
+    nxt = anon.post("/review/next", data={})
+    assert nxt.status_code == 401 and "/login?next=%2Freview" in _main_links(nxt.text)
+    assert "next=%2Freview%2Fnext" not in nxt.text
+
+
+def test_every_post_route_error_page_links_only_to_working_html_pages(env):
+    """Regresión: 'La página de error del panel ofrece Reintentar hacia la ruta POST-only que falló'.
+    Ningún enlace de la página de error de un POST puede terminar en un 405 o en JSON."""
+    _, _, _, app = env
+    anon = TestClient(app, base_url="https://testserver")
+    checked = 0
+    for template, path, _spec in _post_routes(app):
+        resp = anon.post(path, data={}, follow_redirects=False)
+        if resp.status_code < 400 or not resp.headers.get("content-type", "").startswith("text/html"):
+            continue
+        for href in _main_links(resp.text):
+            follow = anon.get(href)
+            assert follow.status_code == 200, (template, href, follow.status_code)
+            assert follow.headers["content-type"].startswith("text/html"), (template, href)
+        checked += 1
+    assert checked >= 20
+
+
+def test_logout_with_an_expired_session_clears_cookie_and_lands_on_login(env):
+    """Regresión: 'Salir con la sesión vencida muestra Sesión vencida (401) en /logout en lugar de
+    llevar al login y borrar la cookie'."""
+    runtime, _, users, app = env
+    client = login(app, users["viewer"])
+    token = csrf_of(client)
+    _expire_sessions(runtime, users["viewer"])
+    resp = client.post("/logout", data={"csrf_token": token}, follow_redirects=False)
+    assert resp.status_code == 303 and resp.headers["location"] == "/login?ok=logged_out"
+    cookie = resp.headers["set-cookie"]
+    assert SESSION_COOKIE in cookie and "Max-Age=0" in cookie
+    # Sin sesión: un request que el navegador declara cross-site sigue rechazado.
+    anon = TestClient(app, base_url="https://testserver")
+    cross = anon.post("/logout", headers={"Sec-Fetch-Site": "cross-site"}, follow_redirects=False)
+    assert cross.status_code == 403
+    # Con sesión vigente, el CSRF sigue siendo obligatorio (sin logout forzado cross-site).
+    live = login(app, users["viewer"])
+    assert live.post("/logout", data={}, follow_redirects=False).status_code == 403
+    assert live.get("/account", follow_redirects=False).status_code == 200
+
+
+def test_playground_counts_against_the_tenant_quota(tmp_path):
+    """Regresión: 'El playground no aplica la cuota por tenant: una org genera sin límite con el
+    modelo compartido'. El formulario y el stream consumen la misma cuota que la API (P-33)."""
+    runtime = make_runtime(tmp_path, tenant_rate_per_minute=2)
+    try:
+        org = runtime.create_org("Cuota")
+        email = add_user(runtime, org, "reviewer")
+        client = login(make_app(runtime), email)
+        token = csrf_of(client, "/playground")
+        data = {"csrf_token": token, "prompt": "hola", "max_tokens": "2", "temperature": "0"}
+        codes = [client.post("/playground", data=data) for _ in range(3)]
+        assert [r.status_code for r in codes] == [200, 200, 429]
+        assert int(codes[-1].headers["retry-after"]) >= 1
+        assert "límite de generaciones por minuto" in codes[-1].text and 'role="alert"' in codes[-1].text
+        stream = client.post(
+            "/playground/stream", json={"prompt": "hola", "max_tokens": 2}, headers={"X-CSRF-Token": token}
+        )
+        assert stream.status_code == 429 and stream.json()["error"] == "rate_limited"
+        assert int(stream.headers["retry-after"]) >= 1
+        assert len(runtime.repo(org).list_traces(limit=100)[0]) == 2
+        js = (STATIC / "app.js").read_text(encoding="utf-8")
+        assert "resp.status === 429" in js
+    finally:
+        runtime.close()
+
+
+def test_focus_is_not_hidden_under_the_sticky_topbar():
+    """Regresión: 'El foco de teclado queda oculto bajo la barra superior sticky al retroceder con
+    Shift+Tab (WCAG 2.4.11 AA)'. scroll-padding-top cubre la barra y, si existe, el aviso sticky."""
+    css = (STATIC / "app.css").read_text(encoding="utf-8")
+    assert re.search(r"html \{[^}]*scroll-padding-top: 4rem", css)
+    assert re.search(r"html:has\(\.vg-unverified\) \{[^}]*scroll-padding-top: 7\.5rem", css)
+
+
+def test_charts_never_scale_their_text_below_10px(env):
+    """Regresión: 'El texto de los gráficos SVG baja de 10 px: 9,7 px en el resumen de escritorio y
+    6,4 px a 375 px'. El SVG mide siempre 30rem dentro de una región con scroll y foco de teclado."""
+    runtime, _, users, app = env
+    css = (STATIC / "app.css").read_text(encoding="utf-8")
+    assert "min-width: 30rem" in _css_rule(css, ".vg-chart-scroll svg")
+    assert "overflow-x: auto" in _css_rule(css, ".vg-chart-scroll")
+    play(runtime, users["owner"])
+    client = login(app, users["viewer"])
+    region_re = re.compile(
+        r'<div class="vg-chart-scroll" tabindex="0" role="region" aria-labelledby="([^"]+)">'
+    )
+    for path in ("/", "/performance"):
+        html = client.get(path).text
+        region = region_re.search(html)
+        assert region, path
+        assert f'<title id="{region.group(1)}">' in html
+    overview = (TEMPLATES / "overview.html").read_text(encoding="utf-8")
+    assert '<div class="vg-grid-charts">' in overview and "vg-grid-2" not in overview
+
+
+def test_highlight_levels_stay_distinct_in_forced_colors():
+    """Regresión: 'En modo de colores forzados los tres niveles de resaltado se ven idénticos y las
+    muestras de la leyenda pierden su texto'."""
+    css = (STATIC / "app.css").read_text(encoding="utf-8")
+    block = re.search(r"@media \(forced-colors: active\) \{(.*?)\n\}", css, re.S)
+    assert block, "falta el bloque forced-colors"
+    body = block.group(1)
+    assert "background: Mark" in body and "color: MarkText" in body and "text-underline-offset: 0" in body
+    assert "forced-color-adjust: none" in body
+    styles = {
+        lvl: re.search(r"\.vg-lvl-" + lvl + r" \{([^}]*)\}", body).group(1)
+        for lvl in ("low", "medium", "high")
+    }
+    assert "dotted" in styles["low"] and "dashed" in styles["medium"] and "double" in styles["high"]
+
+
+def test_form_rows_do_not_stretch_and_checkboxes_do_not_shrink():
+    """Regresión: 'El formulario del playground se estira y cambia sus espacios cuando crece la
+    tarjeta de respuesta' y 'El checkbox de confirmación de borrado en el detalle se achica a 13 px
+    cuando su label ocupa dos líneas'."""
+    css = (STATIC / "app.css").read_text(encoding="utf-8")
+    assert "align-content: start" in _css_rule(css, ".vg-form")
+    assert "flex-shrink: 0" in _css_rule(css, ".vg-check > input")
+    assert "align-items: flex-start" in _css_rule(css, ".vg-check")
+
+
+def test_users_table_rows_align_text_and_controls():
+    """Regresión: 'Tabla de usuarios en Configuración: el texto de las celdas queda arriba y los
+    controles más abajo, con alturas distintas entre select y botones'."""
+    css = (STATIC / "app.css").read_text(encoding="utf-8")
+    assert "vertical-align: middle" in _css_rule(css, ".vg-table tr:has(form) > *")
+    assert "height: 1.75rem" in _css_rule(css, ".vg-table form select")  # = min-height de .vg-btn-small
+    assert "min-height: 1.75rem" in _css_rule(css, ".vg-btn-small")
+    assert "vertical-align: middle" in _css_rule(css, ".vg-table form")
+
+
+def test_overview_empty_state_buttons_are_spaced(tmp_path):
+    """Regresión: 'Estado vacío del resumen: los botones Crear una API key y Probar en el playground
+    quedan pegados sin espacio'. trim_blocks borra el espacio entre los <a>: el gap lo da .vg-actions."""
+    runtime = make_runtime(tmp_path)
+    try:
+        org = runtime.create_org("Vacía")
+        html = login(make_app(runtime), add_user(runtime, org, "owner")).get("/").text
+        empty = re.search(r'<section class="vg-card vg-empty".*?</section>', html, re.S).group(0)
+        assert re.search(r'<div class="vg-actions">\s*<a class="vg-btn" href="/settings#keys">', empty)
+        assert "Probar en el playground" in empty
+        css = (STATIC / "app.css").read_text(encoding="utf-8")
+        assert "justify-content: center" in _css_rule(css, ".vg-empty .vg-actions")
+        assert "text-align: left" in _css_rule(css, ".vg-empty pre")
     finally:
         runtime.close()

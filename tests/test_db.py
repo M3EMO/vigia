@@ -10,7 +10,7 @@ import pytest
 
 from vigia.contracts import ScoredToken, Span
 from vigia_ee import db as dbm
-from vigia_ee.db import Database, TenantScopedRepository, create_org, new_id, utcnow
+from vigia_ee.db import MIGRATIONS, Database, TenantScopedRepository, create_org, new_id, utcnow
 
 
 @pytest.fixture
@@ -50,14 +50,14 @@ def _trace(repo, text="hola mundo", **kw):
 def test_migrations_apply_once_and_pragmas_are_set(tmp_path):
     path = tmp_path / "m.db"
     first = Database(path)
-    assert first.schema_version() == 1
+    assert first.schema_version() == len(MIGRATIONS)
     assert first.query_one("PRAGMA foreign_keys")["foreign_keys"] == 1
     assert first.query_one("PRAGMA journal_mode")["journal_mode"] == "wal"
     assert int(first.query_one("PRAGMA busy_timeout")["timeout"]) == 5000
     first.close()
     second = Database(path)
-    assert second.migrate() == 1
-    assert len(second.query("SELECT * FROM schema_migrations")) == 1
+    assert second.migrate() == len(MIGRATIONS)
+    assert len(second.query("SELECT * FROM schema_migrations")) == len(MIGRATIONS)
     second.close()
 
 

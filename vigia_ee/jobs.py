@@ -1,4 +1,4 @@
-"""Cola de jobs persistente sobre la tabla `jobs` de SQLite y worker en un hilo.
+"""Cola de jobs persistente sobre la tabla `jobs` de SQLite y workers en hilos (uno o más por carril).
 
 Reglas de este módulo:
 
@@ -8,8 +8,16 @@ Reglas de este módulo:
 - El claim es atómico: `BEGIN IMMEDIATE` toma el lock de escritura antes de elegir el job, así dos
   workers (o dos procesos) nunca reclaman el mismo.
 - Un job en `running` guarda la hora del claim en `updated_at`. Si el proceso muere, el job queda
-  huérfano; `recover_orphans()` (que corre al arrancar el worker) lo devuelve a la cola cuando el
-  lease venció, o lo marca `failed` si ya agotó sus intentos.
+  huérfano; `recover_orphans()` lo devuelve a la cola cuando el lease venció, o lo marca `failed`
+  si ya agotó sus intentos. Corre al arrancar y también cada `recover_interval` segundos dentro del
+  worker: un huérfano reciente (lease vigente al reiniciar) vuelve a la cola apenas vence el lease.
+  Nunca toca los jobs que este proceso está ejecutando.
+- Carriles: cada tipo de job se registra en un carril (`DEFAULT_LANE` si no se indica) y cada carril
+  tiene su propio hilo. Un carril lento (por ejemplo, webhooks a un destino colgado) no atrasa la
+  purga ni la calibración. `depth(lane=...)` mide un carril solo, para la readiness.
+- Dentro de un carril, `configure_lane` da varios hilos y un tope de jobs en curso por tenant. Un
+  tenant lento ocupa a lo sumo su tope de hilos; el resto sigue en los hilos libres. El tope es por
+  proceso y los jobs de sistema cuentan como un tenant más.
 - Ante una excepción del handler, el job vuelve a la cola con backoff exponencial y jitter
   determinista (mismo job y mismo intento → mismo retraso, así los tests son reproducibles). Tras
   `max_attempts`, queda `failed`. El error guardado es `Tipo: mensaje`, nunca el stack trace.
@@ -40,6 +48,10 @@ DEFAULT_LEASE = timedelta(minutes=15)
 DEFAULT_BACKOFF_BASE = 5.0  # segundos tras el primer fallo
 DEFAULT_BACKOFF_MAX = 3600.0
 JITTER_FRACTION = 0.25
+DEFAULT_LANE = "default"
+MAX_LANE_WORKERS = 32
+MAX_RECOVER_INTERVAL_S = 60.0
+_SYSTEM_ORG = ""  # clave del tope por tenant para los jobs de sistema (org_id NULL; nunca '')
 
 _KIND_RE = re.compile(r"^[a-z][a-z0-9_.-]{0,31}$")
 
@@ -57,6 +69,7 @@ class PermanentJobError(Exception):
 class _Registration:
     handler: Handler
     retry_schedule: tuple[float, ...] | None
+    lane: str
 
 
 def _check_kind(kind: str) -> str:
@@ -72,6 +85,11 @@ def format_error(exc: BaseException) -> str:
     return text[:MAX_ERROR_CHARS]
 
 
+def _worker_key(lane: str, index: int) -> str:
+    """Clave del hilo `index` de un carril. El primero usa el nombre del carril ('#' no es válido)."""
+    return lane if index == 0 else f"{lane}#{index}"
+
+
 def _row_to_job(row: Mapping[str, Any]) -> dict[str, Any]:
     job = dict(row)
     job["payload"] = json.loads(job.pop("payload_json"))
@@ -85,7 +103,7 @@ class JobQueue:
 
     `clock` devuelve la hora UTC (inyectable en tests). `lease` es cuánto puede durar un job en
     `running` antes de considerarse huérfano. `poll_interval` es la espera del worker cuando la cola
-    está vacía.
+    está vacía. `recover_interval` (atributo, segundos) es cada cuánto el worker busca huérfanos.
     """
 
     def __init__(
@@ -110,13 +128,38 @@ class JobQueue:
         self.poll_interval = float(poll_interval)
         self.backoff_base = float(backoff_base)
         self.backoff_max = float(backoff_max)
+        self.recover_interval = max(
+            self.poll_interval, min(lease.total_seconds() / 4, MAX_RECOVER_INTERVAL_S)
+        )
         self._handlers: dict[str, _Registration] = {}
         self._handlers_lock = threading.Lock()
-        self._thread: threading.Thread | None = None
+        self._threads: dict[str, threading.Thread] = {}  # clave de hilo (_worker_key) -> hilo
+        self._threads_lock = threading.Lock()
+        self._lane_workers: dict[str, int] = {}  # carril -> hilos; 1 si no se configuró
+        self._started = False
         self._stop = threading.Event()
         self._state_lock = threading.Lock()
-        self.last_beat: float | None = None  # time.monotonic() del último latido del worker
-        self._job_started: float | None = None  # monotonic del inicio del job en curso
+        self._beats: dict[str, float] = {}  # clave de hilo -> time.monotonic() del último latido
+        self._job_started: dict[str | None, float] = {}  # clave de hilo -> monotonic del job en curso
+        # Ids que este proceso ejecuta -> (carril, tenant) si cuenta para el tope por tenant.
+        self._inflight: dict[str, tuple[str, str] | None] = {}
+        self._org_limits: dict[str, int] = {}  # carril -> jobs en curso por tenant
+        self._running_orgs: dict[str, dict[str, int]] = {}  # carril -> tenant -> jobs en curso
+        self._next_recover: float | None = None
+
+    @property
+    def last_beat(self) -> float | None:
+        """`time.monotonic()` del último latido del carril por defecto."""
+        with self._state_lock:
+            return self._beats.get(DEFAULT_LANE)
+
+    @last_beat.setter
+    def last_beat(self, value: float | None) -> None:
+        with self._state_lock:
+            if value is None:
+                self._beats.pop(DEFAULT_LANE, None)
+            else:
+                self._beats[DEFAULT_LANE] = value
 
     # -- reloj --
 
@@ -126,15 +169,22 @@ class JobQueue:
     # -- registro --
 
     def register(
-        self, kind: str, handler: Handler, *, retry_schedule: Sequence[float] | None = None
+        self,
+        kind: str,
+        handler: Handler,
+        *,
+        retry_schedule: Sequence[float] | None = None,
+        lane: str = DEFAULT_LANE,
     ) -> None:
         """Asocia un handler a un tipo de job.
 
         `handler(job)` recibe el dict del job (con `payload` ya parseado) y devuelve un dict de
         resultado JSON-serializable o None. Con `retry_schedule`, el retraso tras el fallo n es
         `retry_schedule[n-1]` (el último valor se repite); sin él, backoff exponencial con jitter.
+        `lane` elige el hilo que lo ejecuta; un carril nuevo arranca su hilo si el worker ya corre.
         """
         _check_kind(kind)
+        _check_kind(lane)
         if not callable(handler):
             raise TypeError("el handler debe ser invocable")
         schedule = None
@@ -143,11 +193,64 @@ class JobQueue:
             if not schedule or any(s < 0 for s in schedule):
                 raise ValueError("retry_schedule debe tener retrasos no negativos")
         with self._handlers_lock:
-            self._handlers[kind] = _Registration(handler, schedule)
+            self._handlers[kind] = _Registration(handler, schedule, lane)
+        with self._threads_lock:
+            if self._started and not self._stop.is_set():
+                self._spawn_locked(lane)
 
-    def registered_kinds(self) -> tuple[str, ...]:
+    def registered_kinds(self, lane: str | None = None) -> tuple[str, ...]:
+        """Tipos registrados, de todos los carriles o de uno."""
         with self._handlers_lock:
-            return tuple(sorted(self._handlers))
+            return tuple(sorted(k for k, r in self._handlers.items() if lane is None or r.lane == lane))
+
+    def lanes(self) -> tuple[str, ...]:
+        """Carriles con hilo propio: siempre el por defecto, más los de los tipos registrados."""
+        with self._handlers_lock:
+            return tuple(sorted({DEFAULT_LANE, *(r.lane for r in self._handlers.values())}))
+
+    def configure_lane(self, lane: str, *, workers: int = 1, max_running_per_org: int | None = None) -> None:
+        """Fija los hilos de un carril y el tope de jobs en curso por tenant dentro del carril.
+
+        Con `workers > max_running_per_org`, un tenant con jobs lentos nunca toma todos los hilos:
+        los jobs de los otros tenants corren en los hilos libres. `None` quita el tope. Si el
+        worker ya corre, arranca los hilos que falten; los sobrantes terminan solos.
+        """
+        _check_kind(lane)
+        if isinstance(workers, bool) or not isinstance(workers, int) or not 1 <= workers <= MAX_LANE_WORKERS:
+            raise ValueError(f"workers debe estar entre 1 y {MAX_LANE_WORKERS}")
+        if max_running_per_org is not None and (
+            isinstance(max_running_per_org, bool)
+            or not isinstance(max_running_per_org, int)
+            or max_running_per_org < 1
+        ):
+            raise ValueError("max_running_per_org debe ser un entero positivo o None")
+        with self._state_lock:
+            if max_running_per_org is None:
+                self._org_limits.pop(lane, None)
+            else:
+                self._org_limits[lane] = max_running_per_org
+        with self._threads_lock:
+            self._lane_workers[lane] = workers
+            if self._started and not self._stop.is_set() and lane in self.lanes():
+                self._spawn_locked(lane)
+
+    def _lane_filter(self, lane: str | None) -> tuple[str, list[Any]] | None:
+        """Condición SQL sobre `kind` para un carril. None si el carril no puede tener jobs.
+
+        El carril por defecto incluye además los tipos sin registrar (cuentan para la profundidad).
+        """
+        if lane is None:
+            return "1", []
+        if lane == DEFAULT_LANE:
+            with self._handlers_lock:
+                others = sorted(k for k, r in self._handlers.items() if r.lane != DEFAULT_LANE)
+            if not others:
+                return "1", []
+            return f"kind NOT IN ({', '.join('?' for _ in others)})", list(others)
+        mine = self.registered_kinds(lane)
+        if not mine:
+            return None
+        return f"kind IN ({', '.join('?' for _ in mine)})", list(mine)
 
     # -- encolado y lectura --
 
@@ -234,16 +337,23 @@ class JobQueue:
         rows = self.db.query(sql + " ORDER BY run_after, rowid LIMIT ?", (*params, MAX_LIST))
         return [_row_to_job(r) for r in rows]
 
-    def depth(self, *, include_scheduled: bool = False) -> int:
-        """Jobs pendientes: en cola y vencidos (o también programados a futuro) más los que corren."""
+    def depth(self, *, include_scheduled: bool = False, lane: str | None = None) -> int:
+        """Jobs pendientes: en cola y vencidos (o también programados a futuro) más los que corren.
+
+        Sin `lane` cuenta todos los carriles (la métrica). Con `lane` cuenta solo ese carril: la
+        readiness usa `DEFAULT_LANE` para que la cola de webhooks de un tenant no saque el nodo.
+        """
+        lane_filter = self._lane_filter(lane)
+        if lane_filter is None:
+            return 0
+        lane_sql, params = lane_filter
         if include_scheduled:
-            row = self.db.query_one("SELECT COUNT(*) AS n FROM jobs WHERE state IN ('queued', 'running')")
+            due = "state IN ('queued', 'running')"
         else:
-            row = self.db.query_one(
-                "SELECT COUNT(*) AS n FROM jobs WHERE state = 'running' "
-                "OR (state = 'queued' AND run_after <= ?)",
-                (to_iso(self.now()),),
-            )
+            due = "(state = 'running' OR (state = 'queued' AND run_after <= ?))"
+            params = [to_iso(self.now()), *params]
+        sql = f"SELECT COUNT(*) AS n FROM jobs WHERE {due} AND {lane_sql}"  # noqa: S608 - solo '?'
+        row = self.db.query_one(sql, tuple(params))
         return int(row["n"]) if row else 0
 
     def purge_finished(self, before: datetime, *, org_id: str | None) -> int:
@@ -266,38 +376,53 @@ class JobQueue:
         return min(self.backoff_max, base * (1 + jitter))
 
     def recover_orphans(self) -> int:
-        """Devuelve a la cola los jobs `running` con lease vencido. Devuelve cuántos tocó."""
+        """Devuelve a la cola los jobs `running` con lease vencido. Devuelve cuántos tocó.
+
+        Excluye los jobs que este proceso está ejecutando: un job largo propio no es huérfano.
+        """
         now = self.now()
         cutoff = to_iso(now - self.lease)
         stamp = to_iso(now)
+        with self._state_lock:
+            busy = sorted(self._inflight)
+        orphan = "state = 'running' AND updated_at < ?"
+        if busy:
+            orphan += f" AND id NOT IN ({', '.join('?' for _ in busy)})"
         with self.db.transaction():
             failed = self.db.execute(
-                "UPDATE jobs SET state = 'failed', updated_at = ?, "
+                "UPDATE jobs SET state = 'failed', updated_at = ?, "  # noqa: S608 - solo '?'
                 "error = 'LeaseExpired: el job quedó huérfano y agotó sus intentos' "
-                "WHERE state = 'running' AND updated_at < ? AND attempts >= max_attempts",
-                (stamp, cutoff),
+                f"WHERE {orphan} AND attempts >= max_attempts",
+                (stamp, cutoff, *busy),
             )
             requeued = self.db.execute(
-                "UPDATE jobs SET state = 'queued', run_after = ?, updated_at = ?, "
-                "error = 'LeaseExpired: el job quedó huérfano y vuelve a la cola' "
-                "WHERE state = 'running' AND updated_at < ?",
-                (stamp, stamp, cutoff),
+                "UPDATE jobs SET state = 'queued', run_after = ?, updated_at = ?, "  # noqa: S608
+                f"error = 'LeaseExpired: el job quedó huérfano y vuelve a la cola' WHERE {orphan}",
+                (stamp, stamp, cutoff, *busy),
             )
         if failed or requeued:
             log_event(_log, "jobs_orphans_recovered", level=logging.WARNING)
         return failed + requeued
 
-    def _claim(self) -> dict[str, Any] | None:
-        kinds = self.registered_kinds()
+    def _claim(self, lane: str | None = None) -> dict[str, Any] | None:
+        kinds = self.registered_kinds(lane)
         if not kinds:
             return None
         now = to_iso(self.now())
         marks = ", ".join("?" for _ in kinds)
         with self.db.transaction():
+            # Dentro de la transacción: dos hilos del carril nunca ven el mismo conteo por tenant.
+            with self._state_lock:
+                limit = self._org_limits.get(lane) if lane is not None else None
+                running = self._running_orgs.get(lane, {}) if lane is not None else {}
+                full_orgs = [] if limit is None else sorted(o for o, n in running.items() if n >= limit)
+            org_sql = ""
+            if full_orgs:
+                org_sql = f" AND COALESCE(org_id, '') NOT IN ({', '.join('?' for _ in full_orgs)})"
             row = self.db.query_one(
-                f"SELECT id FROM jobs WHERE state = 'queued' AND run_after <= ? AND kind IN ({marks}) "  # noqa: S608
-                "ORDER BY run_after, rowid LIMIT 1",
-                (now, *kinds),
+                f"SELECT id FROM jobs WHERE state = 'queued' AND run_after <= ? AND kind IN ({marks})"  # noqa: S608
+                f"{org_sql} ORDER BY run_after, rowid LIMIT 1",
+                (now, *kinds, *full_orgs),
             )
             if row is None:
                 return None
@@ -309,17 +434,43 @@ class JobQueue:
             if claimed != 1:
                 return None
             full = self.db.query_one("SELECT * FROM jobs WHERE id = ?", (row["id"],))
+            if full is not None:  # dentro de la transacción: la recuperación nunca lo ve sin marcar
+                with self._state_lock:
+                    slot = None
+                    if limit is not None and lane is not None:
+                        slot = (lane, full["org_id"] or _SYSTEM_ORG)
+                        counts = self._running_orgs.setdefault(lane, {})
+                        counts[slot[1]] = counts.get(slot[1], 0) + 1
+                    self._inflight[full["id"]] = slot
         return _row_to_job(full) if full else None
 
-    def run_once(self) -> dict[str, Any] | None:
-        """Reclama y ejecuta un job vencido. Devuelve el job final o None si no había ninguno."""
-        job = self._claim()
+    def _release(self, job_id: str) -> None:
+        """Saca el job de los que corren y descuenta su tenant del tope. Requiere `_state_lock`."""
+        slot = self._inflight.pop(job_id, None)
+        if slot is None:
+            return
+        lane, org = slot
+        counts = self._running_orgs.get(lane, {})
+        counts[org] = counts.get(org, 1) - 1
+        if counts[org] <= 0:
+            del counts[org]
+
+    def run_once(self, lane: str | None = None) -> dict[str, Any] | None:
+        """Reclama y ejecuta un job vencido (de un carril o de cualquiera).
+
+        Devuelve el job final o None si no había ninguno.
+        """
+        return self._run_once(lane, lane)
+
+    def _run_once(self, lane: str | None, worker: str | None) -> dict[str, Any] | None:
+        """`run_once` desde el hilo `worker` (clave de su latido y de su job en curso)."""
+        job = self._claim(lane)
         if job is None:
             return None
         with self._handlers_lock:
             reg = self._handlers.get(job["kind"])
         with self._state_lock:
-            self._job_started = time.monotonic()
+            self._job_started[worker] = time.monotonic()
         try:
             if reg is None:  # desregistrado entre el claim y la ejecución
                 raise PermanentJobError(f"no hay handler para {job['kind']!r}")
@@ -335,7 +486,8 @@ class JobQueue:
             )
         finally:
             with self._state_lock:
-                self._job_started = None
+                self._job_started.pop(worker, None)
+                self._release(job["id"])
         row = self.db.query_one("SELECT * FROM jobs WHERE id = ?", (job["id"],))
         return _row_to_job(row) if row else None
 
@@ -370,56 +522,103 @@ class JobQueue:
 
     # -- worker --
 
-    def _beat(self) -> None:
+    def _beat(self, key: str = DEFAULT_LANE) -> None:
         with self._state_lock:
-            self.last_beat = time.monotonic()
+            self._beats[key] = time.monotonic()
 
-    def _loop(self) -> None:
+    def _maybe_recover(self) -> None:
+        """Busca huérfanos si pasó `recover_interval` desde la última vez (entre todos los carriles)."""
+        now = time.monotonic()
+        with self._state_lock:
+            if self._next_recover is not None and now < self._next_recover:
+                return
+            self._next_recover = now + self.recover_interval
+        self.recover_orphans()
+
+    def _loop(self, lane: str, index: int) -> None:
+        key = _worker_key(lane, index)
         while not self._stop.is_set():
-            self._beat()
+            if index >= self._lane_workers.get(lane, 1):  # el carril se achicó: este hilo sobra
+                with self._threads_lock:
+                    if self._threads.get(key) is threading.current_thread():
+                        del self._threads[key]
+                return
+            self._beat(key)
             try:
-                ran = self.run_once()
+                self._maybe_recover()
+                ran = self._run_once(lane, key)
             except Exception as exc:  # error de base: reintenta en el próximo ciclo
                 log_event(_log, "jobs_worker_error", level=logging.ERROR, error_type=type(exc).__name__)
                 ran = None
             if ran is None:
                 self._stop.wait(self.poll_interval)
 
+    def _spawn_locked(self, lane: str) -> None:
+        """Arranca los hilos del carril que no corren. Requiere `_threads_lock`."""
+        base = "vigia-jobs" if lane == DEFAULT_LANE else f"vigia-jobs-{lane}"
+        for index in range(self._lane_workers.get(lane, 1)):
+            key = _worker_key(lane, index)
+            current = self._threads.get(key)
+            if current is not None and current.is_alive():
+                continue
+            self._beat(key)
+            name = base if index == 0 else f"{base}-{index}"
+            thread = threading.Thread(target=self._loop, args=(lane, index), name=name, daemon=True)
+            self._threads[key] = thread
+            thread.start()
+
     def start(self) -> None:
-        """Recupera huérfanos y arranca el worker en un hilo daemon. Idempotente."""
-        if self._thread is not None and self._thread.is_alive():
-            return
-        self.recover_orphans()
-        self._stop.clear()
-        self._beat()
-        self._thread = threading.Thread(target=self._loop, name="vigia-jobs", daemon=True)
-        self._thread.start()
+        """Recupera huérfanos y arranca los hilos daemon de cada carril. Idempotente."""
+        with self._threads_lock:
+            running = self._threads.get(DEFAULT_LANE)
+            already = self._started and running is not None and running.is_alive()
+        if not already:
+            self.recover_orphans()
+            with self._state_lock:
+                self._next_recover = time.monotonic() + self.recover_interval
+            self._stop.clear()
+        with self._threads_lock:
+            self._started = True
+            for lane in self.lanes():
+                self._spawn_locked(lane)
 
     def stop(self, timeout: float = 5.0) -> bool:
-        """Pide al worker que termine y espera hasta `timeout`. Devuelve True si terminó."""
+        """Pide a los hilos que terminen y espera hasta `timeout`. Devuelve True si terminaron."""
         self._stop.set()
-        thread = self._thread
-        if thread is None:
-            return True
-        thread.join(timeout)
-        if thread.is_alive():
+        with self._threads_lock:
+            self._started = False
+            threads = dict(self._threads)
+        deadline = time.monotonic() + timeout
+        for thread in threads.values():
+            thread.join(max(0.0, deadline - time.monotonic()))
+        if any(t.is_alive() for t in threads.values()):
             return False
-        self._thread = None
+        with self._threads_lock:
+            for key, thread in threads.items():
+                if self._threads.get(key) is thread:
+                    del self._threads[key]
         return True
 
     def is_alive(self, max_age: float | None = None) -> bool:
-        """True si el hilo vive y late. Para `/readyz`.
+        """True si todos los hilos viven y laten. Para `/readyz`.
 
         Un job largo no late; cuenta como vivo mientras no supere el lease. `max_age` por defecto
         es `max(5 s, 3 × poll_interval)`.
         """
-        thread = self._thread
-        if thread is None or not thread.is_alive():
+        with self._threads_lock:
+            threads = dict(self._threads)
+        if DEFAULT_LANE not in threads or not all(t.is_alive() for t in threads.values()):
             return False
         limit = max_age if max_age is not None else max(5.0, 3 * self.poll_interval)
         now = time.monotonic()
+        lease_s = self.lease.total_seconds()
         with self._state_lock:
-            beat, started = self.last_beat, self._job_started
-        if beat is not None and now - beat <= limit:
-            return True
-        return started is not None and now - started <= self.lease.total_seconds()
+            beats, started = dict(self._beats), dict(self._job_started)
+        for key in threads:
+            beat, began = beats.get(key), started.get(key)
+            if beat is not None and now - beat <= limit:
+                continue
+            if began is not None and now - began <= lease_s:
+                continue
+            return False
+        return True

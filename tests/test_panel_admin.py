@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import re
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -348,7 +349,8 @@ def test_policies_inline_errors(env):
     low = post(admin, "/policies", {**base, "alpha": "0,1"})
     assert low.status_code == 422 and "umbrales desde alpha 0,20" in low.text
     ssrf = post(admin, "/policies", {**base, "rag_url": "http://169.254.169.254/latest"})
-    assert ssrf.status_code == 422 and 'aria-describedby="err-rag_url"' in ssrf.text
+    # El error y la ayuda del campo se anuncian juntos (test_panel_r3).
+    assert ssrf.status_code == 422 and 'aria-describedby="err-rag_url rag-url-hint"' in ssrf.text
     assert runtime.policy_for(org).version == 1
     assert post(login(app, users["rev1"]), "/policies", base).status_code == 403
 
@@ -524,3 +526,63 @@ def test_data_export_and_owner_only_delete(env):
     stale = TestClient(app, base_url="https://testserver", cookies={SESSION_COOKIE: raw})
     assert stale.get("/", follow_redirects=False).status_code == 303
     assert any(r["action"] == "org_delete" for r in audit.export_range(runtime.db, org))
+
+
+def test_data_delete_forgets_the_tenant_detector_in_runtime_and_metrics(env):
+    """Regresión: 'Borrar la organización (POST /data/delete) deja el detector del tenant borrado en
+    la cache del runtime y en /metrics'."""
+    runtime, org_a, _, app = env
+    org_b = runtime.create_org("Org Beta")
+    owner_b = add_user(runtime, org_b, "owner", "owner@beta.com.ar")
+    det_a = activate_detector(runtime, org_a)
+    det_b = activate_detector(runtime, org_b, make_detector(min_alpha=0.05))
+    assert det_a.id != det_b.id
+    assert runtime.detector_for(org_a).id == det_a.id and runtime.detector_for(org_b).id == det_b.id
+    assert det_b.id in runtime.metrics.render()
+    owner = login(app, owner_b)
+    gone = post(owner, "/data/delete", {"confirm": "yes", "confirm_name": "Org Beta"})
+    assert gone.status_code == 303 and runtime.repo(org_b).get_org() is None
+    text = runtime.metrics.render()
+    assert det_b.id not in text, "vigia_calibration_info sigue listando el detector del tenant borrado"
+    assert f'vigia_calibration_info{{detector_id="{det_a.id}"}} 1' in text
+    assert org_b not in runtime._detectors
+    assert runtime.detector_for(org_a).id == det_a.id  # la otra org no se toca
+
+
+# --- regresiones de la ronda 2 del panel -----------------------------------------------------------
+
+
+def test_calibration_job_page_title_follows_the_job_state(env):
+    """Regresión: 'El título de la página del job de calibración siempre dice Calibración en curso,
+    aunque el job terminó o falló' (WCAG 2.4.2)."""
+    runtime, org, users, app = env
+    content = b'{"id": "q1", "question": "hola", "response": "chau", "label": 0}\n'
+    dataset_id = runtime.repo(org).insert_dataset("chico", content, n_items=1)
+    admin = login(app, users["admin"])
+    resp = post(admin, "/calibration/start", {"dataset_id": dataset_id})
+    job_url = resp.headers["location"].split("?")[0]
+    short = job_url.rsplit("/", 1)[1][:12]
+    queued = admin.get(job_url).text
+    assert f"<title>Calibración en cola ({short}) · Vigía</title>" in queued
+    assert f'data-title-done="Calibración terminada ({short}) · Vigía"' in queued
+    assert f'data-title-failed="Calibración fallida ({short}) · Vigía"' in queued
+    runtime.jobs.run_until_idle()
+    failed = admin.get(job_url).text
+    assert f"<title>Calibración fallida ({short}) · Vigía</title>" in failed
+    assert "Calibración en curso" not in failed
+    js = (Path(__file__).parents[1] / "vigia_ee" / "static" / "app.js").read_text(encoding="utf-8")
+    assert 'box.getAttribute("data-title-" + job.state)' in js and "document.title = title" in js
+
+
+def test_detector_report_charts_scroll_instead_of_shrinking(env):
+    """Regresión: 'El texto de los gráficos SVG baja de 10 px: los 4 gráficos del reporte miden 317 px
+    a 375 px'. Cada SVG del reporte va en una región con scroll, foco y nombre."""
+    runtime, org, users, app = env
+    det, report = _report_detector()
+    runtime.repo(org).insert_detector(det.id, det.to_json(), report_json=json.dumps(report))
+    page = login(app, users["admin"]).get(f"/calibration/detectors/{det.id}").text
+    regions = re.findall(
+        r'<div class="vg-chart-scroll" tabindex="0" role="region" aria-labelledby="([^"]+)">', page
+    )
+    assert len(regions) >= 5
+    assert all(f'<title id="{rid}">' in page for rid in regions)

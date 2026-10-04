@@ -131,6 +131,16 @@ def test_parse_dataset_rejects_with_a_clear_message(content, fragment):
     assert fragment in str(exc.value)
 
 
+def test_parse_dataset_rejects_deeply_nested_json_with_dataset_error():
+    """Regresión: 'Subida de dataset de calibración con JSON profundamente anidado lanza
+    RecursionError no capturada y devuelve HTTP 500 en vez de 422'."""
+    prefix = '{"id":"a","question":"q","response":"r","label":0,"x":'
+    deep = (prefix + "[" * 6000 + "]" * 6000 + "}").encode()
+    content = jsonl({"id": "ok", "question": "q", "answers": ["x"]}) + deep
+    with pytest.raises(DatasetError, match=r"Línea 2: JSON inválido \(anidamiento excesivo\)"):
+        parse_dataset(content)
+
+
 def test_parse_dataset_limits_the_number_of_items():
     content = jsonl(*({"id": str(i), "question": "q", "answers": ["x"]} for i in range(4)))
     assert len(parse_dataset(content, max_items=4)) == 4
@@ -272,10 +282,11 @@ def test_answers_items_are_generated_and_labeled_computably(rt):
         cal.CalibrationItem("ok", question, "answers", answers=[generated]),
         cal.CalibrationItem("mal", question, "answers", answers=["respuesta que nunca sale"]),
     ]
-    rows, labels, groups, skipped, kinds = rt.calibration._collect(items)
-    by_item = {g: {lab for lab, gg in zip(labels, groups, strict=True) if gg == g} for g in set(groups)}
+    rows, labels, groups, ids, skipped, kinds = rt.calibration._collect(items)
+    by_item = {i: {lab for lab, ii in zip(labels, ids, strict=True) if ii == i} for i in set(ids)}
     assert kinds == {"answers"} and not skipped
     assert by_item == {"ok": {0}, "mal": {1}}
+    assert len(set(groups)) == 1, "la misma pregunta es un solo grupo del split"
     assert all("out_entropy" in r for r in rows)
 
 
@@ -385,3 +396,99 @@ def test_activated_detector_from_job_is_used_by_the_runtime(rt, org, owner):
     detector_id = rt.jobs.run_once()["result"]["detector_id"]
     rt.calibration.activate(owner, detector_id)
     assert rt.context_for(owner).scorer.id == detector_id
+
+
+# --- Regresiones: tope de jobs, split por pregunta y etiquetas con gold_correct -------------------
+
+
+def test_start_rejects_a_second_pending_calibration_of_the_same_org(rt, org, owner):
+    """Regresión: 'Un admin puede encolar calibraciones sin límite: atrasa las de otros tenants y la
+    purga, y pone /readyz en rojo'. Una org tiene a lo sumo una calibración en cola o en curso."""
+    other_org = rt.create_org("Otra")
+    other = add_user(rt, other_org, "o@otra.com.ar", "owner")
+    mine = rt.calibration.upload_dataset(owner, "demo", learnable_jsonl(20))
+    theirs = rt.calibration.upload_dataset(other, "ajeno", learnable_jsonl(20, prefix="o"))
+    first = rt.calibration.start(owner, mine)
+    for _ in range(3):
+        with pytest.raises(cal.CalibrationBusy, match="en cola o en curso"):
+            rt.calibration.start(owner, mine)
+    assert isinstance(cal.CalibrationBusy("x"), DatasetError), "el panel lo muestra como 422"
+    assert [j["id"] for j in rt.calibration.list_jobs(org)] == [first]
+    assert rt.jobs.depth() == 1
+    rt.calibration.start(other, theirs)  # otro tenant no queda bloqueado
+    for _ in range(2):
+        rt.jobs.run_once()
+    assert rt.calibration.job(org, first)["state"] in ("done", "failed")
+    assert rt.calibration.start(owner, mine) != first  # con el job terminado se puede volver a lanzar
+
+
+def test_collect_groups_the_split_by_question_not_by_item(rt):
+    """Regresión: 'El job de calibración de la plataforma agrupa el split por id de item y no por
+    pregunta: la misma pregunta cae en train y en test' (AT-M04, P-05)."""
+    from vigia.calibrate import split_groups
+
+    rows = []
+    for q in range(30):
+        question = f"¿Cuál es la capital del país {q}?"
+        rows.append({"id": f"q{q}-ok", "question": question, "response": "Lima", "label": 0})
+        # Mismo texto con otro espaciado y mayúsculas: sigue siendo la misma pregunta.
+        rows.append({"id": f"q{q}-mal", "question": "  " + question.upper(), "response": "Quito", "label": 1})
+    items = parse_dataset(jsonl(*rows))
+    _, _, groups, ids, skipped, _ = rt.calibration._collect(items)
+    assert not skipped and len(set(ids)) == 60 and len(set(groups)) == 30
+    split = split_groups(groups, seed=0)
+    where = {gid: name for name, members in split.items() for gid in members}
+    question_of = {it.id: it.messages[-1]["content"].strip().casefold() for it in items}
+    splits_by_question: dict[str, set[str]] = {}
+    for gid, item_id in zip(groups, ids, strict=True):
+        splits_by_question.setdefault(question_of[item_id], set()).add(where[gid])
+    assert all(len(s) == 1 for s in splits_by_question.values())
+
+
+def test_explicit_group_field_defines_the_question():
+    """Regresión del split por pregunta: el campo opcional 'group' manda sobre el hash del texto."""
+    items = parse_dataset(
+        jsonl(
+            {"id": "a", "group": "g1", "question": "¿Capital de Perú?", "response": "Lima", "label": 0},
+            {"id": "b", "group": "g1", "question": "¿Y la de Perú?", "response": "Quito", "label": 1},
+            {"id": "c", "question": "¿Capital de Perú?", "response": "Lima", "label": 0},
+        )
+    )
+    assert items[0].question_key() == items[1].question_key() != items[2].question_key()
+    with pytest.raises(DatasetError, match="'group'"):
+        parse_dataset(jsonl({"id": "a", "group": "", "question": "q", "answers": ["x"]}))
+
+
+def test_answers_items_use_gold_correct_for_numbers_and_dates():
+    """Regresión: 'El job de calibración de la plataforma etiqueta los items answers solo con EM/F1,
+    sin el arreglo de gold_correct: 15 cuenta como correcta para el gold 1,5'."""
+    from types import SimpleNamespace
+
+    from vigia.contracts import Capabilities, Tier, TokenEvent
+
+    cases = [  # (pregunta, gold, respuesta del modelo, etiqueta esperada: 1 = errónea)
+        ("¿Cuántos litros?", "1,5", "15", 1),
+        ("¿Cuándo terminó la guerra en Europa?", "8 de mayo de 1945", "8 de mayo de 1946", 1),
+        ("¿Cuántos habitantes?", "3,2 millones", "4,2 millones", 1),
+        ("¿Cuántos litros hay?", "1,5", "1,5", 0),
+        ("¿Capital de Francia?", "París", "París", 0),
+    ]
+    replies = {q: r for q, _, r, _ in cases}
+
+    class FakeBackend:
+        def capabilities(self):
+            return Capabilities(tiers=(Tier.F0, Tier.F1), streaming=True, disabled=())
+
+        def stream(self, messages, **kwargs):
+            text = replies[messages[-1]["content"]]
+            event = TokenEvent(
+                index=0, token_id=1, text=text, start=0, end=len(text), features={"out_nll": 1.0}
+            )
+            return iter([event])
+
+    content = jsonl(*({"id": f"i{n}", "question": q, "answers": [g]} for n, (q, g, _, _) in enumerate(cases)))
+    svc = cal.CalibrationService.__new__(cal.CalibrationService)
+    svc.runtime = SimpleNamespace(backend=FakeBackend())
+    _, labels, _, ids, skipped, _ = svc._collect(parse_dataset(content))
+    assert not skipped and ids == [f"i{n}" for n in range(len(cases))]
+    assert labels == [expected for _, _, _, expected in cases]

@@ -20,6 +20,7 @@ from vigia.policy import (
     mask_spans,
     matched_actions,
     policy_from_dict,
+    rag_fallback,
     validate_policy,
 )
 
@@ -102,6 +103,14 @@ def test_validate_policy_accepts_defaults_and_full():
 def test_rag_retry_requires_url():
     with pytest.raises(PolicyError, match="rag_url"):
         validate_policy(Policy(rag_retry_at=0.5))
+
+
+def test_rag_fallback_action_is_validated_and_used():
+    """policy.rag_fallback_action se ignora: siempre cae a human_review aunque el tenant eligió abstain."""
+    with pytest.raises(PolicyError, match="rag_fallback_action"):
+        validate_policy(Policy(rag_fallback_action="pass"))  # type: ignore[arg-type]
+    assert rag_fallback(Policy()) == "human_review"
+    assert rag_fallback(Policy(rag_fallback_action="abstain")) == "abstain"
 
 
 def test_policy_from_dict_rejects_unknown_fields():

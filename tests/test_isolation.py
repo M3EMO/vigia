@@ -219,6 +219,9 @@ def test_AT_P01_unauthenticated_requests_get_no_data(world):
         path = fill(route, ids) if params_of(route) else route.path
         resp = client.request(method, path, follow_redirects=False)
         expected = {401, 403} if method != "GET" or spec.kind == "api_key" else {303, 401}
+        if route.path == "/logout":  # "Salir" es idempotente: sin sesión solo borra la cookie y va al login
+            expected = {303}
+            assert resp.headers["location"].startswith("/login"), resp.headers["location"]
         assert resp.status_code in expected, (method, route.path, resp.status_code)
         assert_no_leak(resp, leaks, allowed=[ids[n] for n in params_of(route)])
 

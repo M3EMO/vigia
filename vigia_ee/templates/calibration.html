@@ -18,12 +18,12 @@
 <div class="vg-grid-2">
   <section class="vg-card" aria-labelledby="up-title">
     <h2 id="up-title">1. Subir un dataset</h2>
-    <p class="vg-hint">JSONL, una línea por item, hasta {{ max_mb|num(0) }} MB y 5.000 items. Cada item lleva <code>id</code>, <code>question</code> o <code>messages</code>, y uno de: <code>answers</code> (gold: Vigía genera y etiqueta), <code>response</code> + <code>label</code> (0 correcta, 1 errónea) o <code>response</code> + <code>hallucinated_spans</code>.</p>
+    <p class="vg-hint" id="file-hint">JSONL, una línea por item, hasta {{ max_mb|num(0) }} MB y 5.000 items. Cada item lleva <code>id</code>, <code>question</code> o <code>messages</code>, y uno de: <code>answers</code> (gold: Vigía genera y etiqueta), <code>response</code> + <code>label</code> (0 correcta, 1 errónea) o <code>response</code> + <code>hallucinated_spans</code>.</p>
     <form method="post" action="/calibration/datasets" enctype="multipart/form-data" class="vg-form">
       {{ csrf() }}
       <div class="vg-field">
         <label for="file">Archivo JSONL</label>
-        <input id="file" name="file" type="file" accept=".jsonl,.json,.txt,application/jsonl,application/x-ndjson" required{% if error_field == "file" %} aria-invalid="true"{% endif %}>
+        <input id="file" name="file" type="file" accept=".jsonl,.json,.txt,application/jsonl,application/x-ndjson" required aria-describedby="file-hint"{% if error_field == "file" %} aria-invalid="true"{% endif %}>
       </div>
       <div class="vg-field">
         <label for="ds-name">Nombre (opcional)</label>
@@ -119,7 +119,7 @@
       <thead><tr><th scope="col">Nombre</th><th scope="col">Subido</th><th scope="col" class="vg-num">Items</th><th scope="col">SHA-256</th></tr></thead>
       <tbody>
         {% for d in datasets %}
-        <tr><th scope="row" data-label="Nombre">{{ d.name|clean }}</th><td data-label="Subido">{{ d.created_at|dt }}</td><td data-label="Items" class="vg-num">{{ d.n_items|count }}</td><td data-label="SHA-256"><code>{{ d.sha256[:16] }}</code></td></tr>
+        <tr><th scope="row" data-label="Nombre" class="vg-break">{{ d.name|clean }}</th><td data-label="Subido">{{ d.created_at|dt }}</td><td data-label="Items" class="vg-num">{{ d.n_items|count }}</td><td data-label="SHA-256"><code>{{ d.sha256[:16] }}</code></td></tr>
         {% endfor %}
       </tbody>
     </table>

@@ -27,7 +27,7 @@
 <section class="vg-card" aria-labelledby="heat-title">
   <h2 id="heat-title">Uso por capa y experto</h2>
   <p class="vg-hint">Fracción de selecciones de cada experto dentro de su capa, sobre {{ n_traces|count }} generaciones. Escala secuencial cividis: más claro, más uso.</p>
-  <div class="vg-heatmap-wrap" role="region" aria-labelledby="heat-title" tabindex="0">{{ heatmap }}</div>
+  <div class="vg-heatmap-wrap" role="region" aria-label="Mapa de calor de uso por capa y experto, desplazable" tabindex="0">{{ heatmap }}</div>
   {{ table }}
 </section>
 {% else %}

@@ -232,3 +232,46 @@ def test_middleware_passes_through_non_http_scopes():
     mw = MetricsMiddleware(inner, Metrics(version="t"))
     asyncio.run(mw({"type": "lifespan"}, None, None))
     assert seen == ["lifespan"]
+
+
+def test_render_does_not_block_on_a_hung_depth_source(monkeypatch):
+    """/metrics se cuelga todo el tiempo que la base está bloqueada: el scrape de Prometheus vence
+    justo durante el incidente.
+
+    Una fuente de profundidad que bloquea (la base con lock) no puede retener `render()`: responde
+    en el plazo corto con las métricas en memoria y el último valor conocido del gauge.
+    """
+    import time
+
+    import vigia_ee.metrics as metrics_mod
+
+    monkeypatch.setattr(metrics_mod, "GAUGE_TIMEOUT_S", 0.2, raising=False)
+    release = threading.Event()
+    state = {"block": False, "calls": 0}
+
+    def jobs_depth():
+        state["calls"] += 1
+        if state["block"]:
+            release.wait(10)
+        return 4
+
+    m = Metrics(version="t", jobs_depth=jobs_depth, review_depth=lambda: 3)
+    assert value_of(parse(m.render()), "vigia_jobs_queue_depth") == "4"
+    m.inc_auth_failure()
+    m.set_jobs_queue_depth(5)  # último valor conocido antes del incidente
+    state["block"] = True
+    try:
+        for _ in range(3):  # scrapes repetidos durante el incidente: ninguno espera a la base
+            t0 = time.monotonic()
+            s = parse(m.render())
+            assert time.monotonic() - t0 < 2.0
+            assert value_of(s, "vigia_jobs_queue_depth") == "5"
+            assert value_of(s, "vigia_review_queue_depth") == "3"
+            assert value_of(s, "vigia_auth_failures_total") == "1"
+        assert state["calls"] == 2  # una sola lectura colgada a la vez, no un hilo por scrape
+    finally:
+        state["block"] = False
+        release.set()
+    deadline = time.monotonic() + 5
+    while value_of(parse(m.render()), "vigia_jobs_queue_depth") != "4":
+        assert time.monotonic() < deadline  # al soltar la base, los gauges vuelven a refrescarse

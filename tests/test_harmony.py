@@ -165,3 +165,89 @@ def test_at_s10_stream_text_is_final_channel_and_return_stops(gpt_oss_backend, m
     assert stream.text == FINAL_TEXT and stream.finish_reason == "stop"
     assert len(events) == len(ids) - 1  # <|return|> corta y no se emite
     assert "".join(e.text for e in events if is_scorable(e)) == FINAL_TEXT
+
+
+# --- Marco de offsets de teacher_force con harmony ---------------------------------------------
+# Regresión: "Con gpt-oss (harmony), teacher_force y los spans del dataset usan marcos de offsets
+# distintos: el span marca el token equivocado o no queda ningún token puntuable".
+
+
+def test_teacher_force_plain_response_is_final_channel_with_real_template(gpt_oss_backend):
+    """Regresión (marcos de offsets con harmony): con la plantilla real de gpt-oss, que termina en
+    `<|start|>assistant`, una respuesta en texto plano se puntúa como canal `final`.
+
+    Antes todos sus tokens quedaban en `header` y no había ningún token puntuable.
+    """
+    from vigia.labels import IGNORE_LABEL, spans_to_token_labels
+
+    tok = gpt_oss_backend.tokenizer
+    events = gpt_oss_backend.teacher_force(MESSAGES, FINAL_TEXT)
+    scorable = [e for e in events if is_scorable(e)]
+    assert len(scorable) == len(tok(FINAL_TEXT, add_special_tokens=False)["input_ids"])
+    assert "".join(e.text for e in scorable) == FINAL_TEXT
+    header = [e for e in events if not is_scorable(e)]  # <|channel|>final<|message|>, ancho cero
+    assert [e.channel for e in header][0] == CONTROL and all(e.start == e.end == 0 for e in header)
+    assert all(FINAL_TEXT[e.start : e.end] == e.text for e in scorable)
+    start = FINAL_TEXT.index("Córdoba")
+    labels = spans_to_token_labels(events, [(start, start + len("Córdoba"))])
+    flagged = "".join(e.text for e, lab in zip(events, labels, strict=True) if lab == 1)
+    assert sum(lab != IGNORE_LABEL for lab in labels) == len(scorable) and flagged.strip() == "Córdoba"
+
+
+def test_teacher_force_plain_response_matches_generation_of_final_channel(gpt_oss_backend, monkeypatch):
+    """Regresión (marcos de offsets con harmony): las features de la respuesta plana forzada son las
+    mismas que cuando el modelo genera `<|channel|>final<|message|>` y luego esa respuesta."""
+    tok = gpt_oss_backend.tokenizer
+    header = tok("<|channel|>final<|message|>", add_special_tokens=False)["input_ids"]
+    body = tok(FINAL_TEXT, add_special_tokens=False)["input_ids"]
+    forced = iter(header + body)
+    monkeypatch.setattr("vigia.backends.hf._sample", lambda *a: next(forced))
+    stream = gpt_oss_backend.stream(MESSAGES, max_tokens=len(header) + len(body))
+    generated = list(stream)
+    teacher = gpt_oss_backend.teacher_force(MESSAGES, FINAL_TEXT)
+    assert stream.text == FINAL_TEXT and len(generated) == len(teacher) == len(header) + len(body)
+    for a, b in zip(generated, teacher, strict=True):
+        key_a = (a.token_id, a.start, a.end, a.text, a.channel, a.expert_ids)
+        assert key_a == (b.token_id, b.start, b.end, b.text, b.channel, b.expert_ids)
+        assert a.logprob == pytest.approx(b.logprob, abs=1e-5)
+        for key, value in a.features.items():
+            assert value == pytest.approx(b.features[key], abs=1e-4, nan_ok=True), key
+
+
+def test_final_view_maps_marked_spans_to_token_offsets(gpt_oss_backend):
+    """Regresión (marcos de offsets con harmony): un span sobre la respuesta con marcado se lleva al
+    texto final y marca los tokens de 'Córdoba', no otro token."""
+    from vigia.harmony import final_view
+    from vigia.labels import spans_to_token_labels
+
+    start = RESPONSE.index("Córdoba")
+    in_analysis = RESPONSE.index("capital")
+    text, spans = final_view(RESPONSE, [(start, start + len("Córdoba")), (in_analysis, in_analysis + 7)])
+    assert text == FINAL_TEXT
+    assert spans == [(FINAL_TEXT.index("Córdoba"), FINAL_TEXT.index("Córdoba") + len("Córdoba"))]
+    events = gpt_oss_backend.teacher_force(MESSAGES, RESPONSE)
+    assert "".join(e.text for e in events if is_scorable(e)) == text
+    labels = spans_to_token_labels(events, spans)
+    flagged = "".join(e.text for e, lab in zip(events, labels, strict=True) if lab == 1)
+    assert flagged.strip() == "Córdoba"
+
+
+def test_final_view_without_markup_and_partial_spans():
+    from vigia.harmony import final_view
+
+    assert final_view("Hola mundo", [(5, 10)]) == ("Hola mundo", [(5, 10)])
+    marked = "<|channel|>final<|message|>Hola mundo<|return|>"
+    # un span que arranca en el marcado se recorta al contenido de final
+    assert final_view(marked, [(0, 31)]) == ("Hola mundo", [(0, 4)])
+    assert final_view(marked, [(0, 5)]) == ("Hola mundo", [])
+
+
+def test_final_header_from_each_parser_state():
+    p = HarmonyParser()
+    assert p.final_header() == "<|start|>assistant<|channel|>final<|message|>"
+    feed_all(p, ["<|start|>", "assistant"])
+    assert p.state == "role" and p.final_header() == "<|channel|>final<|message|>"
+    feed_all(p, ["<|channel|>", "analysis", "<|message|>"])
+    assert p.final_header() == "<|end|><|start|>assistant<|channel|>final<|message|>"
+    feed_all(p, ["<|end|>", "<|start|>", "assistant", "<|channel|>", "final", "<|message|>"])
+    assert p.final_header() == ""

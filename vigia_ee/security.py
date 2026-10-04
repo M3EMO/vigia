@@ -7,6 +7,9 @@ Uso típico en la app:
 Orden de los middlewares (de afuera hacia adentro): `SecurityHeadersMiddleware` →
 `RequestContextMiddleware` (request_id, log de acceso, 500 genérico) → `BodySizeLimitMiddleware`.
 Así hasta un 500 lleva headers de seguridad y `X-Request-ID`.
+
+Formato de error (`error_payload`): bajo `/v1` va el sobre de OpenAI de `vigia.api`; en el panel,
+`{error, message, request_id}`.
 """
 
 from __future__ import annotations
@@ -214,6 +217,47 @@ def _json_body(status: int, payload: dict[str, Any]) -> tuple[Message, Message]:
     return start, {"type": "http.response.body", "body": body}
 
 
+# --- formato de error -----------------------------------------------------------------------------
+
+OPENAI_PATH_PREFIX = "/v1"
+
+
+def is_openai_path(path: str) -> bool:
+    """True para la API compatible con OpenAI (`/v1` y `/v1/...`); el resto es el panel."""
+    return path == OPENAI_PATH_PREFIX or path.startswith(OPENAI_PATH_PREFIX + "/")
+
+
+def _openai_type(status: int) -> str:
+    if status == 401:
+        return "authentication_error"
+    if status == 429:
+        return "rate_limit_error"
+    if status == 503:
+        return "service_unavailable_error"
+    return "server_error" if status >= 500 else "invalid_request_error"
+
+
+def error_payload(
+    path: str, status: int, code: str, message: str, request_id: str | None, *, param: str | None = None
+) -> dict[str, Any]:
+    """Cuerpo de error según la ruta.
+
+    Bajo `/v1` sale el sobre de OpenAI `{"error": {message, type, code, param, request_id}}`, el
+    mismo de `vigia.api`, para que el SDK lea `code`. El panel usa `{error, message, request_id}`.
+    """
+    if is_openai_path(path):
+        return {
+            "error": {
+                "message": message,
+                "type": _openai_type(status),
+                "code": code,
+                "param": param,
+                "request_id": request_id,
+            }
+        }
+    return {"error": code, "message": message, "request_id": request_id}
+
+
 class RequestContextMiddleware:
     """Asigna `request_id`, loguea el acceso sin query string y convierte excepciones en 500 genérico.
 
@@ -267,9 +311,8 @@ class RequestContextMiddleware:
                 path=scope.get("path", ""),
             )
             if not started:
-                start, body = _json_body(
-                    500, {"error": "internal_error", "message": "Error interno.", "request_id": rid}
-                )
+                payload = error_payload(scope.get("path", ""), 500, "internal_error", "Error interno.", rid)
+                start, body = _json_body(500, payload)
                 await send_wrapper(start)
                 await send(body)
         finally:
@@ -285,6 +328,16 @@ class RequestContextMiddleware:
 
 
 # --- límite de body -------------------------------------------------------------------------------
+
+
+class CodedHTTPException(HTTPException):
+    """`HTTPException` con un `code` estable que reemplaza al genérico del status en el cuerpo."""
+
+    def __init__(
+        self, status_code: int, detail: str, code: str, *, headers: dict[str, str] | None = None
+    ) -> None:
+        super().__init__(status_code, detail, headers=headers)
+        self.code = code
 
 
 class BodyTooLarge(HTTPException):
@@ -343,7 +396,7 @@ class BodySizeLimitMiddleware:
         msg = (
             "El cuerpo del request supera el tamaño máximo." if status == 413 else "Content-Length inválido."
         )
-        start, body = _json_body(status, {"error": code, "message": msg, "request_id": rid})
+        start, body = _json_body(status, error_payload(scope.get("path", ""), status, code, msg, rid))
         await send(start)
         await send(body)
 
@@ -489,13 +542,10 @@ def request_id_of(request: Request) -> str | None:
 
 
 async def _http_exception_handler(request: Request, exc: StarletteHTTPException) -> JSONResponse:
-    detail = exc.detail if isinstance(exc.detail, str) else _ERROR_CODES.get(exc.status_code, "error")
+    code = getattr(exc, "code", None) or _ERROR_CODES.get(exc.status_code, "error")
+    detail = exc.detail if isinstance(exc.detail, str) else code
     return JSONResponse(
-        {
-            "error": _ERROR_CODES.get(exc.status_code, "error"),
-            "message": detail,
-            "request_id": request_id_of(request),
-        },
+        error_payload(request.url.path, exc.status_code, code, detail, request_id_of(request)),
         status_code=exc.status_code,
         headers=getattr(exc, "headers", None),
     )
@@ -507,19 +557,18 @@ async def _validation_handler(request: Request, exc: RequestValidationError) -> 
         {"loc": list(e.get("loc", ())), "msg": str(e.get("msg", "")), "type": str(e.get("type", ""))}
         for e in exc.errors()
     ]
-    return JSONResponse(
-        {
-            "error": "validation_error",
-            "message": "Datos inválidos.",
-            "request_id": request_id_of(request),
-            "fields": fields,
-        },
-        status_code=422,
-    )
+    rid, path = request_id_of(request), request.url.path
+    if is_openai_path(path):
+        loc = fields[0]["loc"][1:] if fields else []  # sin "body"/"query": el nombre del campo
+        param = ".".join(str(part) for part in loc) or None
+        payload = error_payload(path, 422, "validation_error", "Datos inválidos.", rid, param=param)
+    else:
+        payload = {**error_payload(path, 422, "validation_error", "Datos inválidos.", rid), "fields": fields}
+    return JSONResponse(payload, status_code=422)
 
 
 def install_error_handlers(app: FastAPI) -> None:
-    """Errores HTTP y de validación en JSON con `request_id`, sin eco del input."""
+    """Errores HTTP y de validación en JSON con `request_id`, sin eco del input (formato: `error_payload`)."""
     app.add_exception_handler(StarletteHTTPException, _http_exception_handler)  # type: ignore[arg-type]
     app.add_exception_handler(RequestValidationError, _validation_handler)  # type: ignore[arg-type]
 

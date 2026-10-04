@@ -54,6 +54,7 @@ from vigia_ee.panel import (
     parse_int,
     redirect,
     render,
+    scrollable_chart,
     segments_for,
 )
 from vigia_ee.pii import csv_dumps
@@ -102,6 +103,13 @@ DATA_TABLES = (
     ("Webhooks", "webhooks"),
 )
 JOB_STATE_LABELS = {"queued": "En cola", "running": "Corriendo", "done": "Terminado", "failed": "Falló"}
+# Título de la página del job por estado (WCAG 2.4.2); app.js lo actualiza cuando el polling termina.
+JOB_PAGE_TITLES = {
+    "queued": "Calibración en cola",
+    "running": "Calibración en curso",
+    "done": "Calibración terminada",
+    "failed": "Calibración fallida",
+}
 
 
 def _now_until() -> tuple[Any, Any]:
@@ -137,6 +145,21 @@ def _load_json(raw: str | None) -> dict[str, Any]:
     return data if isinstance(data, dict) else {}
 
 
+def roc_label(name: Any) -> str:
+    """Etiqueta en español de una curva ROC del reporte: los ids internos (`tier:F0`, `baseline:x`) no
+    llegan a la leyenda ni a la tabla. `tier:todos` -> "Todos los niveles"; `tier:F0` -> "Nivel F0"."""
+    raw = str(name or "")
+    if raw == "detector":
+        return "Detector"
+    if raw == "tier:todos":
+        return "Todos los niveles"
+    if raw.startswith("tier:"):
+        return "Nivel " + raw.removeprefix("tier:")
+    if raw.startswith("baseline:"):
+        return "Baseline " + raw.removeprefix("baseline:")
+    return raw
+
+
 def _report_figures(report: Mapping[str, Any]) -> list[Markup]:
     """Gráficos del reporte de evaluación (SVG de `vigia.charts`, que escapa todo su texto)."""
     figures: list[Markup] = []
@@ -145,7 +168,7 @@ def _report_figures(report: Mapping[str, Any]) -> list[Markup]:
     ds = report.get("dataset") or {}
 
     def add(svg: str, table: str) -> None:
-        figures.append(Markup(charts.figure(svg, table)))  # noqa: S704 - SVG generado y escapado
+        figures.append(Markup(charts.figure(scrollable_chart(svg), table)))  # noqa: S704 - SVG generado y escapado
 
     try:
         ece = det["token"]["ece"]["value"]
@@ -158,11 +181,7 @@ def _report_figures(report: Mapping[str, Any]) -> list[Markup]:
         pass
     roc = [c for c in curves.get("roc") or [] if isinstance(c, Mapping)]
     if roc:
-        names = {"detector": "Detector"}
-        named = [
-            dict(c, name=names.get(c.get("name"), str(c.get("name", "")).replace("baseline:", "Baseline ")))
-            for c in roc
-        ]
+        named = [dict(c, name=roc_label(c.get("name"))) for c in roc]
         try:
             add(charts.roc_svg(named), charts.roc_table(named))
         except (KeyError, TypeError, ValueError):
@@ -584,7 +603,9 @@ def register(router: APIRouter, runtime: Any) -> None:  # noqa: C901 - registro 
         job = runtime.calibration.job(p.org_id, job_id)
         if job is None:
             raise not_found("El job de calibración no existe.")
-        return render(request, "calibration_job.html", job=job, job_labels=JOB_STATE_LABELS)
+        return render(
+            request, "calibration_job.html", job=job, job_labels=JOB_STATE_LABELS, job_titles=JOB_PAGE_TITLES
+        )
 
     @router.get("/calibration/jobs/{job_id}/status")
     def calibration_job_status(job_id: str, p: CalReadApiP) -> JSONResponse:
@@ -1120,6 +1141,7 @@ def register(router: APIRouter, runtime: Any) -> None:  # noqa: C901 - registro 
             )
         audit.append(runtime.db, p.org_id, p, "org_delete", p.org_id)
         repo.delete_org()
+        runtime.invalidate_detector(p.org_id)  # saca su detector de la cache y de /metrics
         response = redirect("/login", "org_deleted")
         clear_cookie(response, secure=secure)
         return response

@@ -379,3 +379,37 @@ __all__ = [
     "validate_item",
     "write_jsonl",
 ]
+
+
+def arithmetic_items(n: int, *, seed: int = 0) -> list[dict[str, Any]]:
+    """Items de aritmética con respuesta exacta computable (oráculo sin LLM).
+
+    Sirven como set de control: el modelo acierta una parte y falla otra, así que las dos clases
+    existen aun con modelos chicos. Mezcla sumas, restas y productos de 2 y 3 cifras.
+    """
+    if n < 1:
+        raise ValueError("n debe ser >= 1")
+    rng = random.Random(seed)  # noqa: S311 - generación reproducible, no criptográfica
+    ops = (
+        ("+", "más", lambda a, b: a + b),
+        ("-", "menos", lambda a, b: a - b),
+        ("×", "por", lambda a, b: a * b),
+    )
+    items: list[dict[str, Any]] = []
+    for i in range(n):
+        symbol, word, fn = ops[i % len(ops)]
+        hi = 99 if symbol == "×" else 999
+        a, b = rng.randint(11, hi), rng.randint(11, hi)
+        question = f"¿Cuánto es {a} {symbol} {b}?" if i % 2 else f"¿Cuánto da {a} {word} {b}?"
+        items.append(
+            validate_item(
+                {
+                    "id": f"arit-{seed}-{i}",
+                    "question": question,
+                    "answers": [str(fn(a, b))],
+                    "type": f"arit{symbol}",
+                },
+                where=f"aritmética {i}",
+            )
+        )
+    return items

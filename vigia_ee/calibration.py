@@ -5,14 +5,22 @@ Formato JSONL (una línea por item, UTF-8, máximo 20 MB y 5000 items):
     {"id": "q1", "question": "...", "answers": ["gold", "alias"]}
     {"id": "q2", "messages": [{"role": "user", "content": "..."}], "response": "...", "label": 1}
     {"id": "q3", "question": "...", "response": "...", "hallucinated_spans": ["fragmento exacto"]}
+    {"id": "q4", "group": "pregunta-7", "question": "...", "response": "...", "label": 0}
 
 - `answers`: Vigía genera la respuesta con el modelo del tenant y la etiqueta de forma computable
-  (exact match o F1 de tokens >= 0,5 contra cualquier alias).
+  con `vigia.evidence.gold_correct` (EM, F1 de tokens >= 0,5, número o fecha; con gold numérico o
+  de fecha deciden el número o la fecha, así "15" no vale para el gold "1,5").
 - `response` + `label`: respuesta dada; `label` 1 = errónea, 0 = correcta. Todos sus tokens heredan
   la etiqueta. Las features salen por teacher forcing (una sola pasada).
 - `response` + `hallucinated_spans`: cada fragmento es un substring exacto de la respuesta (string
   o `{"text", "occurrence"}`, como el juez de `vigia.labels`). Los tokens que tocan un fragmento
   valen 1 y el resto 0. Una lista vacía marca la respuesta completa como correcta.
+- `group` (opcional): id de la pregunta para el split. Sin él, el grupo es el SHA-256 de los
+  mensajes normalizados. Los splits train/cal/test se agrupan por pregunta (AT-M04, P-05): varias
+  respuestas a la misma pregunta nunca quedan repartidas entre splits.
+
+Una org tiene a lo sumo `MAX_PENDING_JOBS` calibraciones en cola o en curso: el carril por defecto
+del worker es compartido con la calibración de los demás tenants y con la purga de retención.
 
 El job `calibrate` corre en el worker de `vigia_ee.jobs`. Entrena con `vigia.calibrate`, evalúa con
 `vigia.evaluate` (bootstrap de 500 réplicas), guarda el detector como candidato con su reporte y
@@ -21,10 +29,12 @@ emite `calibration.completed`. Un error para el usuario se guarda como `Calibrat
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import math
 import re
+import threading
 from collections import Counter
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -36,13 +46,12 @@ from vigia.calibrate import DEFAULT_ALPHAS, CalibrationError, train_detector
 from vigia.contracts import DetectorMismatchError, Tier, TokenEvent, feature_tier
 from vigia.detector import Detector
 from vigia.evaluate import SingleClassError, evaluate_report
+from vigia.evidence import gold_correct
 from vigia.labels import (
     IGNORE_LABEL,
     InvalidJudgment,
-    exact_match,
     label_tokens_from_answer,
     spans_to_token_labels,
-    token_f1,
     validate_judgment,
 )
 from vigia_ee import audit
@@ -60,14 +69,16 @@ MAX_ITEMS = 5000
 MIN_RESPONSES = 20
 PLATFORM_N_BOOT = 500
 ANSWER_MAX_TOKENS = 64
-ANSWER_F1_THRESHOLD = 0.5
+MAX_PENDING_JOBS = 1  # calibraciones en cola o en curso por org
 MAX_ID_LEN = 128
 MAX_NAME_LEN = 200
 MAX_MESSAGES = 64
 MAX_ANSWERS = 32
 MAX_ALPHAS = 8
 CHEAP_TIERS = (Tier.F0, Tier.F1, Tier.U)
-_ITEM_KEYS = frozenset({"id", "messages", "question", "answers", "response", "label", "hallucinated_spans"})
+_ITEM_KEYS = frozenset(
+    {"id", "group", "messages", "question", "answers", "response", "label", "hallucinated_spans"}
+)
 _ROLES = {"system": "system", "developer": "system", "user": "user", "assistant": "assistant"}
 _CONTROL_RE = re.compile(r"[\x00-\x1f\x7f]")
 _GENERIC_JOB_ERROR = "Error interno durante la calibración. Revisá los logs del servidor con el id del job."
@@ -80,6 +91,10 @@ class DatasetError(ValueError):
 
 class DatasetNotFound(DatasetError, LookupError):
     """El dataset no existe en este tenant (la capa HTTP responde 404)."""
+
+
+class CalibrationBusy(DatasetError):
+    """La org ya tiene `MAX_PENDING_JOBS` calibraciones en cola o en curso (la capa HTTP responde 422)."""
 
 
 class DetectorNotFound(LookupError):
@@ -106,6 +121,15 @@ class CalibrationItem:
     response: str = ""
     label: int | None = None
     spans: list[tuple[int, int]] = field(default_factory=list)
+    group: str | None = None  # id de pregunta explícito; None = hash de los mensajes
+
+    def question_key(self) -> str:
+        """Grupo del split: el `group` del JSONL o el SHA-256 de los mensajes normalizados."""
+        if self.group is not None:
+            return "group:" + self.group
+        normalized = [[m["role"], " ".join(m["content"].split()).casefold()] for m in self.messages]
+        blob = json.dumps(normalized, ensure_ascii=False, separators=(",", ":"))
+        return "sha256:" + hashlib.sha256(blob.encode("utf-8")).hexdigest()
 
 
 def _reject_duplicates(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
@@ -154,6 +178,9 @@ def _parse_item(data: Any, line: int) -> CalibrationItem:
     item_id = data.get("id")
     if not isinstance(item_id, str) or not item_id.strip() or len(item_id) > MAX_ID_LEN:
         raise DatasetError(f"Línea {line}: 'id' debe ser un texto de 1 a {MAX_ID_LEN} caracteres.")
+    group = data.get("group")
+    if "group" in data and (not isinstance(group, str) or not group.strip() or len(group) > MAX_ID_LEN):
+        raise DatasetError(f"Línea {line}: 'group' debe ser un texto de 1 a {MAX_ID_LEN} caracteres.")
     if ("messages" in data) == ("question" in data):
         raise DatasetError(f"Línea {line}: usá 'messages' o 'question' (exactamente uno).")
     if "messages" in data:
@@ -170,7 +197,7 @@ def _parse_item(data: Any, line: int) -> CalibrationItem:
         if not isinstance(answers, list) or not 1 <= len(answers) <= MAX_ANSWERS:
             raise DatasetError(f"Línea {line}: 'answers' debe ser una lista de 1 a {MAX_ANSWERS} textos.")
         clean = [_text(a, "cada respuesta de 'answers'", line) for a in answers]
-        return CalibrationItem(item_id, messages, "answers", answers=clean)
+        return CalibrationItem(item_id, messages, "answers", answers=clean, group=group)
     response = _text(data["response"], "'response'", line)
     if ("label" in data) == ("hallucinated_spans" in data):
         raise DatasetError(
@@ -180,7 +207,7 @@ def _parse_item(data: Any, line: int) -> CalibrationItem:
         label = data["label"]
         if isinstance(label, bool) or label not in (0, 1):
             raise DatasetError(f"Línea {line}: 'label' debe ser 0 (correcta) o 1 (errónea).")
-        return CalibrationItem(item_id, messages, "label", response=response, label=int(label))
+        return CalibrationItem(item_id, messages, "label", response=response, label=int(label), group=group)
     spans = data["hallucinated_spans"]
     if not isinstance(spans, list):
         raise DatasetError(f"Línea {line}: 'hallucinated_spans' debe ser una lista.")
@@ -188,7 +215,9 @@ def _parse_item(data: Any, line: int) -> CalibrationItem:
         verdict = validate_judgment({"label": 1 if spans else 0, "hallucinated_spans": spans}, response)
     except InvalidJudgment as exc:
         raise DatasetError(f"Línea {line}: fragmento inválido ({exc.reason}): {exc}") from None
-    return CalibrationItem(item_id, messages, "spans", response=response, spans=list(verdict.spans))
+    return CalibrationItem(
+        item_id, messages, "spans", response=response, spans=list(verdict.spans), group=group
+    )
 
 
 def parse_dataset(content: bytes, *, max_items: int = MAX_ITEMS) -> list[CalibrationItem]:
@@ -212,6 +241,9 @@ def parse_dataset(content: bytes, *, max_items: int = MAX_ITEMS) -> list[Calibra
         except ValueError as exc:
             reason = exc.msg if isinstance(exc, json.JSONDecodeError) else str(exc)
             raise DatasetError(f"Línea {n}: JSON inválido ({reason}).") from None
+        except RecursionError:
+            # El decoder de json levanta RecursionError (no ValueError) ante anidamiento profundo.
+            raise DatasetError(f"Línea {n}: JSON inválido (anidamiento excesivo).") from None
         item = _parse_item(data, n)
         if item.id in seen:
             raise DatasetError(f"Línea {n}: el id {item.id[:40]!r} está repetido.")
@@ -288,6 +320,7 @@ class CalibrationService:
 
     def __init__(self, runtime: Runtime) -> None:
         self.runtime = runtime
+        self._start_lock = threading.Lock()  # chequeo de pendientes + encolado, atómico en el proceso
         runtime.jobs.register(JOB_KIND, self._handle_job)
 
     # -- datasets --
@@ -399,17 +432,23 @@ class CalibrationService:
         clean_alphas = _check_alphas(alphas)
         if isinstance(seed, bool) or not isinstance(seed, int) or not 0 <= seed < 2**31:
             raise DatasetError("La semilla debe ser un entero entre 0 y 2147483647.")
-        job_id = self.runtime.jobs.enqueue(
-            JOB_KIND,
-            {
-                "dataset_id": dataset_id,
-                "alphas": clean_alphas,
-                "seed": seed,
-                "created_by": principal.user_id,
-            },
-            org_id=principal.org_id,
-            max_attempts=1,  # entrenar es determinista: reintentar no cambia el resultado
-        )
+        with self._start_lock:
+            if self._pending_jobs(principal.org_id) >= MAX_PENDING_JOBS:
+                raise CalibrationBusy(
+                    "Ya hay una calibración en cola o en curso en esta organización. "
+                    "Esperá a que termine para lanzar otra."
+                )
+            job_id = self.runtime.jobs.enqueue(
+                JOB_KIND,
+                {
+                    "dataset_id": dataset_id,
+                    "alphas": clean_alphas,
+                    "seed": seed,
+                    "created_by": principal.user_id,
+                },
+                org_id=principal.org_id,
+                max_attempts=1,  # entrenar es determinista: reintentar no cambia el resultado
+            )
         audit.append(
             self.runtime.db,
             principal.org_id,
@@ -419,6 +458,13 @@ class CalibrationService:
             {"dataset_id": dataset_id, "alphas": clean_alphas, "seed": seed},
         )
         return job_id
+
+    def _pending_jobs(self, org_id: str) -> int:
+        row = self.runtime.db.query_one(
+            "SELECT COUNT(*) AS n FROM jobs WHERE org_id = ? AND kind = ? AND state IN ('queued', 'running')",
+            (org_id, JOB_KIND),
+        )
+        return int(row["n"]) if row else 0
 
     def job(self, org_id: str, job_id: str) -> dict[str, Any] | None:
         """Estado de un job de calibración del tenant, o None (otro tenant u otro tipo de job)."""
@@ -498,8 +544,8 @@ class CalibrationService:
             items = parse_dataset(bytes(dataset["content"]))
         except DatasetError as exc:
             raise CalibrationJobError(str(exc)) from None
-        rows, labels, groups, skipped, kinds = self._collect(items)
-        n_responses = len(set(groups))
+        rows, labels, groups, response_ids, skipped, kinds = self._collect(items)
+        n_responses = len(set(response_ids))
         if n_responses < MIN_RESPONSES:
             raise CalibrationJobError(
                 f"Hacen falta al menos {MIN_RESPONSES} respuestas etiquetadas; el dataset aportó "
@@ -513,7 +559,8 @@ class CalibrationService:
         names = sorted({n for r in rows for n in r if _canonical(n)})
         features = {n: np.array([r.get(n, np.nan) for r in rows], dtype=np.float64) for n in names}
         y = np.asarray(labels, dtype=np.int64)
-        g = np.asarray(groups, dtype=object)
+        g = np.asarray(groups, dtype=object)  # pregunta: define el split sin fuga (AT-M04, P-05)
+        r = np.asarray(response_ids, dtype=object)
         alphas = [float(a) for a in payload.get("alphas") or DEFAULT_ALPHAS]
         default_alpha = 0.1 if min(alphas) <= 0.1 else min(alphas)
         seed = int(payload.get("seed", 0))
@@ -523,7 +570,7 @@ class CalibrationService:
                 features,
                 y,
                 g,
-                g,
+                r,
                 info,
                 alphas=alphas,
                 default_alpha=default_alpha,
@@ -536,7 +583,7 @@ class CalibrationService:
                 features,
                 y,
                 g,
-                g,
+                r,
                 info,
                 detector=detector,
                 split=split_report["groups"],
@@ -551,6 +598,7 @@ class CalibrationService:
             "dataset_name": dataset["name"],
             "n_items": len(items),
             "n_responses": n_responses,
+            "n_questions": len(set(groups)),
             "n_tokens": len(labels),
             "positive_rate": float(y.mean()),
             "skipped": dict(skipped),
@@ -596,7 +644,12 @@ class CalibrationService:
 
     def _collect(
         self, items: list[CalibrationItem]
-    ) -> tuple[list[dict[str, float]], list[int], list[str], Counter[str], set[str]]:
+    ) -> tuple[list[dict[str, float]], list[int], list[str], list[str], Counter[str], set[str]]:
+        """Features y etiquetas por token. Devuelve (rows, labels, groups, response_ids, skipped, kinds).
+
+        `groups` es la pregunta de cada token (`CalibrationItem.question_key`) y `response_ids` el id
+        del item: el split agrupa por pregunta y las métricas por respuesta usan el id del item.
+        """
         backend = self.runtime.backend
         caps = backend.capabilities()
         tiers = tuple(t for t in CHEAP_TIERS if t in caps.tiers)
@@ -604,9 +657,11 @@ class CalibrationService:
         rows: list[dict[str, float]] = []
         labels: list[int] = []
         groups: list[str] = []
+        response_ids: list[str] = []
         skipped: Counter[str] = Counter()
         kinds: set[str] = set()
         for item in items:
+            question = item.question_key()
             try:
                 if item.kind == "answers":
                     tokens = list(
@@ -615,9 +670,7 @@ class CalibrationService:
                         )
                     )
                     text = "".join(t.text for t in tokens if _visible(t))
-                    correct = (
-                        exact_match(text, item.answers) or token_f1(text, item.answers) >= ANSWER_F1_THRESHOLD
-                    )
+                    correct = gold_correct(text, item.answers, None)[0]
                     token_labels = label_tokens_from_answer(tokens, None, correct)
                 else:
                     if not callable(teacher_force):
@@ -645,13 +698,14 @@ class CalibrationService:
                     }
                 )
                 labels.append(int(lab))
-                groups.append(item.id)
+                groups.append(question)
+                response_ids.append(item.id)
                 used = True
             if used:
                 kinds.add(item.kind)
             else:
                 skipped["sin_tokens_puntuables"] += 1
-        return rows, labels, groups, skipped, kinds
+        return rows, labels, groups, response_ids, skipped, kinds
 
 
 def _canonical(name: str) -> bool:
@@ -675,6 +729,7 @@ __all__ = [
     "MAX_PAGE",
     "MIN_RESPONSES",
     "ActivationError",
+    "CalibrationBusy",
     "CalibrationItem",
     "CalibrationJobError",
     "CalibrationService",

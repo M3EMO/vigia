@@ -13,6 +13,7 @@ from vigia.serve import TraceStore, create_app, is_loopback
 
 KEY = "clave-de-prueba-1234567890"
 LOCAL = ("127.0.0.1", 50000)
+LOCAL_URL = "http://127.0.0.1:8000"  # Host loopback: sin API key, otro Host es DNS rebinding
 INFO = ModelInfo(
     model_id="fake-moe",
     model_type="mixtral",
@@ -107,8 +108,8 @@ def test_without_key_only_loopback_and_warns(caplog):
     remote = TestClient(app, client=("10.0.0.7", 40000))
     r = chat(remote)
     assert r.status_code == 403 and r.json()["error"]["code"] == "forbidden"
-    assert chat(TestClient(app, client=LOCAL)).status_code == 200
-    assert chat(TestClient(app, client=("::1", 40000))).status_code == 200
+    assert chat(TestClient(app, client=LOCAL, base_url=LOCAL_URL)).status_code == 200
+    assert chat(TestClient(app, client=("::1", 40000), base_url="http://[::1]:8000")).status_code == 200
 
 
 def test_is_loopback():
@@ -206,7 +207,7 @@ def test_body_limit_and_security_headers():
 
 def test_serve_with_tiny_model_end_to_end():
     backend = make_tiny_backend("gpt_oss")
-    client = TestClient(create_app(backend), client=LOCAL)
+    client = TestClient(create_app(backend), client=LOCAL, base_url=LOCAL_URL)
     body = {
         "model": "tiny:gpt_oss",
         "messages": [{"role": "user", "content": "Hola"}],
@@ -220,3 +221,137 @@ def test_serve_with_tiny_model_end_to_end():
     assert all(t["p_error"] is None for t in choice["vigia"]["tokens"])
     trace = client.get(f"/v1/vigia/traces/{r.headers['X-Vigia-Trace-Id']}").json()
     assert trace["response"] == choice["message"]["content"]
+
+
+def test_usage_prompt_tokens_with_tiny_hf_backend():
+    """usage.prompt_tokens siempre es 0 en la plataforma con el backend HF: el conteo de
+    GenerationStream llega a usage con y sin vigia, en streaming con include_usage y en la traza."""
+    backend = make_tiny_backend("mixtral")
+    client = TestClient(create_app(backend), client=LOCAL, base_url=LOCAL_URL)
+    messages = [{"role": "user", "content": "pregunta larga " * 10}]
+    expected_prompt = len(backend._prompt_ids(messages))
+    assert expected_prompt > 0
+    body = {"model": "tiny:mixtral", "messages": messages, "max_tokens": 4, "temperature": 0}
+    for extra in ({}, {"vigia": {}}):
+        usage = client.post("/v1/chat/completions", json={**body, **extra}).json()["usage"]
+        assert usage["prompt_tokens"] == expected_prompt
+        assert usage["total_tokens"] == expected_prompt + usage["completion_tokens"]
+    r = client.post(
+        "/v1/chat/completions", json={**body, "stream": True, "stream_options": {"include_usage": True}}
+    )
+    usage_lines = [ln for ln in r.text.splitlines() if '"usage"' in ln]
+    assert usage_lines and f'"prompt_tokens": {expected_prompt}' in usage_lines[0]
+
+
+class _RecordingRetriever:
+    instances: list[_RecordingRetriever] = []
+
+    def __init__(self, url, *, allowed_hosts=()):
+        self.url = url
+        self.allowed_hosts = tuple(allowed_hosts)
+        self.queries: list[str] = []
+        _RecordingRetriever.instances.append(self)
+
+    def retrieve(self, query: str) -> list[str]:
+        self.queries.append(query)
+        return ["Manuel Belgrano nació en 1770."]
+
+
+def test_AT_A07_serve_rag_retry_uses_policy_retriever(monkeypatch):
+    """vigia serve acepta una política con rag_retry pero nunca re-consulta: create_app arma un
+    HttpRetriever con rag_url y la allowlist, y rag_retry re-consulta una vez."""
+    import vigia.serve as serve_mod
+
+    _RecordingRetriever.instances.clear()
+    monkeypatch.setattr(serve_mod, "HttpRetriever", _RecordingRetriever)
+    policy = Policy(rag_retry_at=0.8, rag_url="http://rag.local:9000/rag", human_review_at=None)
+    app = create_app(
+        FakeBackend(), detector=FakeScorer(), policy=policy, api_key=KEY, rag_allowed_hosts=("rag.local",)
+    )
+    (retriever,) = _RecordingRetriever.instances
+    assert retriever.url == policy.rag_url and retriever.allowed_hosts == ("rag.local",)
+    client = TestClient(app)
+    r = chat(client, auth(), vigia={})
+    assert r.status_code == 200
+    assert len(retriever.queries) == 1 and "Belgrano" in retriever.queries[0]
+    trace = client.get(f"/v1/vigia/traces/{r.headers['X-Vigia-Trace-Id']}", headers=auth()).json()
+    assert trace["rag_status"] == "retried"
+
+
+def test_serve_rejects_rag_url_outside_allowlist():
+    """Una rag_url http o privada sin allowlist se rechaza al crear la app, no en cada request."""
+    from vigia.policy import PolicyError
+
+    policy = Policy(rag_retry_at=0.8, rag_url="http://127.0.0.1:9000/rag")
+    with pytest.raises(PolicyError, match="rag_url"):
+        create_app(FakeBackend(), policy=policy, api_key=KEY)
+    with pytest.raises(PolicyError, match="rag_url"):
+        create_app(FakeBackend(), policy=Policy(rag_retry_at=0.8))
+
+
+# --- Regresiones de la verificación api-edge (ronda 3) ------------------------------------------
+
+
+def _csrf_body() -> dict:
+    return {"model": "fake-moe", "messages": [{"role": "user", "content": "csrf"}], "max_tokens": 3}
+
+
+@pytest.mark.parametrize(
+    ("headers", "status"),
+    [
+        ({"Host": "evil.example:8117"}, 403),  # DNS rebinding
+        ({"Host": "evil.example"}, 403),
+        ({"Sec-Fetch-Site": "cross-site"}, 403),
+        ({"Sec-Fetch-Site": "same-site"}, 403),
+        ({"Origin": "https://evil.example"}, 403),
+        ({"Origin": "null"}, 403),
+        ({"Origin": "http://localhost:8119", "Sec-Fetch-Site": "cross-site"}, 403),
+        ({"Sec-Fetch-Site": "same-origin", "Origin": "http://127.0.0.1:8000"}, 200),
+        ({"Sec-Fetch-Site": "none"}, 200),
+        ({"Host": "localhost:8000"}, 200),
+        ({"Host": "[::1]:8000"}, 200),
+    ],
+)
+def test_without_key_rejects_cross_site_browser_and_foreign_host(headers, status):
+    """vigia serve sin API key acepta POST cross-site text/plain y cualquier Host: una página web
+    dispara generaciones y, con DNS rebinding, lee respuestas y trazas."""
+    client = TestClient(create_app(FakeBackend()), client=LOCAL, base_url=LOCAL_URL)
+    r = client.post("/v1/chat/completions", json=_csrf_body(), headers=headers)
+    assert r.status_code == status
+    if status == 403:
+        assert r.json()["error"]["code"] == "forbidden"
+
+
+def test_without_key_post_requires_json_content_type_and_host_guards_traces():
+    """vigia serve sin API key acepta POST cross-site text/plain y cualquier Host: una página web
+    dispara generaciones y, con DNS rebinding, lee respuestas y trazas."""
+    import json
+
+    app = create_app(FakeBackend())
+    client = TestClient(app, client=LOCAL, base_url=LOCAL_URL)
+    plain = client.post(
+        "/v1/chat/completions", content=json.dumps(_csrf_body()), headers={"Content-Type": "text/plain"}
+    )
+    assert plain.status_code == 415 and plain.json()["error"]["code"] == "unsupported_media_type"
+    assert len(app.state.vigia_traces) == 0  # no se generó nada
+    ok = client.post("/v1/chat/completions", json=_csrf_body())
+    assert ok.status_code == 200
+    trace_id = ok.headers["X-Vigia-Trace-Id"]
+    assert client.get(f"/v1/vigia/traces/{trace_id}").status_code == 200
+    rebound = client.get(f"/v1/vigia/traces/{trace_id}", headers={"Host": "evil.example:8117"})
+    assert rebound.status_code == 403 and "csrf" not in rebound.text
+    assert client.get("/v1/models", headers={"Host": "evil.example"}).status_code == 403
+
+
+def test_with_key_browser_guard_does_not_apply():
+    """Con API key el navegador no puede mandar el header Authorization sin preflight: no se exige
+    Host loopback ni Content-Type (curl -d manda form-urlencoded)."""
+    import json
+
+    client = TestClient(create_app(FakeBackend(), api_key=KEY))
+    r = client.post(
+        "/v1/chat/completions",
+        content=json.dumps(_csrf_body()),
+        headers={**auth(), "Host": "vigia.interna:8000", "Content-Type": "application/x-www-form-urlencoded"},
+    )
+    assert r.status_code == 200

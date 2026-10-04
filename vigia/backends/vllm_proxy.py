@@ -19,6 +19,7 @@ from __future__ import annotations
 import base64
 import bisect
 import math
+import time
 from collections.abc import Iterator
 from typing import Any, Literal
 from urllib.parse import urlsplit
@@ -31,6 +32,7 @@ from vigia.contracts import (
     AGGREGATES,
     USAGE_LAYER_FEATURES,
     Capabilities,
+    InvalidRequestError,
     ModelInfo,
     Tier,
     TokenEvent,
@@ -45,6 +47,37 @@ ROUTED_DTYPES = {"uint8": np.dtype("<u1"), "uint16": np.dtype("<u2"), "int16": n
 
 class VllmProxyError(VigiaError):
     """vLLM falló o devolvió una respuesta que Vigía no puede interpretar."""
+
+
+# vLLM responde estos códigos cuando rechaza la entrada del cliente (prompt fuera de contexto,
+# parámetros inválidos). Son errores del cliente: salen como `InvalidRequestError` (400).
+CLIENT_REJECT_STATUS = frozenset({400, 413, 422})
+FINISH_REASONS: dict[str, Literal["stop", "length"]] = {
+    "stop": "stop",
+    "eos": "stop",
+    "tool_calls": "stop",
+    "length": "length",
+}
+
+
+def _rejection(resp: httpx.Response) -> InvalidRequestError:
+    """Error 400 para un rechazo de vLLM. No copia el mensaje de vLLM: puede traer datos internos."""
+    try:
+        body = resp.json()
+    except ValueError:
+        body = None
+    raw = body.get("message") if isinstance(body, dict) else None
+    if isinstance(body, dict) and isinstance(body.get("error"), dict):
+        raw = body["error"].get("message", raw)
+    upstream = raw.lower() if isinstance(raw, str) else ""
+    if "context" in upstream or "too long" in upstream or "maximum" in upstream:
+        return InvalidRequestError("El prompt excede el contexto del modelo servido por vLLM.")
+    return InvalidRequestError("vLLM rechazó el request: el prompt o los parámetros no son válidos.")
+
+
+def normalize_finish_reason(raw: Any) -> Literal["stop", "length"] | None:
+    """`finish_reason` de vLLM llevado a stop/length. Un valor desconocido queda en None."""
+    return FINISH_REASONS.get(raw) if isinstance(raw, str) else None
 
 
 # --- Features desde lo que entrega vLLM ---------------------------------------------------------
@@ -264,6 +297,8 @@ class VllmProxyBackend:
             )
         except httpx.HTTPError as exc:
             raise VllmProxyError(f"vLLM no respondió: {type(exc).__name__}") from exc
+        if resp.status_code in CLIENT_REJECT_STATUS:
+            raise _rejection(resp)
         if resp.status_code != 200:
             raise VllmProxyError(f"vLLM respondió HTTP {resp.status_code}")
         try:
@@ -284,7 +319,13 @@ class VllmProxyBackend:
         seed: int | None = None,
         stop: list[str] | None = None,
         tiers: tuple[Tier, ...] = (Tier.F0, Tier.F1),
-    ) -> Iterator[TokenEvent]:
+    ) -> VllmTokenStream:
+        """Hace el request a vLLM ya (no al primer `next`) y devuelve un `TokenStream`.
+
+        Así un rechazo de vLLM sale de `stream()` como `InvalidRequestError` y la API lo responde
+        400, igual que el backend HF. `finish_reason` es el que informa vLLM.
+        """
+        t0 = time.perf_counter()
         want_u = Tier.U in tiers
         body: dict[str, Any] = {
             "model": self.model,
@@ -353,6 +394,7 @@ class VllmProxyBackend:
                 raise VllmProxyError("routed_experts contiene IDs >= n_experts")
             usage = routed_usage_features(routed, max(n_exp, 2))
 
+        events: list[TokenEvent] = []
         for i in range(len(pieces)):
             feats = top_logprob_features(logprobs[i], tops[i])
             expert_ids = None
@@ -363,13 +405,62 @@ class VllmProxyBackend:
                 else:  # vLLM no devolvió la posición final: U no aplica
                     feats.update(nan_usage(routed.shape[1]))
             start, end = offsets[i]
-            yield TokenEvent(
-                index=i,
-                token_id=-1,  # vLLM no expone IDs de token en chat logprobs
-                text=text[start:end],
-                start=start,
-                end=end,
-                features=feats,
-                logprob=logprobs[i],
-                expert_ids=expert_ids,
+            events.append(
+                TokenEvent(
+                    index=i,
+                    token_id=-1,  # vLLM no expone IDs de token en chat logprobs
+                    text=text[start:end],
+                    start=start,
+                    end=end,
+                    features=feats,
+                    logprob=logprobs[i],
+                    expert_ids=expert_ids,
+                )
             )
+        usage_info = data.get("usage") if isinstance(data.get("usage"), dict) else {}
+        prompt_tokens = usage_info.get("prompt_tokens")
+        return VllmTokenStream(
+            events,
+            finish_reason=normalize_finish_reason(choice.get("finish_reason")),
+            text=text,
+            prompt_tokens=prompt_tokens if isinstance(prompt_tokens, int) else 0,
+            total_s=time.perf_counter() - t0,
+        )
+
+
+class VllmTokenStream(Iterator[TokenEvent]):
+    """`contracts.TokenStream` sobre una respuesta de vLLM ya recibida completa.
+
+    `finish_reason` queda en None hasta que el iterador se agota, como pide el contrato.
+    """
+
+    def __init__(
+        self,
+        events: list[TokenEvent],
+        *,
+        finish_reason: Literal["stop", "length"] | None,
+        text: str,
+        prompt_tokens: int,
+        total_s: float,
+    ) -> None:
+        self._events = iter(events)
+        self._finish = finish_reason
+        self.finish_reason: Literal["stop", "length"] | None = None
+        self.text = text
+        self.prompt_tokens = prompt_tokens
+        self.completion_tokens = len(events)
+        self.timings: dict[str, float] = {"total_s": total_s}
+
+    def __iter__(self) -> VllmTokenStream:
+        return self
+
+    def __next__(self) -> TokenEvent:
+        try:
+            return next(self._events)
+        except StopIteration:
+            self.finish_reason = self._finish
+            raise
+
+    def close(self) -> None:
+        """No retiene recursos: el request a vLLM ya terminó."""
+        self._events = iter(())

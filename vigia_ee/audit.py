@@ -4,6 +4,9 @@ Cada fila guarda `prev_hash` (el `hash` de la fila anterior de la misma organiza
 `GENESIS` en la primera) y `hash = sha256(prev_hash || json_canónico(fila sin seq ni hash))`.
 Alterar, borrar o reordenar una fila intermedia rompe la verificación. Truncar las últimas filas
 no se detecta con la cadena sola: para eso conviene exportar y guardar el último hash afuera.
+
+`seq` es la posición del evento dentro de su organización (columna `org_seq`). El contador global
+de la tabla solo ordena y nunca sale de este módulo: dejaría inferir la actividad de otros tenants.
 """
 
 from __future__ import annotations
@@ -15,7 +18,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
-from vigia_ee.db import Database, to_iso, utcnow
+from vigia_ee.db import AUDIT_ORDER, AUDIT_SELECT, Database, to_iso, utcnow
 
 GENESIS = "0" * 64
 HASHED_FIELDS = (
@@ -38,7 +41,7 @@ FORBIDDEN_DETAIL_KEYS = frozenset(
 class ChainCheck:
     ok: bool
     checked: int
-    broken_at: int | None = None  # seq de la primera fila que no valida
+    broken_at: int | None = None  # seq (por organización) de la primera fila que no valida
 
 
 def canonical_json(value: Any) -> str:
@@ -97,14 +100,15 @@ def append(
     }
     with db.transaction():
         last = db.query_one(
-            "SELECT hash FROM audit_log WHERE org_id IS ? ORDER BY seq DESC LIMIT 1", (org_id,)
+            "SELECT hash, org_seq FROM audit_log WHERE org_id IS ? ORDER BY seq DESC LIMIT 1", (org_id,)
         )
         row["prev_hash"] = last["hash"] if last else GENESIS
         row["hash"] = row_hash(row)
-        row["seq"] = db.insert(
+        row["seq"] = ((last and last["org_seq"]) or 0) + 1
+        db.insert(
             "INSERT INTO audit_log (org_id, ts, actor_user_id, actor_key_id, action, target, detail_json, "
-            "prev_hash, hash) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            tuple(row[k] for k in HASHED_FIELDS) + (row["hash"],),
+            "prev_hash, hash, org_seq) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            tuple(row[k] for k in HASHED_FIELDS) + (row["hash"], row["seq"]),
         )
     return row
 
@@ -129,7 +133,7 @@ def verify_rows(rows: Iterable[Mapping[str, Any]], *, expected_prev: str | None 
 
 def verify_chain(db: Database, org_id: str | None) -> ChainCheck:
     """Recorre la cadena completa de `org_id` y devuelve dónde se rompe, si se rompe."""
-    rows = db.query("SELECT * FROM audit_log WHERE org_id IS ? ORDER BY seq", (org_id,))
+    rows = db.query(AUDIT_SELECT + AUDIT_ORDER, (org_id,))
     return verify_rows(rows, expected_prev=GENESIS)
 
 
@@ -137,7 +141,7 @@ def export_range(
     db: Database, org_id: str | None, *, start: datetime | None = None, end: datetime | None = None
 ) -> list[dict[str, Any]]:
     """Eventos de `org_id` con `start <= ts < end`, ordenados por `seq`, verificables con `verify_rows`."""
-    sql = "SELECT * FROM audit_log WHERE org_id IS ?"
+    sql = AUDIT_SELECT
     params: list[Any] = [org_id]
     if start is not None:
         sql += " AND ts >= ?"
@@ -145,7 +149,7 @@ def export_range(
     if end is not None:
         sql += " AND ts < ?"
         params.append(to_iso(end))
-    rows = db.query(sql + " ORDER BY seq", params)
+    rows = db.query(sql + AUDIT_ORDER, params)
     for r in rows:
         r["detail"] = json.loads(r["detail_json"])
     return rows

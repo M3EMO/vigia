@@ -12,8 +12,9 @@
 {% if errors.get(name) %}<p class="vg-field-error" id="err-{{ name }}">{{ errors[name] }}</p>{% endif %}
 {%- endmacro %}
 
-{% macro invalid(errors, name) -%}
-{% if errors.get(name) %} aria-invalid="true" aria-describedby="err-{{ name }}"{% endif %}
+{# aria-invalid y aria-describedby de un campo: suma el id del error (si hay) y el de su ayuda (hint). #}
+{% macro invalid(errors, name, hint=none) -%}
+{% set err = errors.get(name) %}{% if err %} aria-invalid="true"{% endif %}{% if err or hint %} aria-describedby="{{ ([('err-' ~ name) if err else none, hint]|select|join(' ')) }}"{% endif %}
 {%- endmacro %}
 
 {% macro alert_error(message) -%}

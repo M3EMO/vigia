@@ -26,7 +26,7 @@ import torch
 from vigia.adapters import find_moe_blocks, model_info
 from vigia.contracts import Capabilities, Generation, ModelInfo, Tier, TokenEvent
 from vigia.extractor import SignalExtractor, TokenSignals, f2_unsupported_reason
-from vigia.harmony import CONTROL, SCORED_CHANNEL, STOP_TOKENS, HarmonyParser
+from vigia.harmony import CONTROL, SCORED_CHANNEL, STOP_TOKENS, HarmonyParser, has_markup
 
 DEFAULT_TIERS = (Tier.F0, Tier.F1)
 
@@ -403,26 +403,34 @@ class HFBackend:
         limit = max_tokens
         if self._max_positions:
             limit = min(limit, self._max_positions - len(prompt_ids))
-        with self._lock, torch.inference_mode(), SignalExtractor(self.model, tiers, self.probe_layer) as ex:
+        # El modo de grad es local de cada hilo y StreamingResponse avanza este generador desde el
+        # threadpool: ningún context manager de torch puede cruzar un `yield`. Cada tramo de cómputo
+        # entre yields abre su propio inference_mode.
+        with self._lock, SignalExtractor(self.model, tiers, self.probe_layer) as ex:
             t0 = time.perf_counter()
-            ids = torch.tensor([prompt_ids], device=self.device)
-            score = torch.zeros(ids.shape, dtype=torch.bool)
-            score[0, -1] = True
-            ex.begin_step(score_mask=score)
-            res = self.model(input_ids=ids, use_cache=True, logits_to_keep=1)
+            with torch.inference_mode():
+                ids = torch.tensor([prompt_ids], device=self.device)
+                score = torch.zeros(ids.shape, dtype=torch.bool)
+                score[0, -1] = True
+                ex.begin_step(score_mask=score)
+                res = self.model(input_ids=ids, use_cache=True, logits_to_keep=1)
             prefill_s = time.perf_counter() - t0
             decode_s = 0.0
             finish = "length"
             n = 0
             while True:
-                logits = res.logits[0, -1]
-                token = _sample(logits, temperature, top_p, generator)
-                signals = ex.end_step(res.logits[:, -1:], torch.tensor([[token]]))[0][0]
-                if token in self._eos_ids and not ignore_eos:
+                with torch.inference_mode():
+                    logits = res.logits[0, -1]
+                    token = _sample(logits, temperature, top_p, generator)
+                    signals = ex.end_step(res.logits[:, -1:], torch.tensor([[token]]))[0][0]
+                    eos = token in self._eos_ids and not ignore_eos
+                    if not eos:
+                        logprob = float(torch.log_softmax(logits.float(), dim=-1)[token])
+                        events = emitter.push(token, signals, logprob)
+                if eos:
                     finish = "stop"
                     break
-                logprob = float(torch.log_softmax(logits.float(), dim=-1)[token])
-                yield from emitter.push(token, signals, logprob)
+                yield from events
                 n += 1
                 if emitter.stopped:
                     finish = "stop"
@@ -430,12 +438,13 @@ class HFBackend:
                 if n >= limit:
                     break
                 t1 = time.perf_counter()
-                ex.begin_step()
-                res = self.model(
-                    input_ids=torch.tensor([[token]], device=self.device),
-                    past_key_values=res.past_key_values,
-                    use_cache=True,
-                )
+                with torch.inference_mode():
+                    ex.begin_step()
+                    res = self.model(
+                        input_ids=torch.tensor([[token]], device=self.device),
+                        past_key_values=res.past_key_values,
+                        use_cache=True,
+                    )
                 decode_s += time.perf_counter() - t1
             yield from emitter.finish()
             out.finish_reason = finish
@@ -443,10 +452,29 @@ class HFBackend:
             out.completion_tokens = n
             out.timings = {"prefill_s": prefill_s, "decode_s": decode_s, "total_s": time.perf_counter() - t0}
 
+    def _final_header_ids(self, prompt_ids: list[int]) -> list[int]:
+        """IDs del marcado harmony que lleva del final del prompt al contenido del canal `final`."""
+        emitter = _Emitter(self.tokenizer, self._special_ids, self._harmony, [])
+        emitter.prime(prompt_ids)
+        assert emitter.parser is not None
+        header = emitter.parser.final_header()
+        if not header:
+            return []
+        return list(self.tokenizer(header, add_special_tokens=False)["input_ids"])
+
     def teacher_force(
         self, messages: list[dict[str, str]], response_text: str, tiers: tuple[Tier, ...] = DEFAULT_TIERS
     ) -> list[TokenEvent]:
-        """Features de una respuesta dada con una sola pasada sobre prompt + respuesta (calibración)."""
+        """Features de una respuesta dada con una sola pasada sobre prompt + respuesta (calibración).
+
+        Los offsets de los eventos se refieren al texto del canal `final`. Con harmony, una
+        respuesta en texto plano se puntúa como contenido de `final`: si el prompt no deja al
+        parser en ese canal (la plantilla real de gpt-oss termina en `<|start|>assistant`), se
+        antepone el encabezado que el modelo generaría (`<|channel|>final<|message|>`). Sus eventos
+        tienen ancho cero (control y header), igual que en `stream`, y las features U acumulan esos
+        tokens como en generación. Una respuesta con marcado harmony se usa tal cual;
+        `vigia.harmony.final_view` da su texto final y lleva los spans a ese texto.
+        """
         if not isinstance(response_text, str):
             raise ValueError("response_text debe ser str")
         prompt_ids = self._prompt_ids(messages)
@@ -454,6 +482,8 @@ class HFBackend:
         resp_ids = list(self.tokenizer(response_text, add_special_tokens=False)["input_ids"])
         if not resp_ids:
             return []
+        if self._harmony and not has_markup(response_text):
+            resp_ids = self._final_header_ids(prompt_ids) + resp_ids
         total = len(prompt_ids) + len(resp_ids)
         if self._max_positions and total > self._max_positions:
             raise ValueError(

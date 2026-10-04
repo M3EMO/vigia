@@ -360,13 +360,15 @@ def cmd_serve(args: argparse.Namespace) -> int:
         from vigia.detector import Detector
 
         detector = Detector.load(args.detector)
+    rag_hosts = tuple(h.strip() for h in (args.rag_allowed_hosts or "").split(",") if h.strip())
     policy = None
     if args.policy:
         from vigia.policy import policy_from_dict
 
-        policy = policy_from_dict(json.loads(Path(args.policy).read_text(encoding="utf-8")))
+        raw = json.loads(Path(args.policy).read_text(encoding="utf-8"))
+        policy = policy_from_dict(raw, rag_allowed_hosts=rag_hosts)
     backend = load_backend(args.model, device=args.device, dtype=args.dtype)
-    app = create_app(backend, detector=detector, policy=policy, api_key=api_key)
+    app = create_app(backend, detector=detector, policy=policy, api_key=api_key, rag_allowed_hosts=rag_hosts)
     import uvicorn
 
     print(
@@ -516,6 +518,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--detector", help="detector.json calibrado para este modelo")
     p.add_argument("--policy", help="política en JSON (campos de vigia.contracts.Policy)")
     p.add_argument("--api-key-env", help="variable de entorno con la API key del servidor")
+    p.add_argument(
+        "--rag-allowed-hosts",
+        default="",
+        help="hosts del retriever de rag_url separados por coma; habilita http y redes privadas",
+    )
     p.set_defaults(func=cmd_serve)
 
     p = sub.add_parser("models", help="lista las arquitecturas soportadas")

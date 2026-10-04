@@ -212,6 +212,49 @@ def test_recover_orphans_requeues_expired_leases_only(db, clock):
     assert jobs.run_once()["state"] == "done"
 
 
+def test_running_worker_recovers_an_orphan_once_its_lease_expires(db, clock):
+    """Regresión: 'Los jobs huérfanos con lease vigente no se recuperan al reiniciar y quedan en
+    'running' para siempre'. Un huérfano dentro del lease al arrancar debe volver a la cola apenas
+    vence el lease, sin esperar otro reinicio."""
+    jobs = JobQueue(db, clock=clock, lease=timedelta(minutes=10), poll_interval=0.01)
+    jobs.recover_interval = 0.01
+    jobs.register("purge", lambda job: {"ok": True})
+    _insert_running(db, updated_at=clock() - timedelta(minutes=1))  # crash hace 1 min
+    orphan = db.query_one("SELECT id FROM jobs")["id"]
+    jobs.start()
+    try:
+        time.sleep(0.1)
+        assert jobs.get_system(orphan)["state"] == "running", "dentro del lease no se toca"
+        clock.advance(minutes=10)
+        assert _wait_for(lambda: jobs.get_system(orphan)["state"] == "done")
+    finally:
+        assert jobs.stop()
+
+
+def test_periodic_recovery_never_requeues_a_job_this_process_is_running(db, clock):
+    """Regresión del mismo defecto: la recuperación periódica no roba el job en curso del worker."""
+    jobs = JobQueue(db, clock=clock, lease=timedelta(minutes=10), poll_interval=0.01)
+    started, release = threading.Event(), threading.Event()
+
+    def slow(job):
+        started.set()
+        release.wait(5)
+        return {"ok": True}
+
+    jobs.register("calibrate", slow)
+    jid = jobs.enqueue("calibrate", {})
+    worker = threading.Thread(target=jobs.run_once)
+    worker.start()
+    try:
+        assert started.wait(5)
+        clock.advance(minutes=30)
+        assert jobs.recover_orphans() == 0
+    finally:
+        release.set()
+        worker.join(5)
+    assert jobs.get_system(jid)["state"] == "done"
+
+
 # --- claim atómico entre conexiones ------------------------------------------------------------------
 
 
@@ -309,7 +352,7 @@ def test_is_alive_false_when_heartbeat_is_stale(db):
     jobs.start()
     try:
         assert jobs.is_alive()
-        jobs._beat = lambda: None  # el hilo sigue vivo pero deja de latir
+        jobs._beat = lambda *lane: None  # el hilo sigue vivo pero deja de latir
         jobs.last_beat = time.monotonic() - 60
         assert not jobs.is_alive(max_age=1.0)
     finally:
@@ -323,3 +366,65 @@ def test_constructor_validates_parameters(db):
         JobQueue(db, lease=timedelta(0))
     with pytest.raises(ValueError):
         JobQueue(db, backoff_base=10, backoff_max=1)
+
+
+# --- carril con varios hilos y tope por tenant ------------------------------------------------------
+
+
+def test_lane_with_per_org_cap_runs_other_tenants_while_one_tenant_is_slow(db, orgs):
+    """Regresión: 'Carril de webhooks FIFO compartido y sin plazo total: el destino lento de un
+    tenant frena los webhooks de los demás'. Con dos hilos y tope 1 por tenant, los jobs colgados
+    de A ocupan un solo hilo y el job de B corre en el otro."""
+    gate = threading.Event()
+    running: dict[str, int] = {}
+    peak: dict[str, int] = {}
+    lock = threading.Lock()
+
+    def handler(job):
+        org = job["org_id"]
+        with lock:
+            running[org] = running.get(org, 0) + 1
+            peak[org] = max(peak.get(org, 0), running[org])
+        try:
+            if org == orgs[0]:
+                gate.wait(10)
+            return {"ok": True}
+        finally:
+            with lock:
+                running[org] -= 1
+
+    jobs = JobQueue(db, poll_interval=0.01)
+    jobs.configure_lane("hooks", workers=2, max_running_per_org=1)
+    jobs.register("deliver", handler, lane="hooks")
+    slow = [jobs.enqueue("deliver", {"i": i}, org_id=orgs[0]) for i in range(3)]
+    fast = jobs.enqueue("deliver", {}, org_id=orgs[1])
+    jobs.start()
+    try:
+        assert _wait_for(lambda: jobs.get(orgs[1], fast)["state"] == "done", timeout=3)
+        assert [jobs.get(orgs[0], j)["state"] for j in slow].count("running") == 1
+        assert jobs.is_alive(max_age=60)
+    finally:
+        gate.set()
+        assert _wait_for(lambda: all(jobs.get(orgs[0], j)["state"] == "done" for j in slow), timeout=5)
+        assert jobs.stop(timeout=10)
+    assert peak[orgs[0]] == 1, "el tope por tenant nunca deja dos jobs de A en curso"
+    assert not jobs._running_orgs.get("hooks"), "el conteo por tenant vuelve a cero"
+
+
+def test_configure_lane_validates_and_threads_shrink(db):
+    jobs = JobQueue(db, poll_interval=0.01)
+    for kwargs in ({"workers": 0}, {"workers": 33}, {"workers": True}, {"max_running_per_org": 0}):
+        with pytest.raises(ValueError):
+            jobs.configure_lane("hooks", **kwargs)
+    with pytest.raises(ValueError):
+        jobs.configure_lane("Mal#carril")
+    jobs.configure_lane("hooks", workers=3)
+    jobs.register("deliver", lambda job: None, lane="hooks")
+    jobs.start()
+    try:
+        assert sum(1 for k in jobs._threads if k.startswith("hooks")) == 3
+        jobs.configure_lane("hooks", workers=1)
+        assert _wait_for(lambda: sum(1 for k in jobs._threads if k.startswith("hooks")) == 1)
+        assert jobs.is_alive()
+    finally:
+        assert jobs.stop()

@@ -169,3 +169,55 @@ def test_invalid_inputs_fail_clearly():
         train_detector(feats, np.zeros_like(y), groups, responses, INFO)
     with pytest.raises(ValueError):
         train_detector(feats, y, groups, responses, INFO, default_alpha=0.01)
+
+
+def _answer_level_dataset(seed=0, n_q=24, tok_per_resp=5):
+    """Como el e2e de calibración: una respuesta por pregunta, la mitad correcta (todos sus tokens
+    en 0) y la mitad errónea (todos en 1), con señal moderada en una feature."""
+    rng = np.random.default_rng(seed)
+    groups = np.repeat([f"q{rng.integers(1 << 30):08x}{i}" for i in range(n_q)], tok_per_resp)
+    responses = np.repeat([f"r{i}" for i in range(n_q)], tok_per_resp)
+    y = np.repeat(np.arange(n_q) % 2, tok_per_resp)
+    a = rng.normal(size=len(y)) + 1.5 * y
+    return {"out_entropy": a, "r_ent_n@0": rng.normal(size=len(y))}, y, groups, responses
+
+
+def test_stratified_split_gives_both_classes_to_every_split():
+    """Regresión: "El split de calibración por pregunta no se estratifica: un dataset balanceado de
+    24 respuestas falla con la semilla por defecto". Con 12 preguntas correctas y 12 erróneas, cada
+    split (train, cal y test) recibe las dos clases con cualquier semilla, y el split sigue sin fuga."""
+    for data_seed in range(5):
+        _, y, groups, _ = _answer_level_dataset(seed=data_seed)
+        cls = dict(zip(groups, y, strict=True))
+        unstratified_failures = 0
+        for seed in range(60):
+            split = split_groups(groups, seed=seed, labels=y)
+            sizes = {k: len(v) for k, v in split.items()}
+            assert sizes == {k: len(v) for k, v in split_groups(groups, seed=seed).items()}
+            assert sorted(sum(split.values(), [])) == sorted(set(groups))
+            for name, members in split.items():
+                assert {cls[m] for m in members} == {0, 1}, (data_seed, seed, name)
+            old = split_groups(groups, seed=seed)
+            unstratified_failures += any(len({cls[m] for m in old[k]}) < 2 for k in ("cal", "test"))
+        assert unstratified_failures > 0  # sin estratificar, alguna semilla deja un split de una clase
+
+
+def test_balanced_answer_level_dataset_calibrates_with_default_seed():
+    """Regresión: "El split de calibración por pregunta no se estratifica: un dataset balanceado de
+    24 respuestas falla con la semilla por defecto". train_detector usa el split estratificado."""
+    feats, y, groups, responses = _answer_level_dataset(seed=0)
+    det, report = train_detector(feats, y, groups, responses, INFO, c_grid=(1.0,))
+    for name in ("train", "cal", "test"):
+        assert 0 < report["counts"][name]["positive_rate"] < 1, name
+    assert det.thresholds
+
+
+def test_single_class_split_message_suggests_another_seed():
+    """Regresión del mismo defecto: si un split explícito queda con una clase, el mensaje dice que
+    el dataset tiene las dos y propone otra semilla o más preguntas."""
+    feats, y, groups, responses = _answer_level_dataset(seed=0)
+    neg = sorted({g for g, c in zip(groups, y, strict=True) if c == 0})
+    pos = sorted({g for g, c in zip(groups, y, strict=True) if c == 1})
+    split = {"cal": neg[:5], "test": pos[:3] + neg[5:7], "train": neg[7:] + pos[3:]}
+    with pytest.raises(CalibrationError, match="otra semilla"):
+        train_detector(feats, y, groups, responses, INFO, split=split, c_grid=(1.0,))

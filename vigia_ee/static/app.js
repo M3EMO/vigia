@@ -147,8 +147,21 @@
       var number = form.querySelector("input[name='umbral']");
       if (range && number) {
         range.hidden = false;
+        // WCAG 3.2.2: con el teclado, cada flecha dispara 'change'. Enviar ahí recarga la página en
+        // cada paso y el foco cae al body. Solo se envía al soltar el puntero o con Enter.
+        var pointer = false;
+        var send = function () { if (form.requestSubmit) { form.requestSubmit(); } else { form.submit(); } };
         range.addEventListener("input", function () { number.value = Number(range.value).toFixed(2); });
-        range.addEventListener("change", function () { form.requestSubmit ? form.requestSubmit() : form.submit(); });
+        range.addEventListener("pointerdown", function () { pointer = true; });
+        range.addEventListener("change", function () {
+          if (!pointer) { return; }
+          pointer = false;
+          send();
+        });
+        range.addEventListener("keydown", function (ev) {
+          pointer = false;
+          if (ev.key === "Enter") { ev.preventDefault(); send(); }
+        });
         number.addEventListener("input", function () {
           var v = parseFloat(number.value.replace(",", "."));
           if (isFinite(v) && v >= 0 && v <= 1) { range.value = String(v); }
@@ -214,6 +227,8 @@
   }
 
   var ACTION_LABELS = { pass: "Pasa", annotate: "Anotar", human_review: "Revisión humana", rag_retry: "Re-consulta RAG", abstain: "Abstención" };
+  // Mismas clases que la macro action_badge de _macros.html.
+  var ACTION_BADGES = { pass: "vg-badge", annotate: "vg-badge vg-badge-info", human_review: "vg-badge vg-badge-warn", rag_retry: "vg-badge vg-badge-warn", abstain: "vg-badge vg-badge-danger" };
 
   function initPlayground() {
     var form = document.querySelector("[data-playground-form]");
@@ -245,7 +260,7 @@
     function finish() {
       busy = false;
       output.setAttribute("aria-busy", "false");
-      if (submit) { submit.disabled = false; }
+      if (submit) { submit.removeAttribute("aria-disabled"); }
     }
 
     function start() {
@@ -260,7 +275,9 @@
       };
       busy = true;
       output.setAttribute("aria-busy", "true");
-      if (submit) { submit.disabled = true; }
+      // aria-disabled y no disabled: un botón deshabilitado pierde el foco y Chrome lo manda a <body>.
+      // `busy` ya bloquea el doble envío.
+      if (submit) { submit.setAttribute("aria-disabled", "true"); }
       errorBox.textContent = "";
       result.textContent = "";
       status.textContent = "Generando";
@@ -297,6 +314,11 @@
         }
         if (resp.status === 401) { throw new Error("La sesión venció. Volvé a ingresar."); }
         if (resp.status === 403) { throw new Error("Tu rol no puede usar el playground o el token de seguridad venció; recargá la página."); }
+        if (resp.status === 429) {
+          return resp.json().catch(function () { return null; }).then(function (body) {
+            throw new Error((body && body.message) || "Tu organización alcanzó el límite de generaciones por minuto.");
+          });
+        }
         if (!resp.ok || !resp.body) { throw new Error("El servidor respondió con un error (" + resp.status + ")."); }
         var reader = resp.body.getReader();
         var decoder = new TextDecoder("utf-8");
@@ -337,11 +359,14 @@
         result.textContent = "";
         renderFinal(result, done.text || live.textContent, done.spans, "pg");
         var meta = el("dl", "vg-meta");
-        [["Acción", ACTION_LABELS[done.action] || done.action],
+        var badge = el("span", ACTION_BADGES[done.action] || "vg-badge", ACTION_LABELS[done.action] || done.action);
+        [["Acción", badge],
          ["P(error) respuesta", fmt(done.response_p_error, 3)],
          ["Calibrado", done.calibrated ? "sí" : "no: sin detector activo no hay resaltado"]].forEach(function (row) {
           meta.appendChild(el("dt", null, row[0]));
-          meta.appendChild(el("dd", null, row[1]));
+          var dd = el("dd");
+          if (typeof row[1] === "string") { dd.textContent = row[1]; } else { dd.appendChild(row[1]); }
+          meta.appendChild(dd);
         });
         result.appendChild(meta);
         if (done.trace_id) {
@@ -383,6 +408,8 @@
           if (job.state === "done" || job.state === "failed") {
             box.setAttribute("aria-busy", "false");
             label.textContent = job.label;
+            var title = box.getAttribute("data-title-" + job.state);
+            if (title) { document.title = title; }
             if (refresh) { refresh.parentNode.hidden = true; }
             if (job.error) {
               var alert = el("div", "vg-alert vg-alert-error");

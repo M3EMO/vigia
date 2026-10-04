@@ -29,6 +29,7 @@ CONTENT_TYPE = "text/plain; version=0.0.4; charset=utf-8"
 DURATION_BUCKETS = (0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 60.0)
 OVERHEAD_BUCKETS = (0.01, 0.02, 0.05, 0.1, 0.25, 0.5, 1.0, 2.0)
 MAX_ROUTES = 200
+GAUGE_TIMEOUT_S = 1.0  # espera máxima de `render()` por las fuentes de profundidad
 UNMATCHED_ROUTE = "unmatched"
 OTHER = "other"
 ACTIONS = tuple(get_args(Action))
@@ -111,6 +112,11 @@ class Metrics:
 
     `jobs_depth` y `review_depth` son funciones opcionales que `render()` llama para leer la
     profundidad actual; si fallan, queda el último valor conocido.
+
+    Las fuentes leen la base, que puede quedar bloqueada. Por eso corren en un hilo aparte y
+    `render()` las espera como máximo `GAUGE_TIMEOUT_S`. Si vence, el gauge conserva el último
+    valor conocido y la lectura colgada sigue sola. Mientras esa lectura no termina, ningún scrape
+    lanza otra.
     """
 
     def __init__(
@@ -136,6 +142,8 @@ class Metrics:
         self._rate_limited = 0
         self._review_depth = 0
         self._jobs_depth = 0
+        self._refresh_lock = threading.Lock()
+        self._refresher: threading.Thread | None = None
 
     # -- registro de eventos --
 
@@ -208,6 +216,20 @@ class Metrics:
     # -- exposición --
 
     def _refresh_gauges(self) -> None:
+        """Lanza (o reusa) la lectura de las fuentes y la espera como máximo `GAUGE_TIMEOUT_S`."""
+        if self._jobs_depth_fn is None and self._review_depth_fn is None:
+            return
+        with self._refresh_lock:
+            thread = self._refresher
+            if thread is None or not thread.is_alive():
+                thread = threading.Thread(target=self._read_sources, name="vigia-metrics-gauges", daemon=True)
+                self._refresher = thread
+                thread.start()
+        thread.join(GAUGE_TIMEOUT_S)
+        if thread.is_alive():
+            log_event(_log, "metrics_gauge_error", level=logging.WARNING, error_type="TimeoutError")
+
+    def _read_sources(self) -> None:
         for fn, setter in (
             (self._jobs_depth_fn, self.set_jobs_queue_depth),
             (self._review_depth_fn, self.set_review_queue_depth),

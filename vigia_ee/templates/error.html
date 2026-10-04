@@ -7,7 +7,7 @@
   {% if request_id %}<p class="vg-hint">Código para soporte: <code>{{ request_id }}</code></p>{% endif %}
 </div>
 <div class="vg-actions">
-  <a class="vg-btn" href="{{ path }}">Reintentar</a>
+  {% if retry %}<a class="vg-btn" href="{{ retry[0] }}">{{ retry[1] }}</a>{% endif %}
   <a class="vg-btn vg-btn-secondary" href="/">Ir al resumen</a>
 </div>
 {% endblock %}

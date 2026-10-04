@@ -112,7 +112,8 @@ def parse_number_es(token: str) -> float | None:
 
     Reglas: con `.` y `,` a la vez, el último separador es el decimal. Una sola `,` es decimal.
     Varias `,` son miles. Varios `.` son miles. Un solo `.` seguido de exactamente 3 dígitos con
-    parte entera de 1 a 3 dígitos es separador de miles ("1.234" = 1234); si no, es decimal.
+    parte entera de 1 a 3 dígitos sin cero inicial es separador de miles ("1.234" = 1234); si no,
+    es decimal ("0.500" = 0,5).
     """
     s = token.strip().replace("−", "-")
     if not re.fullmatch(r"[-+]?\d+(?:[.,]\d+)*", s):
@@ -126,7 +127,7 @@ def parse_number_es(token: str) -> float | None:
         s = s.replace(thousands, "").replace(decimal, ".")
     elif has_comma:
         s = s.replace(",", "") if s.count(",") > 1 else s.replace(",", ".")
-    elif has_dot and (s.count(".") > 1 or re.fullmatch(r"\d{1,3}\.\d{3}", s)):
+    elif has_dot and (s.count(".") > 1 or re.fullmatch(r"[1-9]\d{0,2}\.\d{3}", s)):
         s = s.replace(".", "")
     return sign * float(s)
 
@@ -192,6 +193,47 @@ def parse_dates_es(text: str) -> list[dt.date]:
                 continue
             taken.append((m.start(), m.end()))
     return [d for _, d in sorted(found, key=lambda item: item[0])]
+
+
+_MONTH_YEAR = re.compile(rf"\b({_MONTH_ALT})\s+(?:de(?:l)?\s+)?(\d{{3,4}})\b")
+_BARE_YEAR = re.compile(r"(?<![\w.,/-])(\d{3,4})(?![\w]|[.,/-]\d)")
+DateParts = tuple[int, int | None, int | None]  # (año, mes o None, día o None)
+
+
+def parse_date_parts_es(text: str) -> list[DateParts]:
+    """Menciones de fecha del texto en orden de aparición, completas o parciales.
+
+    Una fecha completa (los formatos de `parse_dates_es`) da (año, mes, día). "mayo de 1945" da
+    (1945, 5, None). Un número suelto de 3 o 4 dígitos da un año solo (1945, None, None). Las
+    menciones no se superponen: manda la más completa.
+    """
+    lowered = _strip_accents(text.casefold())
+    found: list[tuple[int, DateParts]] = []
+    taken: list[tuple[int, int]] = []
+
+    def add(m: re.Match[str], parts: DateParts) -> None:
+        if not any(m.start() < e and s < m.end() for s, e in taken):
+            found.append((m.start(), parts))
+            taken.append((m.start(), m.end()))
+
+    for pattern, kind in _DATE_PATTERNS:
+        for m in pattern.finditer(lowered):
+            if kind == "dmy_text":
+                day, month, year = int(m.group(1)), MONTHS_ES[m.group(2)], int(m.group(3))
+            elif kind == "iso":
+                year, month, day = int(m.group(1)), int(m.group(2)), int(m.group(3))
+            else:
+                day, month, year = int(m.group(1)), int(m.group(2)), int(m.group(3))
+            try:
+                dt.date(year, month, day)
+            except ValueError:
+                continue
+            add(m, (year, month, day))
+    for m in _MONTH_YEAR.finditer(lowered):
+        add(m, (int(m.group(2)), MONTHS_ES[m.group(1)], None))
+    for m in _BARE_YEAR.finditer(lowered):
+        add(m, (int(m.group(1)), None, None))
+    return [parts for _, parts in sorted(found, key=lambda item: item[0])]
 
 
 def date_match(prediction: str, gold: dt.date | str) -> bool:

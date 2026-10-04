@@ -44,14 +44,14 @@
 <section aria-labelledby="met-title">
   <h2 id="met-title">Métricas en test</h2>
   <div class="vg-table-wrap">
-    <table class="vg-table">
+    <table class="vg-table vg-table-cards">
       <caption class="sr-only">Métricas por token con intervalo de confianza por bootstrap de pregunta</caption>
       <thead><tr><th scope="col">Métrica</th><th scope="col" class="vg-num">Valor</th><th scope="col" class="vg-num">IC 95 %</th></tr></thead>
       <tbody>
         {% for m in metrics %}
-        <tr><th scope="row">{{ m.label }}</th>
-          <td class="vg-num">{{ m.value|pct if m.kind == "pct" else m.value|num(3) }}</td>
-          <td class="vg-num">{% if m.ci %}{{ m.ci[0]|pct if m.kind == "pct" else m.ci[0]|num(3) }} – {{ m.ci[1]|pct if m.kind == "pct" else m.ci[1]|num(3) }}{% else %}s/d{% endif %}</td></tr>
+        <tr><th scope="row" data-label="Métrica">{{ m.label }}</th>
+          <td class="vg-num" data-label="Valor">{{ m.value|pct if m.kind == "pct" else m.value|num(3) }}</td>
+          <td class="vg-num" data-label="IC 95 %">{% if m.ci %}{{ m.ci[0]|pct if m.kind == "pct" else m.ci[0]|num(3) }} – {{ m.ci[1]|pct if m.kind == "pct" else m.ci[1]|num(3) }}{% else %}s/d{% endif %}</td></tr>
         {% endfor %}
       </tbody>
     </table>
@@ -63,12 +63,12 @@
 <section aria-labelledby="th-title">
   <h2 id="th-title">Umbrales por alpha (CRC)</h2>
   <div class="vg-table-wrap">
-    <table class="vg-table">
+    <table class="vg-table vg-table-cards">
       <caption class="sr-only">Umbral por FNR objetivo</caption>
       <thead><tr><th scope="col">alpha</th><th scope="col" class="vg-num">τ</th><th scope="col" class="vg-num">Tasa de marcado esperada</th><th scope="col" class="vg-num">Precisión esperada</th></tr></thead>
       <tbody>
         {% for t in thresholds %}
-        <tr><th scope="row">{{ t.alpha|num(2) }}</th><td class="vg-num">{{ t.tau|num(3) }}</td><td class="vg-num">{{ t.expected_flag_rate|pct }}</td><td class="vg-num">{{ t.expected_precision|num(3) }}</td></tr>
+        <tr><th scope="row" data-label="alpha">{{ t.alpha|num(2) }}</th><td class="vg-num" data-label="τ">{{ t.tau|num(3) }}</td><td class="vg-num" data-label="Tasa de marcado esperada">{{ t.expected_flag_rate|pct }}</td><td class="vg-num" data-label="Precisión esperada">{{ t.expected_precision|num(3) }}</td></tr>
         {% endfor %}
       </tbody>
     </table>
@@ -79,7 +79,7 @@
 <section aria-labelledby="fig-title">
   <h2 id="fig-title">Gráficos del reporte</h2>
   {% if figures %}
-  <div class="vg-grid-2">{% for f in figures %}{{ f }}{% endfor %}</div>
+  <div class="vg-grid-charts">{% for f in figures %}{{ f }}{% endfor %}</div>
   {% else %}
   <div class="vg-card vg-empty"><p>Este detector no tiene reporte de evaluación.</p></div>
   {% endif %}

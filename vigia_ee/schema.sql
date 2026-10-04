@@ -189,6 +189,8 @@ CREATE TABLE IF NOT EXISTS audit_log (
   hash TEXT NOT NULL                   -- sha256(prev_hash || canonical_json(fila sin hash))
 );
 CREATE INDEX IF NOT EXISTS ix_audit_org ON audit_log(org_id, seq);
+-- La migración 2 (vigia_ee/db.py) agrega org_seq, la posición del evento dentro de su organización.
+-- seq es global e interno: nunca se muestra al tenant porque deja inferir la actividad de otras orgs.
 
 -- users.email es único global porque el login no pide organización. Un alta con un email ajeno
 -- devuelve un error genérico; el canal lateral queda documentado en docs/spec/seguridad.md.

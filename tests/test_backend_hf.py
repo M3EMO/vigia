@@ -255,3 +255,33 @@ def test_closing_stream_releases_hooks_and_lock(backend):
     stream.close()
     assert sum(len(m._forward_pre_hooks) for m in backend.model.modules()) == 0
     assert not backend._lock.locked()
+
+
+def test_stream_steps_run_without_autograd_from_any_thread(backend):
+    """En streaming SSE, el modelo genera con autograd prendido porque torch.inference_mode no
+    acompaña al generador entre hilos.
+
+    StreamingResponse avanza el iterador desde el threadpool: cada `next()` puede caer en otro hilo.
+    Todo forward de generación tiene que correr sin grafo de autograd, sea cual sea el hilo.
+    """
+    import threading
+
+    seen = []
+
+    def spy(_module, _args, output):
+        seen.append((threading.current_thread().name, torch.is_grad_enabled(), output.logits.requires_grad))
+
+    handle = backend.model.register_forward_hook(spy)
+    try:
+        stream = backend.stream(MESSAGES, max_tokens=6, ignore_eos=True)
+        next(stream)
+        for i in range(3):
+            worker = threading.Thread(target=lambda: next(stream, None), name=f"worker{i}")
+            worker.start()
+            worker.join()
+        stream.close()
+    finally:
+        handle.remove()
+    assert any(name.startswith("worker") for name, _, _ in seen)
+    assert [(name, grad, req) for name, grad, req in seen if grad or req] == []
+    assert not backend._lock.locked()

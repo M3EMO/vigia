@@ -4,8 +4,13 @@
 sobre una app FastAPI mínima:
 
 - Con `api_key`, cada request a `/v1/*` exige `Authorization: Bearer <key>` (comparación en tiempo
-  constante). Sin `api_key`, la app solo atiende clientes de loopback y lo advierte en el log.
+  constante). Sin `api_key`, la app solo atiende clientes de loopback y lo advierte en el log. Un
+  navegador del mismo equipo también es loopback: sin key se rechaza todo request de navegador desde
+  otro sitio (`Origin` o `Sec-Fetch-Site`), todo `Host` que no sea loopback (DNS rebinding) y todo
+  POST sin `Content-Type: application/json` (un POST `text/plain` no dispara el preflight CORS).
 - Las trazas viven en memoria con tope LRU (1000) para `GET /v1/vigia/traces/{id}`.
+- Una política con `rag_url` usa un `HttpRetriever` contra esa URL para `rag_retry` (AT-A07). La URL
+  se valida contra SSRF al crear la app; `rag_allowed_hosts` habilita hosts privados o http.
 - `/livez` y `/readyz` no exigen credencial y no devuelven datos de requests.
 - Sin `/docs`, `/redoc` ni `/openapi.json`. Body máximo de 1 MiB (413).
 """
@@ -20,7 +25,7 @@ import logging
 import secrets
 import threading
 from collections import OrderedDict
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Collection
 from typing import Any
 
 from fastapi import FastAPI, Request
@@ -29,6 +34,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from vigia.api import REQUEST_ID_HEADER, RequestContext, TraceRecord, create_api_router
 from vigia.contracts import Backend, Policy, Scorer
+from vigia.policy import HttpRetriever, Retriever, validate_policy
 
 logger = logging.getLogger("vigia.serve")
 
@@ -37,6 +43,7 @@ MAX_BODY_BYTES = 1_048_576
 MIN_API_KEY_CHARS = 16
 LOOPBACK_NAMES = frozenset({"localhost"})
 _QUERY_CREDENTIALS = ("api_key", "apikey", "key", "token", "access_token")
+_FOREIGN_FETCH_SITES = frozenset({"cross-site", "same-site"})
 _SECURITY_HEADERS = (
     (b"x-content-type-options", b"nosniff"),
     (b"referrer-policy", b"no-referrer"),
@@ -59,6 +66,32 @@ def is_loopback(host: str | None) -> bool:
         return ipaddress.ip_address(host.strip("[]")).is_loopback
     except ValueError:
         return False
+
+
+def _host_name(authority: str) -> str:
+    """Nombre de host de un header `Host` u `Origin` sin esquema: `[::1]:8000` -> `::1`."""
+    if authority.startswith("["):
+        return authority[1 : authority.find("]")] if "]" in authority else ""
+    return authority.rsplit(":", 1)[0] if authority.count(":") == 1 else authority
+
+
+def browser_origin_problem(headers: Any) -> str | None:
+    """Motivo para rechazar un request sin API key que no viene de un cliente local legítimo.
+
+    Un sitio que el usuario visita corre en un navegador de loopback: puede mandar un POST simple
+    (sin preflight) o, con DNS rebinding, leer respuestas. Devuelve None si el request es aceptable.
+    """
+    host = headers.get("host", "")
+    if not is_loopback(_host_name(host.strip().lower())):
+        return "El header Host debe ser localhost, 127.0.0.1 o [::1]."
+    if headers.get("sec-fetch-site", "").strip().lower() in _FOREIGN_FETCH_SITES:
+        return "Sin API key no se aceptan requests de navegador desde otro sitio."
+    origin = headers.get("origin")
+    if origin is not None:
+        scheme, sep, rest = origin.strip().lower().partition("://")
+        if not sep or scheme not in ("http", "https") or not is_loopback(_host_name(rest)):
+            return "Sin API key no se aceptan requests de navegador desde otro origen."
+    return None
 
 
 class TraceStore:
@@ -218,8 +251,14 @@ def create_app(
     max_body_bytes: int = MAX_BODY_BYTES,
     max_tokens_limit: int = 4096,
     default_max_tokens: int = 512,
+    rag_allowed_hosts: Collection[str] = (),
+    retriever: Retriever | None = None,
 ) -> FastAPI:
-    """App FastAPI single-tenant. Falla al crearla si el detector es de otro modelo."""
+    """App FastAPI single-tenant. Falla al crearla si el detector es de otro modelo o si la política
+    es inválida (por ejemplo, `rag_url` fuera de `rag_allowed_hosts` o hacia una red privada).
+
+    Sin `retriever`, una política con `rag_url` usa `HttpRetriever(rag_url, allowed_hosts=...)`.
+    """
     if api_key is not None:
         if not isinstance(api_key, str) or len(api_key) < MIN_API_KEY_CHARS:
             raise ValueError(f"la API key debe tener al menos {MIN_API_KEY_CHARS} caracteres")
@@ -233,14 +272,18 @@ def create_app(
     info = backend.model_info()
     if detector is not None:
         detector.check_model(info)
+    policy = validate_policy(policy if policy is not None else Policy(), rag_allowed_hosts=rag_allowed_hosts)
+    if retriever is None and policy.rag_url is not None:
+        retriever = HttpRetriever(policy.rag_url, allowed_hosts=rag_allowed_hosts)
     expected = _digest(api_key) if api_key is not None else None
     traces = TraceStore(max_traces)
     ctx = RequestContext(
         backend=backend,
         scorer=detector,
-        policy=policy if policy is not None else Policy(),
+        policy=policy,
         sink=traces.put,
         trace_lookup=traces.get,
+        retriever=retriever,
     )
 
     async def get_context(request: Request) -> RequestContext:
@@ -250,6 +293,17 @@ def create_app(
             host = request.client.host if request.client is not None else None
             if not is_loopback(host):
                 raise _AuthError(403, "Sin API key solo se aceptan clientes locales.", "forbidden")
+            problem = browser_origin_problem(request.headers)
+            if problem is not None:
+                raise _AuthError(403, problem, "forbidden")
+            if request.method == "POST":
+                ctype = request.headers.get("content-type", "").split(";")[0].strip().lower()
+                if ctype != "application/json":
+                    raise _AuthError(
+                        415,
+                        "Sin API key el body debe ser Content-Type: application/json.",
+                        "unsupported_media_type",
+                    )
             return ctx
         scheme, _, token = request.headers.get("authorization", "").partition(" ")
         valid = scheme.lower() == "bearer" and hmac.compare_digest(_digest(token.strip()), expected)
@@ -311,4 +365,4 @@ def create_app(
     return app
 
 
-__all__ = ["MAX_TRACES", "TraceStore", "create_app", "is_loopback", "trace_view"]
+__all__ = ["MAX_TRACES", "TraceStore", "browser_origin_problem", "create_app", "is_loopback", "trace_view"]
