@@ -7,9 +7,10 @@ Solo depende de la stdlib para que cualquier módulo lo importe sin costo.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from dataclasses import asdict, dataclass, field
-from enum import Enum
-from typing import Any, Iterator, Literal, Protocol
+from enum import StrEnum
+from typing import Any, Literal, Protocol
 
 SCHEMA_VERSION = "1"
 DETECTOR_SCHEMA_VERSION = "1"
@@ -17,7 +18,7 @@ DETECTOR_SCHEMA_VERSION = "1"
 # --- Niveles y nombres de features -------------------------------------------------------------
 
 
-class Tier(str, Enum):
+class Tier(StrEnum):
     F0 = "F0"  # logits de salida (vocabulario)
     F1 = "F1"  # logits del router + uso de expertos
     U = "U"  # solo IDs de expertos (vLLM / SGLang nativo)
@@ -84,6 +85,7 @@ class Capabilities:
     tiers: tuple[Tier, ...]  # niveles que este backend puede producir
     streaming: bool
     disabled: tuple[str, ...] = ()  # motivos legibles, ej. "F2: expertos MXFP4"
+    mode: Literal["full", "reduced"] = "full"  # reduced = sin logits del router (solo IDs)
 
 
 # --- Eventos por token --------------------------------------------------------------------------
@@ -99,7 +101,9 @@ class TokenEvent:
     start: int  # offset en code points dentro del texto de la respuesta
     end: int
     features: dict[str, float]  # nombre canónico -> valor; NaN si no aplica
-    channel: str = "final"  # harmony: final | analysis | commentary; otros modelos: final
+    # final | analysis | commentary (harmony) | header | control | none. Solo `final` no especial se puntúa
+    # (regla única: vigia.harmony.is_scorable). Modelos sin harmony: contenido = final, especiales = control.
+    channel: str = "final"
     is_special: bool = False
     logprob: float | None = None
     expert_ids: list[list[int]] | None = None  # [capa_moe][k], para el heatmap capa x experto
@@ -116,6 +120,24 @@ class Generation:
     model: ModelInfo
     mode: Literal["full", "reduced"] = "full"
     timings: dict[str, float] = field(default_factory=dict)  # prefill_s, decode_s, overhead_s
+
+
+class TokenStream(Protocol):
+    """Lo que devuelve Backend.stream: un iterador de TokenEvent con datos del request al terminar."""
+
+    finish_reason: Literal["stop", "length"] | None  # None hasta que el iterador se agota
+    text: str  # texto de la respuesta (solo canal final)
+    prompt_tokens: int
+    completion_tokens: int
+    timings: dict[str, float]  # prefill_s, decode_s, total_s
+
+    def __iter__(self) -> Iterator[TokenEvent]: ...
+
+    def __next__(self) -> TokenEvent: ...
+
+    def close(self) -> None:
+        """Libera el backend (lock, hooks). Obligatorio si el consumidor corta antes del final."""
+        ...
 
 
 class Backend(Protocol):
@@ -135,7 +157,7 @@ class Backend(Protocol):
         seed: int | None = None,
         stop: list[str] | None = None,
         tiers: tuple[Tier, ...] = (Tier.F0, Tier.F1),
-    ) -> Iterator[TokenEvent]: ...
+    ) -> TokenStream: ...
 
 
 class Scorer(Protocol):
@@ -190,6 +212,7 @@ class Policy:
     abstain_message: str = "No tengo una respuesta confiable para esta consulta."
     rag_url: str | None = None
     rag_max_retries: int = 1
+    rag_fallback_action: Literal["human_review", "abstain"] = "human_review"
     on_detector_error: Literal["fail_closed", "fail_open"] = "fail_closed"
     stream_policy: Literal["annotate_only", "buffer"] = "annotate_only"
     version: int = 1
@@ -221,6 +244,9 @@ class VigiaResult:
     calibrated: bool
     mode: Literal["full", "reduced"]
     degraded: bool = False
+    # ok | no_final_channel | truncated_before_final | empty_generation | cancelled | detector_error
+    status: str = "ok"
+    rag_status: str | None = None  # None | retried | error | unavailable
     alpha: float | None = None
     tau: float | None = None
     schema_version: str = SCHEMA_VERSION

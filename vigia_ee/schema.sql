@@ -55,16 +55,16 @@ CREATE TABLE IF NOT EXISTS api_keys (
 CREATE INDEX IF NOT EXISTS ix_keys_org ON api_keys(org_id);
 
 CREATE TABLE IF NOT EXISTS detectors (
-  id TEXT PRIMARY KEY,                 -- sha256 corto (16 hex) del artefacto
+  id TEXT NOT NULL,                    -- sha256 corto (16 hex) del artefacto; único por tenant
   org_id TEXT NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
   created_at TEXT NOT NULL,
   created_by TEXT,
   status TEXT NOT NULL CHECK (status IN ('candidate','active','retired')),
   artifact_json TEXT NOT NULL,
   report_json TEXT NOT NULL DEFAULT '{}',
-  dataset_id TEXT
+  dataset_id TEXT,
+  PRIMARY KEY (org_id, id)             -- un PK global filtraría que otro tenant tiene el mismo artefacto
 );
-CREATE INDEX IF NOT EXISTS ix_detectors_org ON detectors(org_id);
 
 CREATE TABLE IF NOT EXISTS datasets (
   id TEXT PRIMARY KEY,
@@ -189,3 +189,15 @@ CREATE TABLE IF NOT EXISTS audit_log (
   hash TEXT NOT NULL                   -- sha256(prev_hash || canonical_json(fila sin hash))
 );
 CREATE INDEX IF NOT EXISTS ix_audit_org ON audit_log(org_id, seq);
+
+-- users.email es único global porque el login no pide organización. Un alta con un email ajeno
+-- devuelve un error genérico; el canal lateral queda documentado en docs/spec/seguridad.md.
+
+CREATE INDEX IF NOT EXISTS ix_trace_tokens_org ON trace_tokens(org_id);
+CREATE INDEX IF NOT EXISTS ix_spans_org ON spans(org_id);
+CREATE INDEX IF NOT EXISTS ix_sessions_user ON sessions(user_id);
+
+CREATE TRIGGER IF NOT EXISTS audit_log_no_update BEFORE UPDATE ON audit_log
+BEGIN SELECT RAISE(ABORT, 'audit_log es append-only'); END;
+CREATE TRIGGER IF NOT EXISTS audit_log_no_delete BEFORE DELETE ON audit_log
+BEGIN SELECT RAISE(ABORT, 'audit_log es append-only'); END;

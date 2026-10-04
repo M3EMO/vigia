@@ -1,0 +1,847 @@
+"""Gráficos SVG como funciones puras (ADR A-12).
+
+Cada función devuelve un string SVG con `role="img"`, `<title>` y `<desc>` con la conclusión
+principal. Cada gráfico tiene una función `*_table` con los mismos argumentos que devuelve la tabla
+de datos HTML para un `<details>`.
+
+Colores: Okabe-Ito para categorías y una rampa secuencial derivada de cividis; nunca rojo-verde.
+Cada elemento lleva el color como atributo de presentación (fallback que no necesita CSS y cumple
+una CSP sin `unsafe-inline`) y una clase que `CHART_CSS` redefine con variables CSS para modo
+claro y oscuro. Todo texto se escapa para XML.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import html
+import math
+import numbers
+from collections.abc import Mapping, Sequence
+from typing import Any
+
+OKABE_ITO = {
+    "black": "#000000",
+    "orange": "#E69F00",
+    "sky_blue": "#56B4E9",
+    "bluish_green": "#009E73",
+    "yellow": "#F0E442",
+    "blue": "#0072B2",
+    "vermillion": "#D55E00",
+    "reddish_purple": "#CC79A7",
+}
+# Orden de series en modo claro: azul, bermellón, tinta, púrpura, verde azulado, celeste, naranja.
+# El par principal es azul/bermellón (seguro para deficiencias rojo-verde).
+CATEGORY_LIGHT = ("#0072B2", "#D55E00", "#1F2328", "#CC79A7", "#009E73", "#56B4E9", "#E69F00")
+CATEGORY_DARK = ("#56B4E9", "#E69F00", "#E6EDF3", "#CC79A7", "#009E73", "#F0E442", "#D55E00")
+DASHES = ("", "6 3", "2 3", "8 3 2 3", "1 2", "10 4", "4 2 1 2")
+# Diez muestras equiespaciadas de cividis (de azul oscuro a amarillo, L* monótono).
+CIVIDIS = (
+    "#00204D",
+    "#00336F",
+    "#39486B",
+    "#575C6D",
+    "#707173",
+    "#8A8779",
+    "#A69D75",
+    "#C4B56C",
+    "#E4CF5B",
+    "#FFEA46",
+)
+INK, MUTED, GRID = "#1F2328", "#59636E", "#D1D9E0"
+
+
+def _css_palette(cats: Sequence[str], ink: str, muted: str, grid: str, bg: str) -> str:
+    items = [f"--vg-ink:{ink}", f"--vg-muted:{muted}", f"--vg-grid:{grid}", f"--vg-bg:{bg}"]
+    items += [f"--vg-cat-{i + 1}:{c}" for i, c in enumerate(cats)]
+    items.append(f"--vg-alert:{cats[1]}")
+    return ";".join(items)
+
+
+_DARK = _css_palette(CATEGORY_DARK, "#E6EDF3", "#9198A1", "#3D444D", "#0D1117")
+CHART_CSS = (
+    ":root{" + _css_palette(CATEGORY_LIGHT, INK, MUTED, GRID, "#FFFFFF") + "}"
+    '@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){' + _DARK + "}}"
+    ':root[data-theme="dark"]{' + _DARK + "}"
+    ".vg-chart{max-width:100%;height:auto}"
+    ".vg-chart text{fill:var(--vg-ink," + INK + ");font-family:system-ui,sans-serif}"
+    ".vg-chart .vg-muted{fill:var(--vg-muted," + MUTED + ")}"
+    ".vg-axis{stroke:var(--vg-ink," + INK + ")}"
+    ".vg-grid{stroke:var(--vg-grid," + GRID + ")}"
+    ".vg-ref{stroke:var(--vg-muted," + MUTED + ")}"
+    ".vg-chart .vg-alert{fill:var(--vg-alert,"
+    + CATEGORY_LIGHT[1]
+    + ")}"
+    + "".join(
+        f".vg-s{i + 1}{{stroke:var(--vg-cat-{i + 1},{c})}}.vg-f{i + 1}{{fill:var(--vg-cat-{i + 1},{c})}}"
+        for i, c in enumerate(CATEGORY_LIGHT)
+    )
+    + ".vg-data table{border-collapse:collapse}.vg-data th,.vg-data td{padding:2px 8px;text-align:right}"
+    ".vg-data th[scope=row]{text-align:left}"
+)
+
+W, H = 480, 360
+ML, MR, MT, MB = 56, 16, 16, 48
+
+
+# --- utilidades -------------------------------------------------------------------------------------
+
+
+def _esc(value: Any) -> str:
+    return html.escape(str(value), quote=True)
+
+
+def _finite(x: Any) -> bool:
+    return isinstance(x, numbers.Real) and not isinstance(x, bool) and math.isfinite(x)
+
+
+def fmt_num(x: Any, digits: int = 3) -> str:
+    """Número con coma decimal (locale es-AR); 's/d' si falta."""
+    if not _finite(x):
+        return "s/d"
+    return f"{x:.{digits}f}".replace(".", ",")
+
+
+def fmt_pct(x: Any, digits: int = 1) -> str:
+    if not _finite(x):
+        return "s/d"
+    return f"{x * 100:.{digits}f}".replace(".", ",") + " %"
+
+
+def cividis(t: float) -> str:
+    """Color de la rampa secuencial para t en [0, 1] (interpolación lineal entre muestras)."""
+    t = min(1.0, max(0.0, float(t))) * (len(CIVIDIS) - 1)
+    i = min(int(t), len(CIVIDIS) - 2)
+    frac = t - i
+    a, b = CIVIDIS[i], CIVIDIS[i + 1]
+    rgb = [round(int(a[k : k + 2], 16) * (1 - frac) + int(b[k : k + 2], 16) * frac) for k in (1, 3, 5)]
+    return "#" + "".join(f"{v:02X}" for v in rgb)
+
+
+def _uid(kind: str, payload: Any) -> str:
+    return f"vg-{kind}-" + hashlib.sha1(repr(payload).encode("utf-8"), usedforsecurity=False).hexdigest()[:10]
+
+
+def _cat(i: int) -> tuple[str, str, str]:
+    """(índice de clase 1..7, color fallback, patrón de trazo) de la serie i."""
+    k = i % len(CATEGORY_LIGHT)
+    return str(k + 1), CATEGORY_LIGHT[k], DASHES[k]
+
+
+def _open(kind: str, payload: Any, title: str, desc: str, width: int = W, height: int = H) -> str:
+    uid = _uid(kind, payload)
+    return (
+        f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {width} {height}" width="100%" '
+        f'role="img" aria-labelledby="{uid}-t {uid}-d" class="vg-chart vg-{kind}" font-size="12">'
+        f'<title id="{uid}-t">{_esc(title)}</title><desc id="{uid}-d">{_esc(desc)}</desc>'
+    )
+
+
+def _text(
+    x: float, y: float, text: str, *, anchor: str = "middle", cls: str = "", size: int = 12, rot: bool = False
+) -> str:
+    transform = f' transform="rotate(-90 {x:.1f} {y:.1f})"' if rot else ""
+    klass = f' class="{cls}"' if cls else ""
+    return (
+        f'<text x="{x:.1f}" y="{y:.1f}" text-anchor="{anchor}" font-size="{size}" '
+        f'fill="{INK}"{klass}{transform}>'
+        f"{_esc(text)}</text>"
+    )
+
+
+def _line(
+    x1: float, y1: float, x2: float, y2: float, cls: str, color: str, dash: str = "", width: float = 1
+) -> str:
+    dash_attr = f' stroke-dasharray="{dash}"' if dash else ""
+    return (
+        f'<line x1="{x1:.1f}" y1="{y1:.1f}" x2="{x2:.1f}" y2="{y2:.1f}" class="{cls}" stroke="{color}" '
+        f'stroke-width="{width}"{dash_attr}/>'
+    )
+
+
+class _Frame:
+    """Área de trazado con escalas lineales."""
+
+    def __init__(
+        self, x0: float, y0: float, w: float, h: float, xlim: tuple[float, float], ylim: tuple[float, float]
+    ):
+        self.x0, self.y0, self.w, self.h = x0, y0, w, h
+        self.xlim, self.ylim = xlim, ylim
+
+    def x(self, v: float) -> float:
+        lo, hi = self.xlim
+        return self.x0 + (v - lo) / ((hi - lo) or 1.0) * self.w
+
+    def y(self, v: float) -> float:
+        lo, hi = self.ylim
+        return self.y0 + self.h - (v - lo) / ((hi - lo) or 1.0) * self.h
+
+    def axes(
+        self, xticks: Sequence[float], yticks: Sequence[float], xlabel: str, ylabel: str, xfmt: Any, yfmt: Any
+    ) -> str:
+        parts = []
+        for t in yticks:
+            parts.append(_line(self.x0, self.y(t), self.x0 + self.w, self.y(t), "vg-grid", GRID))
+            parts.append(_text(self.x0 - 6, self.y(t) + 4, yfmt(t), anchor="end", size=11))
+        for t in xticks:
+            parts.append(_text(self.x(t), self.y0 + self.h + 16, xfmt(t), size=11))
+        parts.append(_line(self.x0, self.y0 + self.h, self.x0 + self.w, self.y0 + self.h, "vg-axis", INK))
+        parts.append(_line(self.x0, self.y0, self.x0, self.y0 + self.h, "vg-axis", INK))
+        parts.append(_text(self.x0 + self.w / 2, self.y0 + self.h + 36, xlabel))
+        parts.append(_text(14, self.y0 + self.h / 2, ylabel, rot=True))
+        return "".join(parts)
+
+    def polyline(self, xs: Sequence[float], ys: Sequence[float], i: int) -> str:
+        k, color, dash = _cat(i)
+        pts = " ".join(
+            f"{self.x(a):.1f},{self.y(b):.1f}"
+            for a, b in zip(xs, ys, strict=True)
+            if _finite(a) and _finite(b)
+        )
+        dash_attr = f' stroke-dasharray="{dash}"' if dash else ""
+        return (
+            f'<polyline points="{pts}" fill="none" class="vg-s{k}" stroke="{color}" '
+            f'stroke-width="2"{dash_attr}/>'
+        )
+
+
+UNIT_TICKS = (0.0, 0.2, 0.4, 0.6, 0.8, 1.0)
+
+
+def _unit_frame() -> _Frame:
+    return _Frame(ML, MT, W - ML - MR, H - MT - MB, (0.0, 1.0), (0.0, 1.0))
+
+
+def _legend(frame: _Frame, labels: Sequence[str], *, corner: str = "br") -> str:
+    parts = []
+    n = len(labels)
+    x = frame.x0 + frame.w - 190 if corner.endswith("r") else frame.x0 + 10
+    y = frame.y0 + frame.h - 14 * n - 6 if corner.startswith("b") else frame.y0 + 14
+    for i, label in enumerate(labels):
+        k, color, dash = _cat(i)
+        yy = y + 14 * i
+        parts.append(_line(x, yy - 4, x + 22, yy - 4, f"vg-s{k}", color, dash, 2))
+        parts.append(_text(x + 28, yy, label, anchor="start", size=11))
+    return "".join(parts)
+
+
+def _empty(kind: str, title: str) -> str:
+    desc = "Sin datos suficientes para dibujar el gráfico."
+    return _open(kind, title, title, desc) + _text(W / 2, H / 2, desc, cls="vg-muted") + "</svg>"
+
+
+def data_table(caption: str, headers: Sequence[str], rows: Sequence[Sequence[Any]]) -> str:
+    """Tabla de datos accesible dentro de `<details>`. La primera columna es encabezado de fila."""
+    head = "".join(f'<th scope="col">{_esc(h)}</th>' for h in headers)
+    body = []
+    for row in rows:
+        cells = [f'<th scope="row">{_esc(row[0])}</th>'] + [f"<td>{_esc(c)}</td>" for c in row[1:]]
+        body.append("<tr>" + "".join(cells) + "</tr>")
+    return (
+        f'<details class="vg-data"><summary>Ver datos: {_esc(caption)}</summary>'
+        f"<table><caption>{_esc(caption)}</caption><thead><tr>{head}</tr></thead>"
+        f"<tbody>{''.join(body)}</tbody></table></details>"
+    )
+
+
+def figure(svg: str, table_html: str) -> str:
+    """Gráfico y su tabla alternativa en un `<figure>`."""
+    return f'<figure class="vg-figure">{svg}{table_html}</figure>'
+
+
+# --- curva de confiabilidad -------------------------------------------------------------------------
+
+
+def _clean_bins(bins: Sequence[Mapping[str, Any]]) -> list[Mapping[str, Any]]:
+    return [
+        b
+        for b in bins
+        if _finite(b.get("mean_pred"))
+        and _finite(b.get("frac_pos"))
+        and _finite(b.get("count"))
+        and b["count"] > 0
+    ]
+
+
+def _calibration_word(ece: float) -> str:
+    if ece < 0.05:
+        return "El puntaje está bien calibrado"
+    if ece < 0.1:
+        return "La calibración es moderada"
+    return "El puntaje está mal calibrado"
+
+
+def reliability_svg(
+    bins: Sequence[Mapping[str, Any]], ece: float, *, title: str = "Curva de confiabilidad"
+) -> str:
+    """Puntaje medio por bin contra frecuencia observada, con diagonal, histograma de conteos y ECE.
+
+    `bins`: dicts con `mean_pred`, `frac_pos`, `count` y opcionalmente `lo`, `hi`. Los bins vacíos se omiten.
+    """
+    pts = _clean_bins(bins)
+    if not pts or not _finite(ece):
+        return _empty("reliability", title)
+    worst = max(pts, key=lambda b: abs(b["frac_pos"] - b["mean_pred"]))
+    desc = (
+        f"ECE = {fmt_num(ece)} con {len(pts)} bins de igual masa. {_calibration_word(ece)}: la frecuencia "
+        f"observada se aparta en promedio {fmt_num(ece * 100, 1)} puntos del puntaje. La mayor brecha "
+        f"está en el bin de puntaje medio {fmt_num(worst['mean_pred'], 2)}, con frecuencia observada "
+        f"{fmt_num(worst['frac_pos'], 2)}."
+    )
+    frame = _Frame(ML, MT, W - ML - MR, 220, (0.0, 1.0), (0.0, 1.0))
+    parts = [_open("reliability", (list(map(dict, pts)), ece), title, desc)]
+    parts.append(
+        frame.axes(
+            UNIT_TICKS,
+            UNIT_TICKS,
+            "",
+            "Frecuencia observada",
+            lambda t: fmt_num(t, 1),
+            lambda t: fmt_num(t, 1),
+        )
+    )
+    parts.append(_line(frame.x(0), frame.y(0), frame.x(1), frame.y(1), "vg-ref", MUTED, "4 4"))
+    xs, ys = [b["mean_pred"] for b in pts], [b["frac_pos"] for b in pts]
+    parts.append(frame.polyline(xs, ys, 0))
+    k, color, _ = _cat(0)
+    for x, y in zip(xs, ys, strict=True):
+        parts.append(
+            f'<circle cx="{frame.x(x):.1f}" cy="{frame.y(y):.1f}" r="3" class="vg-f{k}" fill="{color}"/>'
+        )
+    parts.append(_text(frame.x0 + 8, frame.y0 + 14, f"ECE = {fmt_num(ece)}", anchor="start"))
+    # Histograma de conteos por bin.
+    hist = _Frame(ML, MT + 250, W - ML - MR, 50, (0.0, 1.0), (0.0, float(max(b["count"] for b in pts))))
+    k2, color2, _ = _cat(2)
+    for b in pts:
+        lo = b["lo"] if _finite(b.get("lo")) else b["mean_pred"] - 0.01
+        hi = b["hi"] if _finite(b.get("hi")) else b["mean_pred"] + 0.01
+        x0, x1 = hist.x(max(0.0, lo)), hist.x(min(1.0, hi))
+        width = max(1.0, x1 - x0 - 1)
+        y = hist.y(b["count"])
+        parts.append(
+            f'<rect x="{x0:.1f}" y="{y:.1f}" width="{width:.1f}" height="{hist.y0 + hist.h - y:.1f}" '
+            f'class="vg-f{k2}" fill="{color2}" fill-opacity="0.5"/>'
+        )
+    parts.append(_line(hist.x0, hist.y0 + hist.h, hist.x0 + hist.w, hist.y0 + hist.h, "vg-axis", INK))
+    for t in UNIT_TICKS:
+        parts.append(_text(hist.x(t), hist.y0 + hist.h + 14, fmt_num(t, 1), size=11))
+    parts.append(_text(W / 2, H - 4, "Puntaje medio del bin (barras: conteo por bin)"))
+    return "".join(parts) + "</svg>"
+
+
+def reliability_table(
+    bins: Sequence[Mapping[str, Any]], ece: float, *, title: str = "Curva de confiabilidad"
+) -> str:
+    rows = [
+        (i + 1, fmt_num(b["mean_pred"]), fmt_num(b["frac_pos"]), int(b["count"]))
+        for i, b in enumerate(_clean_bins(bins))
+    ]
+    return data_table(
+        f"{title} (ECE {fmt_num(ece)})", ("Bin", "Puntaje medio", "Frecuencia observada", "Tokens"), rows
+    )
+
+
+# --- ROC y PR ---------------------------------------------------------------------------------------
+
+
+def _check_curves(
+    curves: Sequence[Mapping[str, Any]], xkey: str, ykey: str, auckey: str
+) -> list[Mapping[str, Any]]:
+    out = []
+    for c in curves:
+        xs, ys = list(c.get(xkey, ())), list(c.get(ykey, ()))
+        if len(xs) != len(ys):
+            raise ValueError(f"la curva {c.get('name')!r} tiene {xkey} e {ykey} de distinto largo")
+        if xs and _finite(c.get(auckey)):
+            out.append(c)
+    return out
+
+
+def roc_svg(curves: Sequence[Mapping[str, Any]], *, title: str = "Curva ROC") -> str:
+    """Curvas ROC. Cada curva: `name`, `fpr`, `tpr`, `auc`. La primera es el detector principal."""
+    cs = _check_curves(curves, "fpr", "tpr", "auc")
+    if not cs:
+        return _empty("roc", title)
+    best = max(cs, key=lambda c: c["auc"])
+    ranking = "; ".join(f"{c['name']} {fmt_num(c['auc'])}" for c in sorted(cs, key=lambda c: -c["auc"]))
+    desc = (
+        f"Mayor AUROC: {best['name']} con {fmt_num(best['auc'])}. La diagonal es el azar (0,5). "
+        f"AUROC por serie: {ranking}."
+    )
+    frame = _unit_frame()
+    parts = [_open("roc", [(c["name"], c["auc"], len(c["fpr"])) for c in cs], title, desc)]
+    parts.append(
+        frame.axes(
+            UNIT_TICKS,
+            UNIT_TICKS,
+            "Tasa de falsos positivos",
+            "Tasa de verdaderos positivos",
+            lambda t: fmt_num(t, 1),
+            lambda t: fmt_num(t, 1),
+        )
+    )
+    parts.append(_line(frame.x(0), frame.y(0), frame.x(1), frame.y(1), "vg-ref", MUTED, "4 4"))
+    for i, c in enumerate(cs):
+        parts.append(frame.polyline(c["fpr"], c["tpr"], i))
+    parts.append(_legend(frame, [f"{c['name']} ({fmt_num(c['auc'])})" for c in cs]))
+    return "".join(parts) + "</svg>"
+
+
+def _tpr_at(c: Mapping[str, Any], fpr_max: float) -> float:
+    best = 0.0
+    for f, t in zip(c["fpr"], c["tpr"], strict=True):
+        if _finite(f) and _finite(t) and f <= fpr_max + 1e-12:
+            best = max(best, t)
+    return best
+
+
+def roc_table(curves: Sequence[Mapping[str, Any]], *, title: str = "Curva ROC") -> str:
+    rows = [
+        (c["name"], fmt_num(c["auc"]), fmt_num(_tpr_at(c, 0.1)))
+        for c in _check_curves(curves, "fpr", "tpr", "auc")
+    ]
+    return data_table(title, ("Serie", "AUROC", "TPR con FPR ≤ 0,1"), rows)
+
+
+def pr_svg(
+    curves: Sequence[Mapping[str, Any]],
+    prevalence: float,
+    *,
+    threshold_point: Mapping[str, Any] | None = None,
+    title: str = "Curva precisión-recall",
+) -> str:
+    """Curvas PR con línea base de prevalencia y el punto del umbral actual.
+
+    Cada curva: `name`, `recall`, `precision`, `ap`. `threshold_point`: `recall`, `precision`, `tau`.
+    """
+    cs = _check_curves(curves, "recall", "precision", "ap")
+    if not cs or not _finite(prevalence):
+        return _empty("pr", title)
+    main = cs[0]
+    lift = main["ap"] / prevalence if prevalence > 0 else float("nan")
+    desc = (
+        f"AUPRC de {main['name']} = {fmt_num(main['ap'])}, {fmt_num(lift, 1)} veces la prevalencia "
+        f"({fmt_pct(prevalence)}), que es la base de un clasificador al azar."
+    )
+    tp = (
+        threshold_point
+        if threshold_point and all(_finite(threshold_point.get(k)) for k in ("recall", "precision", "tau"))
+        else None
+    )
+    if tp:
+        desc += (
+            f" Con τ = {fmt_num(tp['tau'])}: precisión {fmt_num(tp['precision'])} "
+            f"y recall {fmt_num(tp['recall'])}."
+        )
+    frame = _unit_frame()
+    parts = [_open("pr", ([(c["name"], c["ap"]) for c in cs], prevalence, dict(tp or {})), title, desc)]
+    parts.append(
+        frame.axes(
+            UNIT_TICKS, UNIT_TICKS, "Recall", "Precisión", lambda t: fmt_num(t, 1), lambda t: fmt_num(t, 1)
+        )
+    )
+    yb = frame.y(prevalence)
+    parts.append(_line(frame.x(0), yb, frame.x(1), yb, "vg-ref", MUTED, "4 4"))
+    parts.append(
+        _text(
+            frame.x(1) - 4,
+            yb - 4,
+            f"Base: prevalencia {fmt_pct(prevalence)}",
+            anchor="end",
+            cls="vg-muted",
+            size=11,
+        )
+    )
+    for i, c in enumerate(cs):
+        parts.append(frame.polyline(c["recall"], c["precision"], i))
+    if tp:
+        x, y = frame.x(tp["recall"]), frame.y(tp["precision"])
+        parts.append(
+            f'<path d="M{x:.1f} {y - 6:.1f} L{x + 6:.1f} {y:.1f} '
+            f'L{x:.1f} {y + 6:.1f} L{x - 6:.1f} {y:.1f} Z" '
+            f'class="vg-s3 vg-f1" stroke="{INK}" fill="{CATEGORY_LIGHT[0]}" stroke-width="1.5"/>'
+        )
+        near_right = x > frame.x0 + frame.w - 80
+        label = f"τ = {fmt_num(tp['tau'])}"
+        parts.append(
+            _text(
+                x - 9 if near_right else x + 9, y - 8, label, anchor="end" if near_right else "start", size=11
+            )
+        )
+    parts.append(_legend(frame, [f"{c['name']} ({fmt_num(c['ap'])})" for c in cs], corner="bl"))
+    return "".join(parts) + "</svg>"
+
+
+def pr_table(
+    curves: Sequence[Mapping[str, Any]],
+    prevalence: float,
+    *,
+    threshold_point: Mapping[str, Any] | None = None,
+    title: str = "Curva precisión-recall",
+) -> str:
+    rows: list[tuple[Any, ...]] = [
+        (c["name"], fmt_num(c["ap"]), fmt_pct(prevalence))
+        for c in _check_curves(curves, "recall", "precision", "ap")
+    ]
+    if threshold_point:
+        rows.append(
+            (
+                f"Umbral τ = {fmt_num(threshold_point.get('tau'))}",
+                f"precisión {fmt_num(threshold_point.get('precision'))}",
+                f"recall {fmt_num(threshold_point.get('recall'))}",
+            )
+        )
+    return data_table(title, ("Serie", "AUPRC", "Prevalencia"), rows)
+
+
+# --- histograma de puntajes por clase ---------------------------------------------------------------
+
+
+def _check_hist(edges: Sequence[float], a: Sequence[float], b: Sequence[float]) -> None:
+    if len(edges) != len(a) + 1 or len(a) != len(b):
+        raise ValueError("edges debe tener un elemento más que cada vector de conteos")
+    if any(not _finite(v) or v < 0 for v in list(a) + list(b)):
+        raise ValueError("los conteos deben ser finitos y no negativos")
+
+
+def _share_above(edges: Sequence[float], counts: Sequence[float], tau: float) -> float:
+    total = sum(counts)
+    if total <= 0:
+        return float("nan")
+    above = 0.0
+    for lo, hi, c in zip(edges[:-1], edges[1:], counts, strict=True):
+        if lo >= tau:
+            above += c
+        elif hi > tau:
+            above += c * (hi - tau) / (hi - lo)
+    return above / total
+
+
+def score_histogram_svg(
+    edges: Sequence[float],
+    counts_correct: Sequence[float],
+    counts_error: Sequence[float],
+    *,
+    tau: float | None = None,
+    title: str = "Distribución del puntaje por clase",
+) -> str:
+    """Barras agrupadas por bin con la proporción de cada clase y la línea vertical del umbral."""
+    _check_hist(edges, counts_correct, counts_error)
+    n_ok, n_err = sum(counts_correct), sum(counts_error)
+    if not counts_correct or (n_ok == 0 and n_err == 0):
+        return _empty("hist", title)
+    share_ok = [c / n_ok if n_ok else 0.0 for c in counts_correct]
+    share_err = [c / n_err if n_err else 0.0 for c in counts_error]
+    desc = f"{int(n_err)} tokens erróneos y {int(n_ok)} correctos."
+    if tau is not None and _finite(tau):
+        desc += (
+            f" Con τ = {fmt_num(tau)} queda marcado el "
+            f"{fmt_pct(_share_above(edges, counts_error, tau))} de los tokens "
+            f"erróneos y el {fmt_pct(_share_above(edges, counts_correct, tau))} de los correctos."
+        )
+    top = max(share_ok + share_err) or 1.0
+    frame = _Frame(
+        ML, MT + 18, W - ML - MR, H - MT - MB - 18, (float(edges[0]), float(edges[-1])), (0.0, top * 1.05)
+    )
+    yticks = [top * 1.05 * i / 4 for i in range(5)]
+    parts = [_open("hist", (list(edges), list(counts_correct), list(counts_error), tau), title, desc)]
+    parts.append(
+        frame.axes(
+            [float(e) for e in edges[:: max(1, len(edges) // 5)]],
+            yticks,
+            "Puntaje p_error",
+            "Proporción de la clase",
+            lambda t: fmt_num(t, 1),
+            lambda t: fmt_pct(t, 0),
+        )
+    )
+    for lo, hi, so, se in zip(edges[:-1], edges[1:], share_ok, share_err, strict=True):
+        x0, x1 = frame.x(lo), frame.x(hi)
+        half = max(0.5, (x1 - x0) / 2 - 0.5)
+        for j, share in enumerate((so, se)):
+            k, color, _ = _cat(j)
+            y = frame.y(share)
+            pattern = ' stroke-dasharray="2 1"' if j else ""
+            parts.append(
+                f'<rect x="{x0 + j * half:.1f}" y="{y:.1f}" width="{half:.1f}" '
+                f'height="{frame.y0 + frame.h - y:.1f}" '
+                f'class="vg-f{k} vg-s3" fill="{color}" stroke="{INK}" stroke-width="0.5"{pattern}/>'
+            )
+    if tau is not None and _finite(tau):
+        xt = frame.x(tau)
+        parts.append(_line(xt, frame.y0, xt, frame.y0 + frame.h, "vg-axis", INK, "5 3", 1.5))
+        parts.append(_text(xt + 4, frame.y0 + 12, f"τ = {fmt_num(tau)}", anchor="start", size=11))
+    for j, label in enumerate(("Correctos", "Erróneos")):
+        k, color, _ = _cat(j)
+        x = ML + 10 + j * 110
+        parts.append(f'<rect x="{x}" y="{MT}" width="12" height="12" class="vg-f{k}" fill="{color}"/>')
+        parts.append(_text(x + 16, MT + 10, label, anchor="start", size=11))
+    return "".join(parts) + "</svg>"
+
+
+def score_histogram_table(
+    edges: Sequence[float],
+    counts_correct: Sequence[float],
+    counts_error: Sequence[float],
+    *,
+    tau: float | None = None,
+    title: str = "Distribución del puntaje por clase",
+) -> str:
+    _check_hist(edges, counts_correct, counts_error)
+    rows = [
+        (f"[{fmt_num(lo, 2)}; {fmt_num(hi, 2)})", int(a), int(b))
+        for lo, hi, a, b in zip(edges[:-1], edges[1:], counts_correct, counts_error, strict=True)
+    ]
+    return data_table(title, ("Bin de puntaje", "Correctos", "Erróneos"), rows)
+
+
+# --- latencia ---------------------------------------------------------------------------------------
+
+PERCENTILES = ("p50", "p95", "p99")
+
+
+def _overheads(
+    baseline: Mapping[str, float], vigia: Mapping[str, float]
+) -> list[tuple[str, float, float, float]]:
+    out = []
+    for p in PERCENTILES:
+        b, v = baseline.get(p), vigia.get(p)
+        if not (_finite(b) and _finite(v)) or b <= 0 or v < 0:
+            raise ValueError(f"latencia {p} inválida: sin Vigía {b!r}, con Vigía {v!r}")
+        out.append((p, float(b), float(v), v / b - 1.0))
+    return out
+
+
+def latency_svg(
+    baseline: Mapping[str, float],
+    vigia: Mapping[str, float],
+    *,
+    target: float = 0.05,
+    unit: str = "ms",
+    title: str = "Latencia por token",
+) -> str:
+    """Barras p50/p95/p99 sin y con Vigía, marca de meta (+target) y alerta si se supera."""
+    rows = _overheads(baseline, vigia)
+    ok = [p for p, _, _, o in rows if o <= target]
+    bad = [p for p, _, _, o in rows if o > target]
+    desc = (
+        "Overhead " + ", ".join(f"{p} {fmt_pct(o)}" for p, _, _, o in rows) + f". Meta {fmt_pct(target, 0)}: "
+    )
+    desc += ("cumple en " + ", ".join(ok)) if ok else "no cumple en ningún percentil"
+    if bad and ok:
+        desc += "; no cumple en " + ", ".join(bad)
+    desc += "."
+    top = max(max(v, b * (1 + target)) for _, b, v, _ in rows) * 1.15
+    frame = _Frame(ML, MT + 18, W - ML - MR, H - MT - MB - 18, (0.0, 3.0), (0.0, top))
+    parts = [_open("latency", (rows, target, unit), title, desc)]
+    yticks = [top * i / 4 for i in range(5)]
+    parts.append(frame.axes([], yticks, "Percentil", f"Latencia ({unit})", str, lambda t: fmt_num(t, 1)))
+    for i, (p, b, v, o) in enumerate(rows):
+        cx = frame.x(i + 0.5)
+        for j, value in enumerate((b, v)):
+            k, color, _ = _cat(j)
+            y = frame.y(value)
+            parts.append(
+                f'<rect x="{cx - 34 + j * 34:.1f}" y="{y:.1f}" width="32" '
+                f'height="{frame.y0 + frame.h - y:.1f}" '
+                f'class="vg-f{k}" fill="{color}"/>'
+            )
+        ym = frame.y(b * (1 + target))
+        parts.append(_line(cx - 40, ym, cx + 40, ym, "vg-axis", INK, "4 2", 1.5))
+        cls = "vg-alert" if o > target else ""
+        label = f"+{fmt_pct(o)}" + (" ⚠ supera la meta" if o > target else "")
+        parts.append(_text(cx, frame.y(max(b * (1 + target), v)) - 6, label, cls=cls, size=11))
+        parts.append(_text(cx, frame.y0 + frame.h + 16, p, size=11))
+    for j, label in enumerate(("Sin Vigía", "Con Vigía", f"Meta +{fmt_pct(target, 0)}")):
+        x = ML + 10 + j * 120
+        if j < 2:
+            k, color, _ = _cat(j)
+            parts.append(f'<rect x="{x}" y="{MT}" width="12" height="12" class="vg-f{k}" fill="{color}"/>')
+        else:
+            parts.append(_line(x, MT + 6, x + 12, MT + 6, "vg-axis", INK, "4 2", 1.5))
+        parts.append(_text(x + 16, MT + 10, label, anchor="start", size=11))
+    return "".join(parts) + "</svg>"
+
+
+def latency_table(
+    baseline: Mapping[str, float],
+    vigia: Mapping[str, float],
+    *,
+    target: float = 0.05,
+    unit: str = "ms",
+    title: str = "Latencia por token",
+) -> str:
+    rows = [
+        (p, fmt_num(b, 2), fmt_num(v, 2), fmt_pct(o), "cumple" if o <= target else "no cumple")
+        for p, b, v, o in _overheads(baseline, vigia)
+    ]
+    return data_table(
+        title,
+        ("Percentil", f"Sin Vigía ({unit})", f"Con Vigía ({unit})", "Overhead", f"Meta {fmt_pct(target, 0)}"),
+        rows,
+    )
+
+
+# --- tendencia de marcado ---------------------------------------------------------------------------
+
+
+def _check_trend(labels: Sequence[str], rates: Sequence[float], recalibrations: Sequence[int]) -> None:
+    if len(labels) != len(rates):
+        raise ValueError("labels y rates deben tener el mismo largo")
+    if any(not _finite(r) or not 0 <= r <= 1 for r in rates):
+        raise ValueError("las tasas deben estar en [0, 1]")
+    if any(
+        not isinstance(i, numbers.Integral) or isinstance(i, bool) or not 0 <= i < len(rates)
+        for i in recalibrations
+    ):
+        raise ValueError("cada recalibración es un índice válido de la serie")
+
+
+def flag_trend_svg(
+    labels: Sequence[str],
+    rates: Sequence[float],
+    *,
+    recalibrations: Sequence[int] = (),
+    title: str = "Tasa de tokens marcados",
+) -> str:
+    """Serie temporal de la tasa de marcado con líneas verticales en cada recalibración."""
+    _check_trend(labels, rates, recalibrations)
+    if not rates:
+        return _empty("trend", title)
+    imax = max(range(len(rates)), key=lambda i: rates[i])
+    desc = (
+        f"La tasa de marcado pasó de {fmt_pct(rates[0])} ({labels[0]}) "
+        f"a {fmt_pct(rates[-1])} ({labels[-1]}). "
+        f"Máximo {fmt_pct(rates[imax])} en {labels[imax]}. Recalibraciones marcadas: {len(recalibrations)}."
+    )
+    top = max(rates) * 1.15 or 0.05
+    n = len(rates)
+    frame = _Frame(ML, MT, W - ML - MR, H - MT - MB, (0.0, float(max(1, n - 1))), (0.0, top))
+    step = max(1, n // 5)
+    xticks = sorted(set(list(range(0, n, step)) + [n - 1]))
+    parts = [_open("trend", (list(labels), list(rates), list(recalibrations)), title, desc)]
+    parts.append(
+        frame.axes(
+            xticks,
+            [top * i / 4 for i in range(5)],
+            "Fecha",
+            "Tokens marcados",
+            lambda t: str(labels[int(t)]),
+            lambda t: fmt_pct(t, 1),
+        )
+    )
+    for i in recalibrations:
+        x = frame.x(i)
+        parts.append(_line(x, frame.y0, x, frame.y0 + frame.h, "vg-ref", MUTED, "3 3", 1.5))
+        parts.append(_text(x + 3, frame.y0 + 12, "recal.", anchor="start", cls="vg-muted", size=10))
+    parts.append(frame.polyline(list(range(n)), rates, 0))
+    k, color, _ = _cat(0)
+    for i, r in enumerate(rates):
+        parts.append(
+            f'<circle cx="{frame.x(i):.1f}" cy="{frame.y(r):.1f}" r="2.5" class="vg-f{k}" fill="{color}"/>'
+        )
+    return "".join(parts) + "</svg>"
+
+
+def flag_trend_table(
+    labels: Sequence[str],
+    rates: Sequence[float],
+    *,
+    recalibrations: Sequence[int] = (),
+    title: str = "Tasa de tokens marcados",
+) -> str:
+    _check_trend(labels, rates, recalibrations)
+    marks = set(recalibrations)
+    rows = [
+        (lab, fmt_pct(r, 2), "sí" if i in marks else "")
+        for i, (lab, r) in enumerate(zip(labels, rates, strict=True))
+    ]
+    return data_table(title, ("Fecha", "Tasa de marcado", "Recalibración"), rows)
+
+
+# --- heatmap capa x experto -------------------------------------------------------------------------
+
+
+def _check_matrix(matrix: Sequence[Sequence[float]], rows: Sequence[Any], cols: Sequence[Any]) -> list[float]:
+    if len(matrix) != len(rows) or any(len(r) != len(cols) for r in matrix):
+        raise ValueError("la matriz debe ser filas x columnas según las etiquetas")
+    return [v for r in matrix for v in r if _finite(v)]
+
+
+def heatmap_svg(
+    matrix: Sequence[Sequence[float]],
+    row_labels: Sequence[Any],
+    col_labels: Sequence[Any],
+    *,
+    value_label: str = "uso",
+    title: str = "Uso por capa y experto",
+) -> str:
+    """Heatmap capa (filas) x experto (columnas) con rampa cividis y leyenda de color."""
+    values = _check_matrix(matrix, row_labels, col_labels)
+    if not values:
+        return _empty("heatmap", title)
+    vmin, vmax = min(values), max(values)
+    cells = [(i, j, v) for i, r in enumerate(matrix) for j, v in enumerate(r) if _finite(v)]
+    imax = max(cells, key=lambda c: c[2])
+    imin = min(cells, key=lambda c: c[2])
+    desc = (
+        f"{value_label.capitalize()} máximo {fmt_num(vmax)} en capa {row_labels[imax[0]]}, "
+        f"experto {col_labels[imax[1]]}; "
+        f"mínimo {fmt_num(vmin)} en capa {row_labels[imin[0]]}, experto {col_labels[imin[1]]}."
+    )
+    ncol, nrow = len(col_labels), len(row_labels)
+    cell = max(4.0, min(24.0, 640.0 / ncol))
+    ch = max(4.0, min(24.0, 480.0 / nrow))
+    left, top = 64, 16
+    width = int(left + ncol * cell + 16)
+    height = int(top + nrow * ch + 64)
+    parts = [
+        _open(
+            "heatmap",
+            ([list(r) for r in matrix], list(row_labels), list(col_labels)),
+            title,
+            desc,
+            width,
+            height,
+        )
+    ]
+    span = (vmax - vmin) or 1.0
+    for i, r in enumerate(matrix):
+        for j, v in enumerate(r):
+            x, y = left + j * cell, top + i * ch
+            fill = cividis((v - vmin) / span) if _finite(v) else "none"
+            extra = "" if _finite(v) else f' stroke="{MUTED}" stroke-dasharray="1 1"'
+            parts.append(
+                f'<rect x="{x:.1f}" y="{y:.1f}" width="{cell:.1f}" height="{ch:.1f}" fill="{fill}"{extra}/>'
+            )
+    rstep = max(1, int(12 // ch) + 1)
+    for i in range(0, nrow, rstep):
+        parts.append(_text(left - 4, top + i * ch + ch / 2 + 4, str(row_labels[i]), anchor="end", size=10))
+    cstep = max(1, int(24 // cell) + 1)
+    for j in range(0, ncol, cstep):
+        parts.append(_text(left + j * cell + cell / 2, top + nrow * ch + 12, str(col_labels[j]), size=10))
+    parts.append(_text(left + ncol * cell / 2, top + nrow * ch + 26, "Experto"))
+    parts.append(_text(12, top + nrow * ch / 2, "Capa", rot=True))
+    # Leyenda de color.
+    ly, lw = top + nrow * ch + 36, min(200.0, ncol * cell)
+    for s in range(20):
+        parts.append(
+            f'<rect x="{left + s * lw / 20:.1f}" y="{ly:.1f}" width="{lw / 20 + 0.5:.1f}" '
+            f'height="8" fill="{cividis(s / 19)}"/>'
+        )
+    parts.append(_text(left, ly + 20, fmt_num(vmin), anchor="start", size=10))
+    parts.append(_text(left + lw, ly + 20, f"{fmt_num(vmax)} ({value_label})", anchor="end", size=10))
+    return "".join(parts) + "</svg>"
+
+
+def heatmap_table(
+    matrix: Sequence[Sequence[float]],
+    row_labels: Sequence[Any],
+    col_labels: Sequence[Any],
+    *,
+    value_label: str = "uso",
+    title: str = "Uso por capa y experto",
+) -> str:
+    _check_matrix(matrix, row_labels, col_labels)
+    headers = ["Capa"] + [f"Experto {c}" for c in col_labels]
+    rows = [[f"Capa {lab}"] + [fmt_num(v) for v in r] for lab, r in zip(row_labels, matrix, strict=True)]
+    return data_table(f"{title} ({value_label})", headers, rows)
