@@ -1,0 +1,40 @@
+[project]
+name = "vigia"
+version = "0.1.0"
+description = "Confianza por token para modelos MoE autoalojados, con señales del router en una sola pasada."
+requires-python = ">=3.11"
+license = { text = "Apache-2.0 (vigia/), comercial (vigia_ee/)" }
+dependencies = ["numpy>=1.26"]
+
+[project.optional-dependencies]
+hf = ["torch>=2.4", "transformers>=5.0", "safetensors", "accelerate"]
+serve = ["fastapi>=0.110", "uvicorn>=0.29", "httpx>=0.27"]
+ee = ["jinja2>=3.1", "python-multipart>=0.0.9"]
+dev = ["pytest>=8", "ruff", "scikit-learn>=1.4", "playwright>=1.45"]
+
+[project.scripts]
+vigia = "vigia.cli:main"
+vigia-platform = "vigia_ee.app:main"
+
+[tool.setuptools.packages.find]
+include = ["vigia*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+  "slow: usa el checkpoint real Granite 1B-A400M (correr de a uno, 8 GB de RAM)",
+  "e2e: levanta la plataforma y maneja un navegador real",
+]
+addopts = "-m 'not slow and not e2e' -q"
+
+[tool.ruff]
+line-length = 110
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "S", "UP"]
+ignore = ["S101"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"

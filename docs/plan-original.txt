@@ -1,0 +1,566 @@
+=== PAGE 1
+Plan de proyecto: de la investigación MoE a un
+emprendimiento
+Oct 4, 2026  ·  @Mateo P
+Meta real y veredicto
+La meta real de 12 meses es validar un producto pequeño con empresas que pagan. El
+producto es una capa de confianza por token para modelos MoE autoalojados.
+Meta: al  Oct 4, 2027 , el proyecto tiene un informe técnico público, una librería abierta y 3
+pilotos con empresas. Al menos 1 piloto es pago.
+Una empresa que entrena arquitecturas propias no es realista para una persona sola. Ese
+camino necesita decenas de millones de dólares y un equipo de investigación. En cambio,
+una empresa pequeña que aplica las ideas sobre modelos abiertos sí es realista. El plan
+avanza en tres etapas: investigación, producto y empresa. Cada etapa termina en una
+puerta de decisión.
+Supuestos del plan
+Mateo dedica entre 15 y 20 horas por semana al proyecto.
+Mateo programa en Python y aprende PyTorch durante la primera etapa.
+El presupuesto propio es menor a USD 3.000 por año, sin contar el tiempo.
+El proyecto busca un cofundador técnico durante los primeros 6 meses.
+Los proyectos de ingreso usan como máximo el 40 % de las horas semanales.
+Estos supuestos cambian las fechas del plan. Si un supuesto no coincide con tu situación,
+el plan necesita un ajuste.
+Cuatro caminos de negocio
+El camino recomendado es la capa de confianza para modelos MoE autoalojados. La
+consultoría sirve como fuente de ingresos temporal. El análisis técnico previo está en
+F-MoE: análisis crítico y propuesta reducida .
+Plan de proyecto: de la investigación MoE a un emprendimiento
+Page 1 of 15
+=== PAGE 2
+La capa de confianza conecta tres activos del proyecto. El primer activo es la idea del
+desacuerdo entre expertos. El segundo activo es la formación en ciencias del
+comportamiento, útil para estudiar calibración y juicio. El tercer activo es el interés en
+agentes de IA, que necesitan saber cuándo dudar.
+Producto recomendado: capa de confianza por token
+El producto marca en tiempo real los tokens con confianza baja en modelos MoE
+autoalojados. El producto usa señales que el modelo ya calcula, sin un segundo modelo
+juez en producción.
+Problema (hipótesis para validar)
+1. Las empresas con datos sensibles autoalojan modelos abiertos para no enviar datos a
+terceros.
+2. Esos modelos inventan datos sin aviso, y el equipo no sabe qué parte revisar.
+Camino Qué vende Capital inicial Ventaja propia Riesgo principal Veredicto
+Capa de
+confianza para
+MoE
+autoalojados
+Una librería y
+un servicio que
+marcan los
+tokens con
+confianza baja.
+El primer año
+cuesta menos
+de USD 3.000.
+El producto usa
+señales internas
+del enrutador en
+una sola pasada.
+Una herramienta
+grande puede
+copiar la función.
+Recomendado
+Consultoría de
+modelos
+autoalojados
+El servicio
+instala
+modelos
+abiertos en
+empresas
+locales.
+El camino
+casi no
+necesita
+capital.
+El fundador
+combina
+conocimiento
+técnico y
+contacto local.
+El ingreso
+depende de las
+horas trabajadas.
+Ingreso
+temporal
+Compresión de
+MoE
+El servicio
+fusiona
+expertos para
+usar menos
+memoria de
+GPU.
+El camino
+necesita
+capital bajo o
+medio.
+La fusión respeta
+un presupuesto
+de memoria.
+La cuantización
+gratuita ya
+reduce la
+memoria.
+Opción
+secundaria
+Arquitectura
+propia
+La empresa
+entrena y
+vende
+modelos base
+nuevos.
+El camino
+necesita
+decenas de
+millones de
+dólares.
+El proyecto no
+tiene una ventaja
+demostrada.
+Los laboratorios
+grandes
+dominan este
+mercado.
+Descartar
+Plan de proyecto: de la investigación MoE a un emprendimiento
+Page 2 of 15
+=== PAGE 3
+3. Los detectores actuales usan un modelo juez o el contexto de RAG, y esos métodos
+agregan costo y latencia.
+Estas tres frases son hipótesis, no hechos. Las entrevistas de la etapa 2 confirman o
+rechazan cada hipótesis.
+Usuario inicial
+El usuario inicial es un equipo de IA en una empresa mediana de finanzas, salud, legal o
+gobierno. Ese equipo autoaloja un modelo MoE abierto. Por ejemplo, gpt-oss-120b tiene
+117.000 millones de parámetros y entra en una GPU de 80 GB. Su licencia es Apache 2.0,
+según el informe de OpenAI.
+Propuesta de valor
+El producto entrega una confianza por token en la misma pasada de generación.
+El producto apunta a agregar menos de 5 % de latencia.
+El producto marca los fragmentos dudosos en un panel simple.
+El cliente define una acción para cada fragmento dudoso: revisión humana, nueva
+consulta con RAG o abstención.
+Producto mínimo (MVP)
+1. Un módulo de PyTorch extrae la entropía del enrutador y la dispersión entre expertos
+de gpt-oss-20b.
+2. Un detector liviano combina esas señales en un puntaje por token.
+3. Un juez LLM etiqueta los datos de calibración una sola vez, como en InnerExpert.
+4. Un reporte mide el AUROC en datos del cliente y la latencia agregada.
+5. Un panel web muestra los fragmentos con confianza baja.
+Ventaja real
+La ventaja no es una idea nueva. InnerExpert ya demuestra la señal en agosto de 2026. La
+ventaja posible es la ejecución: integración con el sistema del cliente, calibración por
+cliente, datos en español y soporte local.
+Plan de proyecto: de la investigación MoE a un emprendimiento
+Page 3 of 15
+=== PAGE 4
+Riesgo técnico principal
+Los servidores de inferencia como vLLM no exponen los logits del enrutador por defecto.
+El MVP necesita modificar el servidor o leer las señales con hooks de PyTorch. Esta
+modificación puede bajar la velocidad del servidor. La etapa 1 mide ese costo antes de
+construir el producto.
+Mercado y competencia
+Las herramientas comerciales revisadas usan jueces, clasificadores externos o métricas
+de RAG. Ninguna de esas herramientas usa las señales internas de un MoE. Ese hueco es
+la oportunidad, pero su tamaño todavía es desconocido.
+Competidor Método Precio publicado Diferencia del
+proyecto
+InnerExpert
+(investigación)
+Un detector liviano usa
+señales internas del
+MoE.
+El trabajo es un
+artículo académico.
+El proyecto
+convierte este
+método en un
+producto.
+Galileo Un clasificador propio
+(Luna-2) y métricas de
+RAG evalúan las
+respuestas.
+El plan gratis cubre
+5.000 trazas por
+mes; el plan pago
+cuesta cerca de USD
+100 por mes.
+El proyecto no
+necesita un
+clasificador externo
+en producción.
+Patronus AI Un clasificador abierto
+(Lynx) compara la
+respuesta con el
+contexto.
+Lynx es gratis; la API
+cuesta cerca de USD
+10 a 20 por 1.000
+llamadas.
+El proyecto no
+necesita un contexto
+de referencia.
+Arize Phoenix Una plataforma abierta
+de observabilidad
+aplica plantillas de
+RAG.
+La versión
+autoalojada es
+gratis; la versión
+gestionada cuesta
+cerca de USD 50 por
+mes.
+El proyecto puede
+integrarse con
+Phoenix en lugar de
+competir.
+Plan de proyecto: de la investigación MoE a un emprendimiento
+Page 4 of 15
+=== PAGE 5
+Los datos comerciales vienen de una comparación publicada por Giskard en julio de 2026.
+Giskard también es un competidor, entonces esa comparación puede tener sesgo. Los
+precios cambian con frecuencia y necesitan una verificación directa.
+Tres límites del mercado
+La capa solo funciona con modelos autoalojados, porque necesita acceso a los pesos.
+La capa solo funciona con modelos MoE, aunque gpt-oss, DeepSeek y otros modelos
+abiertos usan MoE.
+Un AUROC de 0,76 por token, como en InnerExpert, quizás no alcanza para un cliente
+exigente.
+Este plan no estima el tamaño del mercado con números. Una cifra sin datos de clientes es
+una invención. Las entrevistas de la etapa 2 producen la primera estimación real.
+Hoja de ruta de 12 meses
+El plan tiene tres etapas de cerca de 4 meses. Cada etapa termina en una puerta con una
+pregunta de sí o no.
+Competidor Método Precio publicado Diferencia del
+proyecto
+Giskard Jueces LLM, validación
+de recuperación y
+pruebas adversarias
+evalúan el modelo.
+La versión abierta es
+gratis; la versión de
+empresa tiene
+precio a medida.
+El proyecto mide
+durante la
+generación, no en
+una prueba previa.
+Plan de proyecto: de la investigación MoE a un emprendimiento
+Page 5 of 15
+=== PAGE 6
+Una respuesta negativa no termina el proyecto. Esa respuesta cambia el rumbo hacia la
+opción marcada en cada puerta. Las entrevistas empiezan en el mes 3, antes del fin de la
+etapa 1. Los proyectos de ingreso corren en paralelo durante las tres etapas.
+Validación con clientes
+El proyecto hace 20 entrevistas entre los meses 3 y 5. La meta es encontrar 3 empresas
+que aceptan un piloto.
+La formación en ciencias del comportamiento es una ventaja en esta etapa. Las personas
+predicen mal su conducta futura, pero describen mejor su conducta pasada. Por eso, las
+preguntas piden hechos pasados, no opiniones sobre un producto futuro.
+Hoja de ruta · 3 etapas, 3 puertas de decisión
+Plan de proyecto: de la investigación MoE a un emprendimiento
+Page 6 of 15
+=== PAGE 7
+Perfil de entrevistado
+La persona trabaja en un equipo que autoaloja un modelo de lenguaje abierto.
+La empresa trabaja en finanzas, salud, legal, gobierno o atención al cliente.
+La persona decide o influye en la compra de herramientas de IA.
+Preguntas base
+1. ¿Qué modelo usan hoy, y por qué eligieron autoalojarlo?
+2. ¿Cuándo fue la última vez que el modelo inventó un dato importante?
+3. ¿Qué pasó después de ese error, y cuánto costó corregirlo?
+4. ¿Qué hacen hoy para detectar esos errores?
+5. ¿Cuánto tiempo o dinero gastan por mes en esa detección?
+6. ¿Quién aprueba una herramienta nueva en su empresa?
+Señales de un problema real
+El equipo ya gasta dinero o tiempo en revisar respuestas.
+El equipo ya construyó una herramienta interna para ese problema.
+La persona acepta compartir datos de prueba o agendar una segunda reunión.
+Señales falsas
+La persona dice que el producto "suena interesante", pero no propone un paso
+concreto.
+La persona describe un problema hipotético, sin un caso pasado.
+Cada entrevista termina con un registro en una tabla común. La tabla guarda el perfil, el
+caso pasado, el gasto actual y el próximo paso.
+Equipo, presupuesto y recursos
+El primer año cuesta entre USD 300 y USD 850 en gastos directos, sin contar el tiempo.
+Los programas de créditos cubren parte de ese gasto.
+Plan de proyecto: de la investigación MoE a un emprendimiento
+Page 7 of 15
+=== PAGE 8
+Presupuesto del primer año
+Las cifras de GPU para gpt-oss-20b y para el juez LLM son estimaciones propias. La etapa
+1 reemplaza esas estimaciones con costos medidos.
+Programas de créditos
+Según una comparación de septiembre de 2026, tres programas aplican a un fundador sin
+inversión externa:
+AWS Activate ofrece entre USD 1.000 y USD 5.000 a fundadores autofinanciados.
+Google Cloud para startups ofrece USD 2.000 a una startup con un MVP funcionando y
+sin inversión previa.
+Microsoft for Startups ofrece USD 200 al inicio y más créditos con el uso sostenido.
+Los niveles altos de créditos piden inversión previa o el aval de una aceleradora. Por eso,
+esos niveles aplican recién en la etapa 3.
+Equipo
+Mateo lidera la investigación de usuarios, el producto y el diseño de experimentos de
+calibración.
+Rubro Estimación
+(USD)
+Nota
+GPU para experimentos con
+gpt-oss-20b
+50 a 150 La etapa 1 solo ejecuta inferencia, sin
+entrenamiento.
+Etiquetas con un juez LLM por
+API
+50 a 200 El juez etiqueta los datos de calibración
+una sola vez.
+GPU para el núcleo jerárquico
+(opcional)
+146 a 337 El análisis previo calcula esta cifra.
+Dominio y alojamiento de la
+demo
+50 a 150 La demo usa un servidor pequeño.
+Constitución de la sociedad A definir Un contador define este costo en la
+etapa 3.
+Total 296 a 837 El total excluye la constitución de la
+sociedad.
+Plan de proyecto: de la investigación MoE a un emprendimiento
+Page 8 of 15
+=== PAGE 9
+Un cofundador técnico construye la integración con servidores de inferencia y la
+infraestructura.
+Un mentor académico de aprendizaje automático revisa los experimentos y el informe.
+El cofundador técnico es la pieza más crítica del equipo. Un proyecto con un informe
+público y datos de entrevistas atrae a un cofundador con más facilidad que una idea sola.
+Proyectos redituables que financian el proyecto
+Los mejores proyectos de ingreso venden servicios a los mismos clientes del producto
+final. Así, cada cliente paga, muestra el problema real y puede convertirse en un piloto.
+Uno o dos proyectos de agentes cubren los gastos directos del primer año, que suman
+entre USD 296 y USD 837.
+Proyecto Precio de referencia
+(USD)
+Sinergia con el
+producto final
+Prioridad
+Auditoría de alucinaciones
+para chatbots de empresas
+Las auditorías de
+prompts cuestan
+desde 80 por hora.
+La auditoría mide el
+mismo problema del
+producto y produce
+datos de prueba.
+1
+Instalación de modelos
+autoalojados
+La fuente no publica
+un precio; el precio
+queda a validar.
+El cliente es el usuario
+inicial exacto del
+producto.
+1, desde el
+mes 4
+Agentes de IA para pymes Un proyecto cuesta
+entre 500 y 2.500, o
+una cuota mensual.
+El proyecto entrena el
+despliegue de
+modelos, pero las
+pymes rara vez
+autoalojan.
+2
+Talleres de IA aplicada para
+equipos
+Un taller cuesta entre
+200 y 1.500.
+El taller genera
+contactos con
+empresas.
+2
+Automatizaciones con n8n
+o Make
+Un flujo cuesta entre
+150 y 800.
+El proyecto casi no
+aporta al producto.
+3, solo si
+falta dinero
+Plan de proyecto: de la investigación MoE a un emprendimiento
+Page 9 of 15
+=== PAGE 10
+Los precios vienen de una guía de Coderhouse de marzo de 2026. Esa guía estima entre
+ARS 600.000 y 1.500.000 por mes para un freelancer con 6 a 12 meses de experiencia. Las
+primeras 3 ventas confirman o corrigen estos precios.
+Por qué la auditoría de alucinaciones va primero
+La auditoría usa herramientas abiertas, como Phoenix, Giskard o Promptfoo, sin un
+producto propio.
+La auditoría aplica métodos de ciencias del comportamiento: diseño experimental y
+acuerdo entre evaluadores.
+Cada auditoría produce un caso real, un conjunto de datos y un contacto para un piloto.
+El informe de la auditoría muestra al cliente el costo de sus errores actuales.
+Secuencia de ingresos
+1. Meses 1 a 3: talleres y agentes simples generan el primer ingreso y los primeros
+contactos.
+2. Meses 3 a 6: las auditorías de alucinaciones generan entrevistas y datos de prueba.
+3. Meses 6 a 12: la instalación de modelos autoalojados incluye la capa de confianza como
+agregado.
+Reglas para no perder el foco
+Los proyectos de ingreso usan como máximo el 40 % de las horas semanales.
+Cada proyecto de ingreso produce al menos una entrevista, un conjunto de datos o un
+contacto para un piloto.
+Un proyecto sin sinergia solo entra si el proyecto necesita dinero con urgencia.
+Muchas empresas de software empiezan como servicios y después convierten el servicio
+en producto. Este plan sigue ese camino a propósito.
+Estructura legal, propiedad intelectual e inversión
+El proyecto constituye una sociedad recién cuando un cliente acepta pagar. Antes de ese
+punto, una sociedad agrega costos sin agregar valor. Esta sección no reemplaza el consejo
+de un contador o un abogado.
+Plan de proyecto: de la investigación MoE a un emprendimiento
+Page 10 of 15
+=== PAGE 11
+Sociedad
+Una sociedad local, por ejemplo una SAS, sirve para facturar en Argentina.
+Un inversor de Estados Unidos suele pedir una sociedad en Delaware.
+Un contador define la opción correcta según los clientes y la inversión.
+Régimen de Economía del Conocimiento
+Según Develop Argentina (septiembre de 2026), el régimen sigue vigente hasta el 31 de
+diciembre de 2029.
+El régimen reduce el Impuesto a las Ganancias hasta un 60 %.
+El régimen otorga un crédito fiscal por el 70 % de las contribuciones patronales.
+La actividad promovida debe representar al menos el 70 % de la facturación.
+Una empresa pequeña necesita, por ejemplo, una inversión en I+D cercana al 3 % de la
+facturación.
+Las noticias de junio y julio de 2026 muestran cambios en este régimen. Un contador
+confirma el estado vigente antes de la inscripción.
+Propiedad intelectual
+Una patente no protege bien este proyecto. Las ideas base tienen trabajos publicados
+desde 1995 hasta 2026. Además, la ley argentina de patentes excluye los programas de
+computación como tales.
+La estrategia recomendada es un modelo de núcleo abierto. La librería básica es abierta y
+genera confianza técnica. El panel, la calibración por cliente y el soporte son pagos. Los
+datos de evaluación en español son un activo propio.
+Inversión
+La sección "Vender la idea a inversores" desarrolla este tema.
+Vender la idea a inversores
+Un inversor no compra una idea sola. Un inversor compra una parte de una empresa con
+un equipo y con evidencia de demanda. Por eso, la idea gana valor de inversión recién con
+pilotos o clientes.
+Plan de proyecto: de la investigación MoE a un emprendimiento
+Page 11 of 15
+=== PAGE 12
+Qué piden los inversores
+Según Ellty (junio de 2026), un inversor semilla apoya a un equipo con señales tempranas
+de demanda. Ese inversor no exige un negocio terminado. La evidencia puede ir desde
+usuarios tempranos hasta ingresos, porque los números pesan más que las promesas.
+Para este proyecto, la evidencia mínima tiene cinco partes:
+El equipo incluye un cofundador técnico.
+Un prototipo funciona con gpt-oss y marca fragmentos dudosos.
+Tres empresas acuerdan un piloto, o un cliente paga.
+El equipo mide el AUROC y la latencia en datos reales.
+El momento es favorable: un MoE abierto como gpt-oss-120b ya funciona en una sola
+GPU.
+Montos de referencia en Buenos Aires
+Ellty es un agregador externo, entonces cada monto necesita una verificación en el sitio
+del fondo. Según la misma fuente, cerca del 87 % de las rondas de 2025 fue menor a USD 5
+millones.
+Qué cuesta vender temprano
+Una inversión temprana cambia dinero por una parte de la empresa. Una valuación baja
+entrega una parte más grande por el mismo dinero. Este ejemplo usa cifras hipotéticas:
+USD 100.000 con una valuación posterior de USD 1.000.000 equivalen al 10 % de la
+empresa.
+USD 100.000 con una valuación posterior de USD 500.000 equivalen al 20 % de la
+empresa.
+Fondo Monto típico por inversión (USD)
+Globant Ventures 50.000 a 250.000
+Newtopia VC 100.000 a 500.000
+Draper Cygnus 100.000 a 1.000.000
+17Sigma 250.000 a 1.000.000
+NXTP Ventures 500.000 a 5.000.000
+Plan de proyecto: de la investigación MoE a un emprendimiento
+Page 12 of 15
+=== PAGE 13
+Una idea sin evidencia recibe una valuación baja o ninguna oferta. Los proyectos de
+ingreso reducen el dinero necesario y mejoran la posición para negociar.
+Por qué no conviene pedir un acuerdo de confidencialidad
+Según DocSend, los fondos casi nunca firman acuerdos de confidencialidad para una
+presentación. Los fondos ven muchas ideas parecidas, y un acuerdo los expone a
+demandas. Además, la ejecución vale más que la idea. El proyecto protege su código
+privado, sus datos y sus relaciones con clientes, no la idea.
+Cuándo buscar dinero
+1. Antes de la puerta 2, el proyecto usa créditos en la nube, concursos y becas sin ceder
+acciones.
+2. Después de la puerta 2, el proyecto postula a aceleradoras y busca inversores ángeles.
+3. Después de la puerta 3, el proyecto busca fondos pre-semilla con un cliente pago.
+Materiales para inversores
+Una página de resumen explica el problema, la solución y la evidencia.
+Una presentación de 10 diapositivas cubre problema, solución, demo, evidencia,
+mercado, competencia, modelo de negocio, equipo, plan y pedido.
+Una demo de 2 minutos muestra gpt-oss con fragmentos marcados en tiempo real.
+Un registro de entrevistas y métricas respalda cada afirmación de la presentación.
+Métricas y criterios de abandono
+Cada etapa tiene una métrica principal y una condición de cambio. Un cambio de rumbo
+temprano es un resultado válido, no un fracaso.
+Etapa Métrica principal Meta Si la meta falla
+1.
+Investigación
+AUROC de la señal
+contra la entropía de la
+salida en gpt-oss-20b
+La señal supera a la
+entropía, con menos
+de 5 % de latencia
+extra.
+El proyecto pasa a
+consultoría o a
+compresión de MoE.
+Plan de proyecto: de la investigación MoE a un emprendimiento
+Page 13 of 15
+=== PAGE 14
+Un riesgo externo también cambia el rumbo. Si un proveedor grande integra la función
+gratis, el proyecto se enfoca en el servicio local y en los datos en español.
+El peor resultado posible sigue teniendo valor. Al mes 12, Mateo tiene un informe técnico,
+código público y 20 entrevistas documentadas. Ese portafolio sirve para una pasantía, un
+posgrado o un empleo en IA.
+Próximos 14 días
+Las tareas de los próximos 14 días preparan la etapa 1. Ninguna tarea necesita dinero.
+Fuentes
+OpenAI (2025). gpt-oss-120b & gpt-oss-20b Model Card.
+NVIDIA. gpt-oss-120b, ficha del modelo.
+Fonseca, Rodrigues y Romano (2026). Mixture-of-Expert Blocks Contain Strong
+Hallucination Detection Signals.
+Giskard (2026). The best hallucination detection tools for LLMs and AI agents.
+Causo (2026). Startup Cloud Credits Compared: AWS, Google, Microsoft, NVIDIA.
+Etapa Métrica principal Meta Si la meta falla
+2. Producto Entrevistas con un
+problema confirmado
+y gasto actual
+3 empresas aceptan un
+piloto después de 20
+entrevistas.
+El proyecto cambia de
+usuario o de problema.
+3. Empresa Clientes que pagan 1 cliente paga al mes 12. El proyecto queda
+como portafolio y
+código abierto.
+Leé el artículo de InnerExpert completo y anotá su método.
+Eliminá el anexo cuántico y la afirmación de superinteligencia del texto original.
+Completá un curso corto de PyTorch con un ejemplo de hooks.
+Cargá un MoE pequeño de código abierto y leé los logits de su enrutador.
+Escribí 10 preguntas de entrevista sobre conductas pasadas.
+Listá 30 empresas o equipos que autoalojan modelos abiertos.
+Creá un repositorio público con el plan de investigación.
+Contactá a 2 docentes de aprendizaje automático para pedir mentoría.
+Plan de proyecto: de la investigación MoE a un emprendimiento
+Page 14 of 15
+=== PAGE 15
+Develop Argentina (2026). Beneficios fiscales de la Economía del Conocimiento.
+Coderhouse (2026). Monetizar habilidades de IA como freelancer en Argentina y
+Latam.
+Ellty (2026). Seed investors backing Buenos Aires startups in 2026.
+DocSend. Why don't VCs sign NDAs for fundraising pitch decks.
+Plan de proyecto: de la investigación MoE a un emprendimiento
+Page 15 of 15
