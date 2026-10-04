@@ -138,6 +138,28 @@ class Backend(Protocol):
     ) -> Iterator[TokenEvent]: ...
 
 
+class Scorer(Protocol):
+    """Contrato del detector visto desde el servicio (lo implementa `vigia.detector.Detector`)."""
+
+    id: str  # sha256 corto del artefacto = calibration_id
+
+    def score_tokens(self, tokens: list[TokenEvent]) -> list[float | None]:
+        """p_error calibrado por token; None para especiales y canales que no son `final`."""
+        ...
+
+    def score_response(self, token_p_errors: list[float | None]) -> float | None:
+        """p_error de la respuesta (agregación max + calibrador de respuesta)."""
+        ...
+
+    def tau(self, alpha: float) -> float:
+        """Umbral por token que garantiza FNR <= alpha (CRC). Interpola entre los alphas guardados."""
+        ...
+
+    def check_model(self, info: ModelInfo) -> None:
+        """Lanza DetectorMismatchError si el detector fue calibrado para otro modelo."""
+        ...
+
+
 # --- Fragmentos, políticas y salida ------------------------------------------------------------
 
 Action = Literal["pass", "annotate", "human_review", "rag_retry", "abstain"]
