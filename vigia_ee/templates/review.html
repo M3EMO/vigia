@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% from "_macros.html" import csrf, action_badge, alert_error with context %}
+{% block title %}Cola de revisión{% endblock %}
+{% block page_id %}review{% endblock %}
+{% block content %}
+<div class="vg-page-head">
+  <h1>Cola de revisión</h1>
+  {% if can("review:write") %}
+  <form method="post" action="/review/next">{{ csrf() }}<button type="submit" class="vg-btn">Tomar el siguiente item</button></form>
+  {% endif %}
+</div>
+<p class="vg-lead">Cada item se reserva 15 minutos para un revisor. Las decisiones de otros revisores quedan ocultas hasta completar el item.</p>
+
+{{ alert_error(error) }}
+
+<nav aria-label="Filtrar por estado" class="vg-actions">
+  <a class="vg-btn vg-btn-small {{ 'vg-btn-secondary' if state is none else 'vg-btn-ghost' }}" href="/review"{% if state is none %} aria-current="page"{% endif %}>Todos</a>
+  {% for key, label in state_labels.items() %}
+  <a class="vg-btn vg-btn-small {{ 'vg-btn-secondary' if state == key else 'vg-btn-ghost' }}" href="/review?estado={{ key }}"{% if state == key %} aria-current="page"{% endif %}>{{ label }} ({{ counts[key]|count }}{% if counts[key] >= cap %}+{% endif %})</a>
+  {% endfor %}
+</nav>
+
+{% if items %}
+<div class="vg-table-wrap">
+  <table class="vg-table vg-table-cards">
+    <caption class="sr-only">Items de revisión</caption>
+    <thead><tr><th scope="col">Creado</th><th scope="col">Qué revisar</th><th scope="col">Acción</th><th scope="col" class="vg-num">P(error)</th><th scope="col">Estado</th><th scope="col" class="vg-num">Decisiones</th></tr></thead>
+    <tbody>
+      {% for i in items %}
+      <tr>
+        <th scope="row" data-label="Creado"><a href="/review/{{ i.id }}">{{ i.created_at|dt }}</a></th>
+        <td data-label="Qué revisar">{{ "Respuesta completa" if i.span_idx is none else "Fragmento " ~ (i.span_idx + 1) }}</td>
+        <td data-label="Acción">{% if i.trace %}{{ action_badge(i.trace.action) }}{% else %}s/d{% endif %}</td>
+        <td data-label="P(error)" class="vg-num">{{ i.trace.response_p_error|num(2) if i.trace else "s/d" }}</td>
+        <td data-label="Estado">
+          {% set expired = i.state == "reserved" and (i.reserved_until or "") < now_iso %}
+          <span class="vg-badge{% if i.state == 'completed' %} vg-badge-ok{% elif i.state == 'reserved' and not expired %} vg-badge-info{% endif %}">{{ state_labels[i.state] }}{% if i.state == "reserved" %}{% if expired %} (vencida){% elif i.reserved_by == user_id %} por vos{% endif %}{% endif %}</span>
+        </td>
+        <td data-label="Decisiones" class="vg-num">{{ i.n_decisions }} de {{ i.min_reviewers }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% elif state %}
+<div class="vg-card vg-empty"><p>No hay items en el estado «{{ state_labels[state] }}».</p><p><a class="vg-btn vg-btn-secondary" href="/review">Ver todos</a></p></div>
+{% else %}
+<div class="vg-card vg-empty">
+  <p>La cola está vacía.</p>
+  <p>Las respuestas con acción «Revisión humana» y las que mandes desde el detalle de una generación aparecen acá.</p>
+</div>
+{% endif %}
+
+{% if can("calibration:write") %}
+<section class="vg-card" aria-labelledby="ds-title">
+  <h2 id="ds-title">Recalibrar con las revisiones</h2>
+  <p>Convierte las decisiones completadas en un dataset etiquetado (error = 1, correcto = 0; «incierto» y desacuerdos se omiten).</p>
+  <form method="post" action="/review/dataset" class="vg-form-inline">
+    {{ csrf() }}
+    <div class="vg-field"><label for="ds-name">Nombre del dataset</label><input id="ds-name" name="name" type="text" maxlength="200" placeholder="revisiones de octubre"></div>
+    <div class="vg-actions"><button type="submit" class="vg-btn vg-btn-secondary">Crear dataset desde revisiones</button></div>
+  </form>
+</section>
+{% endif %}
+{% endblock %}

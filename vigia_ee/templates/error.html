@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block title %}{{ title }}{% endblock %}
+{% block content %}
+<div class="vg-page-head"><h1>{{ title }}</h1></div>
+<div class="vg-alert vg-alert-error" role="alert">
+  <p>{{ message }}</p>
+  {% if request_id %}<p class="vg-hint">Código para soporte: <code>{{ request_id }}</code></p>{% endif %}
+</div>
+<div class="vg-actions">
+  <a class="vg-btn" href="{{ path }}">Reintentar</a>
+  <a class="vg-btn vg-btn-secondary" href="/">Ir al resumen</a>
+</div>
+{% endblock %}

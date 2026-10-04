@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% from "_macros.html" import csrf, field_error, invalid with context %}
+{% block title %}Mi cuenta{% endblock %}
+{% block content %}
+<div class="vg-page-head"><h1>Mi cuenta</h1></div>
+<section class="vg-card" aria-labelledby="acc-data">
+  <h2 id="acc-data">Datos</h2>
+  <dl class="vg-meta">
+    <dt>Email</dt><dd>{{ email or "s/d" }}</dd>
+    <dt>Rol</dt><dd>{{ ROLE_LABELS.get(principal.role, principal.role) }}</dd>
+  </dl>
+</section>
+<section class="vg-card" aria-labelledby="acc-pw">
+  <h2 id="acc-pw">Cambiar la contraseña</h2>
+  <p class="vg-hint">Mínimo 15 caracteres, sin reglas de composición. Una frase larga y propia es lo más seguro. Al cambiarla se cierran todas tus sesiones.</p>
+  {% if errors %}<div class="vg-alert vg-alert-error" role="alert"><p>Revisá los campos marcados.</p></div>{% endif %}
+  <form method="post" action="/account/password" class="vg-form">
+    {{ csrf() }}
+    <input type="text" name="username" autocomplete="username" value="{{ email or '' }}" hidden>
+    <div class="vg-field">
+      <label for="current_password">Contraseña actual</label>
+      <input id="current_password" name="current_password" type="password" autocomplete="current-password" required maxlength="128"{{ invalid(errors, "current_password") }}>
+      {{ field_error(errors, "current_password") }}
+    </div>
+    <div class="vg-field">
+      <label for="new_password">Contraseña nueva</label>
+      <input id="new_password" name="new_password" type="password" autocomplete="new-password" required minlength="15" maxlength="128"{{ invalid(errors, "new_password") }}>
+      {{ field_error(errors, "new_password") }}
+    </div>
+    <div class="vg-field">
+      <label for="confirm_password">Repetí la contraseña nueva</label>
+      <input id="confirm_password" name="confirm_password" type="password" autocomplete="new-password" required minlength="15" maxlength="128"{{ invalid(errors, "confirm_password") }}>
+      {{ field_error(errors, "confirm_password") }}
+    </div>
+    <div class="vg-actions"><button type="submit" class="vg-btn">Cambiar la contraseña</button></div>
+  </form>
+</section>
+{% endblock %}

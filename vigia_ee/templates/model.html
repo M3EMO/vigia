@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block title %}Uso de expertos{% endblock %}
+{% block page_id %}model{% endblock %}
+{% block content %}
+<div class="vg-page-head">
+  <h1>Uso de expertos</h1>
+  <p class="vg-lead">Qué expertos elige el router en cada capa MoE, agregado de las generaciones recientes.</p>
+</div>
+
+<section class="vg-card" aria-labelledby="model-info">
+  <h2 id="model-info">Modelo servido</h2>
+  <dl class="vg-meta">
+    <dt>Modelo</dt><dd>{{ info.model_id|clean }}</dd>
+    <dt>Arquitectura</dt><dd>{{ info.model_type }}</dd>
+    <dt>Capas</dt><dd>{{ info.n_layers|count }} ({{ info.moe_layers|length }} con router)</dd>
+    <dt>Expertos</dt><dd>{{ info.n_experts|count }} por capa, top-{{ info.top_k }}</dd>
+    <dt>Gating</dt><dd>{{ info.gating }}</dd>
+    <dt>Cuantización</dt><dd>{{ info.quantization }}</dd>
+    {% if caps %}
+    <dt>Señales</dt><dd>{{ caps.tiers|join(", ") }} · modo {{ "reducido" if caps.mode == "reduced" else "completo" }}</dd>
+    {% if caps.disabled %}<dt>Deshabilitadas</dt><dd>{{ caps.disabled|join("; ") }}</dd>{% endif %}
+    {% endif %}
+  </dl>
+</section>
+
+{% if heatmap %}
+<section class="vg-card" aria-labelledby="heat-title">
+  <h2 id="heat-title">Uso por capa y experto</h2>
+  <p class="vg-hint">Fracción de selecciones de cada experto dentro de su capa, sobre {{ n_traces|count }} generaciones. Escala secuencial cividis: más claro, más uso.</p>
+  <div class="vg-heatmap-wrap" role="region" aria-labelledby="heat-title" tabindex="0">{{ heatmap }}</div>
+  {{ table }}
+</section>
+{% else %}
+<div class="vg-card vg-empty">
+  <p>Todavía no hay datos de uso de expertos.</p>
+  <p>El backend guarda el uso capa × experto en cada generación con señales del router. Las generaciones en modo reducido sin IDs de expertos no aportan datos.</p>
+</div>
+{% endif %}
+{% endblock %}

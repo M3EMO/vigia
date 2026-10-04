@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% from "_macros.html" import csrf, field_error, invalid, legend, marked_text, action_badge with context %}
+{% block title %}Playground{% endblock %}
+{% block page_id %}playground{% endblock %}
+{% block content %}
+<div class="vg-page-head">
+  <h1>Playground</h1>
+  <p class="vg-lead">Probá el modelo con Vigía activo. Cada prueba queda guardada como generación con origen «Playground».</p>
+</div>
+
+<div class="vg-grid-2">
+  <form method="post" action="/playground" class="vg-card vg-form" data-playground-form>
+    {{ csrf() }}
+    <div class="vg-field">
+      <label for="prompt">Mensaje</label>
+      <textarea id="prompt" name="prompt" required maxlength="8000" rows="6"{{ invalid(errors, "prompt") }}>{{ values.prompt }}</textarea>
+      {{ field_error(errors, "prompt") }}
+    </div>
+    <details{% if values.system %} open{% endif %}>
+      <summary>Mensaje de sistema (opcional)</summary>
+      <div class="vg-field">
+        <label for="system">Sistema</label>
+        <textarea id="system" name="system" maxlength="4000" rows="3"{{ invalid(errors, "system") }}>{{ values.system }}</textarea>
+        {{ field_error(errors, "system") }}
+      </div>
+    </details>
+    <div class="vg-form-inline">
+      <div class="vg-field">
+        <label for="max_tokens">Tokens máximos</label>
+        <input id="max_tokens" name="max_tokens" type="number" min="1" max="{{ settings.max_tokens_limit }}" step="1" required value="{{ values.max_tokens }}"{{ invalid(errors, "max_tokens") }}>
+        {{ field_error(errors, "max_tokens") }}
+      </div>
+      <div class="vg-field">
+        <label for="temperature">Temperatura</label>
+        <input id="temperature" name="temperature" type="number" min="0" max="2" step="0.1" inputmode="decimal" required value="{{ values.temperature }}"{{ invalid(errors, "temperature") }}>
+        {{ field_error(errors, "temperature") }}
+      </div>
+    </div>
+    <div class="vg-actions"><button type="submit" class="vg-btn" data-playground-submit>Generar</button></div>
+  </form>
+
+  <section class="vg-card" aria-labelledby="out-title" data-playground-output aria-busy="false">
+    <h2 id="out-title">Respuesta</h2>
+    <p class="vg-unverified" role="note">El texto sin marcar no está verificado.</p>
+    {{ legend() }}
+    <p class="vg-status" data-playground-status aria-live="polite">{% if result %}Listo: {{ result.n_tokens|count }} tokens, {{ result.n_flagged|count }} marcados.{% else %}Todavía no generaste nada.{% endif %}</p>
+    <div data-playground-error>{% if stream_error|default(none) %}<div class="vg-alert vg-alert-error" role="alert"><p>{{ stream_error }}</p><p><button type="submit" form="pg-retry" class="vg-btn vg-btn-secondary vg-btn-small">Reintentar</button></p></div>{% endif %}</div>
+    <div data-playground-result>
+      {% if result %}
+      {{ marked_text(result.segments, prefix="pg") }}
+      <dl class="vg-meta">
+        <dt>Acción</dt><dd>{{ action_badge(result.done.action) }}</dd>
+        <dt>P(error) respuesta</dt><dd>{{ result.done.response_p_error|num(3) }}</dd>
+        <dt>Calibrado</dt><dd>{{ "sí" if result.done.calibrated else "no: sin detector activo no hay resaltado" }}</dd>
+      </dl>
+      {% if result.done.trace_id %}<p><a href="/generations/{{ result.done.trace_id }}">Abrir el detalle con señales</a></p>{% endif %}
+      {% endif %}
+    </div>
+  </section>
+</div>
+{% if stream_error|default(none) %}
+<form id="pg-retry" method="post" action="/playground" hidden>
+  {{ csrf() }}
+  <input type="hidden" name="prompt" value="{{ values.prompt }}">
+  <input type="hidden" name="system" value="{{ values.system }}">
+  <input type="hidden" name="max_tokens" value="{{ values.max_tokens }}">
+  <input type="hidden" name="temperature" value="{{ values.temperature }}">
+</form>
+{% endif %}
+{% endblock %}

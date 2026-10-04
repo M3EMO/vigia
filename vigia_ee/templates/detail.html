@@ -1,0 +1,149 @@
+{% extends "base.html" %}
+{% from "_macros.html" import csrf, action_badge, legend, marked_text with context %}
+{% block title %}Generación{% endblock %}
+{% block page_id %}detail{% endblock %}
+{% block content %}
+<div class="vg-page-head">
+  <h1>Generación del {{ trace.created_at|dt }}</h1>
+  <div class="vg-actions">
+    {{ action_badge(trace.action) }}
+    <button type="button" class="vg-btn vg-btn-ghost vg-btn-small" data-open-dialog="shortcuts" hidden>Atajos <kbd>?</kbd></button>
+    <a class="vg-btn vg-btn-ghost vg-btn-small" href="/generations">Volver a la lista</a>
+  </div>
+</div>
+
+<p class="vg-unverified" role="note">El texto sin marcar no está verificado. Una marca indica duda; su ausencia no prueba que el texto sea correcto.</p>
+
+{% if not calibrated %}
+<div class="vg-alert vg-alert-info" role="status">
+  <p>Esta generación no tiene puntajes calibrados{% if trace.degraded %} (el detector falló y la respuesta salió degradada){% endif %}. No se resalta texto: sin calibración, un puntaje no es un P(error).</p>
+</div>
+{% endif %}
+
+<div class="vg-detail">
+  <div>
+    {% if calibrated and text is not none %}
+    <form method="get" action="/generations/{{ trace.id }}" class="vg-card" aria-labelledby="th-label" data-threshold-form>
+      <p id="th-label"><strong>Umbral de vista</strong></p>
+      <div class="vg-threshold">
+        <input type="range" min="0" max="1" step="0.01" value="{{ '%.2f'|format(threshold) }}" aria-label="Umbral de vista (deslizador)" data-threshold-range hidden>
+        <label class="sr-only" for="umbral">Umbral de vista (número entre 0 y 1)</label>
+        <input id="umbral" name="umbral" type="number" min="0" max="1" step="0.01" inputmode="decimal" value="{{ '%.2f'|format(threshold) }}" aria-describedby="th-hint"{% if threshold_error %} aria-invalid="true"{% endif %}>
+        <button type="submit" class="vg-btn vg-btn-secondary vg-btn-small">Aplicar</button>
+        {% if threshold != default_threshold %}<a class="vg-btn vg-btn-ghost vg-btn-small" href="/generations/{{ trace.id }}">Volver a τ</a>{% endif %}
+      </div>
+      <p class="vg-hint" id="th-hint">Solo cambia lo que ves: marca los tokens con P(error) ≥ umbral. La política de la respuesta usó τ = {{ trace.tau|num(3) }}.</p>
+      {% if threshold_error %}<p class="vg-field-error" role="alert">{{ threshold_error }}</p>{% endif %}
+    </form>
+    {{ legend() }}
+    {% endif %}
+
+    <h2 id="resp-title">Respuesta</h2>
+    {% if text is none %}
+    <div class="vg-alert vg-alert-info"><p>La organización guarda solo puntajes y offsets (<code>store_text = none</code>). El texto vive en el sistema del cliente.</p></div>
+    {% else %}
+    {{ marked_text(segments) }}
+    <p class="sr-only" aria-live="polite">{{ fragments|length }} fragmentos dudosos al umbral {{ threshold|num(2) }}.</p>
+    {% endif %}
+
+    {% if prompt %}
+    <details class="vg-card">
+      <summary>Ver el prompt</summary>
+      <pre>{{ prompt|clean }}</pre>
+    </details>
+    {% endif %}
+  </div>
+
+  <aside class="vg-detail-aside" aria-labelledby="aside-title">
+    <section class="vg-card">
+      <h2 id="aside-title">Calibración</h2>
+      <dl class="vg-meta">
+        <dt>Detector</dt><dd>{% if trace.calibration_id %}<code>{{ trace.calibration_id }}</code>{% else %}sin calibrar{% endif %}</dd>
+        <dt>alpha</dt><dd>{{ trace.alpha|num(2) }}</dd>
+        <dt>τ</dt><dd>{{ trace.tau|num(3) }}</dd>
+        <dt>P(error) respuesta</dt><dd>{{ trace.response_p_error|num(3) }}</dd>
+        <dt>Modelo</dt><dd>{{ trace.model_id|clean }}</dd>
+        <dt>Modo</dt><dd>{{ "reducido (vLLM)" if trace.mode == "reduced" else "completo" }}</dd>
+        <dt>Origen</dt><dd>{{ SOURCE_LABELS.get(trace.source, trace.source) }}</dd>
+        <dt>Tokens</dt><dd>{{ trace.n_tokens|count }}</dd>
+        <dt>Latencia</dt><dd>{{ trace.latency_ms|ms }}</dd>
+        <dt>Overhead</dt><dd>{{ trace.overhead_ms|ms }}</dd>
+        <dt>Fin</dt><dd>{{ trace.finish_reason or "s/d" }}</dd>
+      </dl>
+    </section>
+
+    {% if fragments %}
+    <section class="vg-card vg-signals" aria-labelledby="sig-title">
+      <h2 id="sig-title" tabindex="-1">Señales por fragmento</h2>
+      <p class="vg-hint">Valores por subtoken; el fragmento toma el máximo. <kbd>j</kbd>/<kbd>k</kbd> recorren los fragmentos y <kbd>Enter</kbd> muestra sus señales.</p>
+      {% for f in fragments %}
+      <div class="vg-signals-item{% if loop.first %} is-current{% endif %}" id="sig-{{ f.n }}" data-signals="{{ f.n }}">
+        <h3><a href="#frag-{{ f.n }}">Fragmento {{ f.n }}</a> · nivel {{ f.level_label }} · P(error) {{ f.score|num(2) }}</h3>
+        <table>
+          <caption class="sr-only">Señales de los tokens del fragmento {{ f.n }}</caption>
+          <thead><tr><th scope="col">Token</th><th scope="col">P(error)</th><th scope="col">Entropía salida</th><th scope="col">Entropía router</th></tr></thead>
+          <tbody>
+            {% for t in f.tokens %}
+            <tr{% if t.flag %} class="vg-token-flagged"{% endif %}><th scope="row"><code>{{ t.text|clean if t.text else "·" }}</code></th><td>{{ t.p_error|num(3) }}</td><td>{{ t.out_entropy|num(3) }}</td><td>{{ t.r_ent_mean|num(3) }}</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% endfor %}
+    </section>
+    {% elif calibrated and text is not none %}
+    <section class="vg-card"><h2>Señales por fragmento</h2><p>No hay tokens sobre el umbral de vista.</p></section>
+    {% endif %}
+
+    {% if can("review:write") %}
+    <section class="vg-card" aria-labelledby="rev-title">
+      <h2 id="rev-title">Revisión humana</h2>
+      <form method="post" action="/generations/{{ trace.id }}/review" class="vg-form">
+        {{ csrf() }}
+        <div class="vg-field">
+          <label for="target">Qué revisar</label>
+          <select id="target" name="target">
+            <option value="response">La respuesta completa</option>
+            {% for s in stored_spans %}<option value="{{ s.idx }}">Fragmento {{ loop.index }} (P(error) {{ s.score|num(2) }}): {{ s.label }}</option>{% endfor %}
+          </select>
+        </div>
+        <div class="vg-field">
+          <label for="min_reviewers">Revisores mínimos</label>
+          <input id="min_reviewers" name="min_reviewers" type="number" min="1" max="5" step="1" value="{{ min_reviewers }}" required>
+        </div>
+        <div class="vg-actions"><button type="submit" class="vg-btn">Enviar a revisión</button></div>
+      </form>
+      {% if reviews %}
+      <p class="vg-hint">En la cola:</p>
+      <ul>{% for r in reviews %}<li><a href="/review/{{ r.id }}">Item {{ loop.index }}</a> · {{ {"pending": "pendiente", "reserved": "reservado", "needs_other": "necesita otro revisor", "completed": "completado"}.get(r.state, r.state) }}</li>{% endfor %}</ul>
+      {% endif %}
+    </section>
+    {% endif %}
+
+    {% if can("data:delete") %}
+    <section class="vg-card" aria-labelledby="del-title">
+      <h2 id="del-title">Supresión</h2>
+      <form method="post" action="/generations/{{ trace.id }}/delete" class="vg-form">
+        {{ csrf() }}
+        <label class="vg-check"><input type="checkbox" name="confirm" value="yes" required> Borrar esta generación con sus tokens, fragmentos y revisiones</label>
+        <div class="vg-actions"><button type="submit" class="vg-btn vg-btn-danger">Borrar</button></div>
+      </form>
+    </section>
+    {% endif %}
+  </aside>
+</div>
+{% endblock %}
+
+{% block dialogs %}
+<dialog id="shortcuts" aria-labelledby="shortcuts-title">
+  <h2 id="shortcuts-title">Atajos del detalle</h2>
+  <dl class="vg-shortcuts">
+    <dt><kbd>j</kbd></dt><dd>Fragmento siguiente</dd>
+    <dt><kbd>k</kbd></dt><dd>Fragmento anterior</dd>
+    <dt><kbd>Enter</kbd></dt><dd>Mostrar las señales del fragmento enfocado</dd>
+    <dt><kbd>?</kbd></dt><dd>Abrir esta hoja</dd>
+    <dt><kbd>Esc</kbd></dt><dd>Cerrar</dd>
+  </dl>
+  <form method="dialog"><button type="submit" class="vg-btn">Cerrar</button></form>
+</dialog>
+{% endblock %}

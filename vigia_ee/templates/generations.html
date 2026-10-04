@@ -1,0 +1,106 @@
+{% extends "base.html" %}
+{% from "_macros.html" import action_badge with context %}
+{% block title %}Generaciones{% endblock %}
+{% block page_id %}generations{% endblock %}
+{% block content %}
+<div class="vg-page-head">
+  <h1>Generaciones</h1>
+  <p class="vg-lead">Más recientes primero · horarios en UTC−3</p>
+</div>
+
+<form method="get" action="/generations" class="vg-card vg-form-inline" aria-label="Filtros de generaciones">
+  <div class="vg-field">
+    <label for="f-accion">Acción</label>
+    <select id="f-accion" name="accion">
+      <option value="">Todas</option>
+      {% for a in actions %}<option value="{{ a }}"{% if filters.action == a %} selected{% endif %}>{{ ACTION_LABELS[a] }}</option>{% endfor %}
+    </select>
+  </div>
+  <div class="vg-field">
+    <label for="f-origen">Origen</label>
+    <select id="f-origen" name="origen">
+      <option value="">Todos</option>
+      {% for key, label in SOURCE_LABELS.items() %}<option value="{{ key }}"{% if filters.source == key %} selected{% endif %}>{{ label }}</option>{% endfor %}
+    </select>
+  </div>
+  <div class="vg-field">
+    <label for="f-desde">Desde</label>
+    <input id="f-desde" name="desde" type="date" value="{{ filters.since.isoformat() if filters.since else '' }}">
+  </div>
+  <div class="vg-field">
+    <label for="f-hasta">Hasta</label>
+    <input id="f-hasta" name="hasta" type="date" value="{{ filters.until.isoformat() if filters.until else '' }}">
+  </div>
+  <div class="vg-field">
+    <label for="f-pmin">P(error) mínimo</label>
+    <input id="f-pmin" name="p_min" type="number" min="0" max="1" step="0.01" inputmode="decimal" value="{{ '%g'|format(filters.min_p) if filters.min_p is not none else '' }}">
+  </div>
+  <div class="vg-field">
+    <label for="f-deg">Degradadas</label>
+    <select id="f-deg" name="degradado">
+      <option value="">Todas</option>
+      <option value="si"{% if filters.degraded is sameas true %} selected{% endif %}>Sí</option>
+      <option value="no"{% if filters.degraded is sameas false %} selected{% endif %}>No</option>
+    </select>
+  </div>
+  <div class="vg-actions">
+    <button type="submit" class="vg-btn">Filtrar</button>
+    {% if filters.active %}<a class="vg-btn vg-btn-ghost" href="/generations">Limpiar filtros</a>{% endif %}
+  </div>
+</form>
+
+{% if errors %}
+<div class="vg-alert vg-alert-error" role="alert">
+  <ul>{% for e in errors %}<li>{{ e }}</li>{% endfor %}</ul>
+</div>
+{% endif %}
+
+<p class="sr-only" aria-live="polite">{{ rows|length }} generaciones en esta página.</p>
+
+{% if rows %}
+<div class="vg-table-wrap">
+  <table class="vg-table vg-table-cards">
+    <caption class="sr-only">Generaciones del tenant</caption>
+    <thead>
+      <tr>
+        <th scope="col">Fecha</th><th scope="col">Origen</th><th scope="col">Acción</th>
+        <th scope="col" class="vg-num">P(error)</th><th scope="col" class="vg-num">Fragmentos</th>
+        <th scope="col" class="vg-num">Tokens</th><th scope="col" class="vg-num">Latencia</th><th scope="col">Estado</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for r in rows %}
+      <tr>
+        <th scope="row" data-label="Fecha"><a href="/generations/{{ r.id }}">{{ r.created_at|dt }}</a></th>
+        <td data-label="Origen">{{ SOURCE_LABELS.get(r.source, r.source) }}</td>
+        <td data-label="Acción">{{ action_badge(r.action) }}</td>
+        <td data-label="P(error)" class="vg-num">{{ r.response_p_error|num(2) }}</td>
+        <td data-label="Fragmentos" class="vg-num">{{ span_counts.get(r.id, 0)|count }}</td>
+        <td data-label="Tokens" class="vg-num">{{ r.n_tokens|count }}</td>
+        <td data-label="Latencia" class="vg-num">{{ r.latency_ms|ms }}</td>
+        <td data-label="Estado">
+          {% if r.degraded %}<span class="vg-badge vg-badge-danger">Degradada</span>
+          {% elif not r.calibration_id %}<span class="vg-badge">Sin calibrar</span>
+          {% else %}<span class="vg-badge vg-badge-ok">Puntuada</span>{% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+<nav class="vg-pager" aria-label="Paginación">
+  {% if first_url %}<a class="vg-btn vg-btn-ghost" href="{{ first_url }}">Primera página</a>{% else %}<span></span>{% endif %}
+  {% if next_url %}<a class="vg-btn vg-btn-secondary" href="{{ next_url }}" rel="next">Página siguiente</a>{% endif %}
+</nav>
+{% elif any_traces %}
+<div class="vg-card vg-empty">
+  <p>Ninguna generación cumple estos filtros.</p>
+  <p><a class="vg-btn vg-btn-secondary" href="/generations">Limpiar filtros</a></p>
+</div>
+{% else %}
+<div class="vg-card vg-empty">
+  <p>Todavía no hay generaciones.</p>
+  <p>Cada request a <code>/v1/chat/completions</code> con una API key del tenant aparece acá.{% if can("playground:use") %} También podés <a href="/playground">probar en el playground</a>.{% endif %}</p>
+</div>
+{% endif %}
+{% endblock %}

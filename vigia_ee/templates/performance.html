@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}Rendimiento{% endblock %}
+{% block page_id %}performance{% endblock %}
+{% block content %}
+<div class="vg-page-head">
+  <h1>Rendimiento</h1>
+  <p class="vg-lead">Latencia agregada por Vigía en los últimos {{ days }} días, medida en cada request.</p>
+</div>
+
+{% if figure %}
+<dl class="vg-kpis">
+  {% for k in ("p50", "p95", "p99") %}
+  <div class="vg-kpi{% if overhead[k] > OVERHEAD_TARGET %} is-alert{% endif %}"><dt>Overhead {{ k }}</dt><dd>{{ overhead[k]|pct }}<span class="vg-kpi-note">meta {{ OVERHEAD_TARGET|pct(0) }}{% if overhead[k] > OVERHEAD_TARGET %} · no cumple{% else %} · cumple{% endif %}</span></dd></div>
+  {% endfor %}
+  <div class="vg-kpi"><dt>Tokens por segundo (p50)</dt><dd>{{ tps_p50|num(1) }}</dd></div>
+  <div class="vg-kpi"><dt>Requests medidos</dt><dd>{{ n|count }}</dd></div>
+</dl>
+<section class="vg-card" aria-labelledby="lat-title">
+  <h2 id="lat-title">Latencia sin Vigía y con Vigía</h2>
+  <p class="vg-hint">«Sin Vigía» descuenta el tiempo de extracción de señales y puntaje de cada request. La línea punteada es la meta de +{{ OVERHEAD_TARGET|pct(0) }}.</p>
+  <figure class="vg-figure">{{ figure }}</figure>
+</section>
+{% else %}
+<div class="vg-card vg-empty">
+  <p>Todavía no hay requests con latencia medida.</p>
+  <p>Cada request registra su latencia total y el overhead de Vigía; los valores aparecen acá cuando llega tráfico.</p>
+</div>
+{% endif %}
+{% endblock %}

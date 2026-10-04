@@ -207,3 +207,18 @@ def test_router_stats_equals_composition(gating, kw):
     assert np.allclose(stats["r_ent_k"], fx.topk_weight_entropy(w))
     assert np.allclose(stats["r_topk_mass"], fx.topk_mass(fx.softmax(z), idx))
     assert np.allclose(stats["r_margin12"], m12) and np.allclose(stats["r_margin_kk1"], mkk1)
+
+
+def test_usage_counts_matches_add_at_with_repeats_weights_and_leading_dims():
+    rng = np.random.default_rng(3)
+    idx = rng.integers(0, 5, size=(3, 4, 2))
+    idx[0, 0] = [2, 2]  # repetido dentro de una fila: se suma dos veces
+    w = rng.random((3, 4, 2))
+    for weights in (None, w):
+        ref = np.zeros((12, 5))
+        flat_w = np.ones(24) if weights is None else weights.reshape(-1)
+        np.add.at(ref, (np.repeat(np.arange(12), 2), idx.reshape(-1)), flat_w)
+        got = fx.usage_counts(idx, 5, weights)
+        assert got.shape == (3, 4, 5) and got.dtype == np.float64
+        assert np.allclose(got.reshape(12, 5), ref, rtol=0, atol=1e-15)
+    assert fx.usage_counts(np.zeros((0, 2), dtype=int), 3).shape == (0, 3)

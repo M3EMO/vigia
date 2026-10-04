@@ -244,3 +244,207 @@ vigia.harmony:
   is_scorable(event) -> bool   # channel == 'final' and not is_special
   SPECIAL_TOKENS, STOP_TOKENS, SCORED_CHANNEL='final', HEADER='header', CONTROL='control', NO_CHANNEL='none'
 ```
+
+## Ola 2
+
+```text
+## vigia_ee.jobs
+JOB_STATES; MAX_PAYLOAD_BYTES=256KB; DEFAULT_LEASE=15min; class PermanentJobError(Exception) (marca failed sin reintentar); format_error(exc)->'Tipo: mensaje' (sin stack, max 500)
+class JobQueue(db, *, clock=None, lease=15min, poll_interval=1.0, backoff_base=5.0, backoff_max=3600.0)
+  .db ; .now()->datetime
+  .register(kind, handler(job_dict)->dict|None, *, retry_schedule: Sequence[float]|None=None)  # sin schedule: backoff exponencial con jitter determinista (sha256(job_id:intento), hasta +25%)
+  .registered_kinds()->tuple
+  .enqueue(kind, payload: Mapping, *, org_id=None, run_after=None, max_attempts=5)->id  # kind ^[a-z][a-z0-9_.-]{0,31}$, payload JSON sin NaN
+  .get(org_id, job_id)->dict|None (otro tenant o job de sistema -> None) ; .get_system(job_id) ; .list(org_id, kind=None, limit=50) (max 200) ; .list_system(kind=None, *, states=JOB_STATES)
+  job dict = columnas de jobs con payload y result ya parseados (sin payload_json/result_json)
+  .depth(*, include_scheduled=False)->int (queued vencidos + running) ; .purge_finished(before, *, org_id)->int
+  .retry_delay(job_id, attempts, schedule=None)->float ; .recover_orphans()->int (running con lease vencido -> queued, o failed si agoto intentos)
+  .run_once()->job final|None (solo reclama kinds registrados; claim en BEGIN IMMEDIATE) ; .run_until_idle(max_jobs=1000)->int
+  .start() (recupera huerfanos, hilo daemon 'vigia-jobs', idempotente) ; .stop(timeout=5.0)->bool ; .is_alive(max_age=None)->bool (para /readyz; un job largo cuenta como vivo hasta el lease) ; .last_beat (monotonic)
+
+## vigia_ee.webhooks
+JOB_KIND='webhook'; EVENT_TYPES=('trace.flagged','review.completed','calibration.activated'); RETRY_SCHEDULE_S=(5,300,1800,7200,18000,36000,36000); MAX_ATTEMPTS=8; MAX_PAYLOAD_BYTES=20000; DELIVERY_TIMEOUT_S=15.0; DEFAULT_TOLERANCE_S=300; DEFAULT_MAX_CONSECUTIVE_FAILURES=5
+class WebhookVerificationError(ValueError); class DeliveryError(Exception)
+generate_secret()->'whsec_<b64 32 bytes>' ; sign(secret, msg_id, timestamp:int, payload:bytes)->'v1,<b64>'
+verify(secret, msg_id, timestamp, payload, signature_header, *, tolerance=300, now=None)->cuerpo parseado (acepta varias firmas separadas por espacio; lanza WebhookVerificationError)
+validate_url(url, *, allowed_hosts=(), resolve=None)->url (UnsafeURLError de vigia.policy -> la API responde 422)
+create_webhook(db, org_id, url, events, actor, *, allowed_hosts=(), resolve=None)->(webhook_id, secret)  # valida SSRF y eventos, audita 'webhook_create'; el secreto se muestra una vez
+delete_webhook(db, org_id, webhook_id, actor)->bool ; set_enabled(db, org_id, webhook_id, enabled, actor, *, allowed_hosts=(), resolve=None)->bool (habilitar re-valida la URL; audita webhook_enable/webhook_disable)
+build_body(event_type, data, *, now)->bytes ({type,timestamp,data}; >20KB -> data={trace_id?, truncated:true})
+emit(db, jobs, org_id, event_type, data)->list[job_id] (un job por webhook habilitado suscrito; mismo webhook-id para el evento)
+make_delivery_handler(db, jobs, *, http_client=None, allowed_hosts=(), resolve=None, timeout=15.0, max_consecutive_failures=5)
+register_delivery(jobs, *, http_client=None, allowed_hosts=(), resolve=None, timeout=15.0, max_consecutive_failures=5)  # registra 'webhook' con RETRY_SCHEDULE_S
+  entrega: re-valida SSRF (bloqueado -> failed permanente), POST sin redirects con webhook-id/webhook-timestamp(hora del intento)/webhook-signature, solo 2xx es exito, no lee el cuerpo de la respuesta; tras N entregas fallidas seguidas deshabilita y audita 'webhook_auto_disabled'
+
+## vigia_ee.metrics
+CONTENT_TYPE='text/plain; version=0.0.4; charset=utf-8'; DURATION_BUCKETS; OVERHEAD_BUCKETS; MAX_ROUTES=200; ACTIONS
+escape_label_value(v) ; escape_help(t) ; format_value(x) ; status_class(code)->'2xx'..'5xx'
+class Metrics(*, version=None, jobs_depth: Callable[[],int]|None=None, review_depth: Callable[[],int]|None=None)
+  .observe_request(route_template|None, status, duration_s) ; .observe_overhead(ratio) ; .add_tokens(scored, low_confidence=0) ; .inc_action(action) ; .set_calibrations(detector_ids) (solo 16 hex) ; .inc_auth_failure() ; .inc_rate_limited() ; .set_review_queue_depth(n) ; .set_jobs_queue_depth(n) ; .render()->str
+  familias: vigia_requests_total{route,status}, vigia_request_duration_seconds{route}, vigia_overhead_ratio, vigia_tokens_scored_total, vigia_low_confidence_tokens_total, vigia_actions_total{action}, vigia_calibration_info{detector_id}, vigia_auth_failures_total, vigia_rate_limited_total, vigia_review_queue_depth, vigia_jobs_queue_depth, vigia_build_info{version}
+class MetricsMiddleware(app, metrics)  # ASGI puro; app.add_middleware(MetricsMiddleware, metrics=m); usa scope['route'].path, sin ruta -> 'unmatched'
+
+## vigia_ee.retention
+PURGE_KIND='purge'; SYSTEM_JOBS_RETENTION=30 dias
+purge_org(db, org_id, *, now=None, jobs=None)->{traces, jobs, cutoff} (audita 'retention_purge' siempre; LookupError si no existe)
+purge_all(db, jobs=None, *, now=None)->{orgs, traces, jobs} (un tenant que falla no frena al resto; al final lanza RuntimeError)
+schedule(jobs, every_hours=24)->job_id (registra 'purge', idempotente; el handler encola la siguiente antes de purgar)
+delete_trace_request(repo, trace_id, actor)->bool (audita 'trace_delete'; otro tenant -> False sin auditar)
+export_org(repo, actor)->dict (repo.export_all + audita 'data_export' con conteos)
+```
+
+```text
+vigia.datasets:
+  DEFAULT_INSTRUCTION = "Respondé solo con la respuesta, en pocas palabras, sin explicar."; DEFAULT_MKQA_PATH = .cache/data/mkqa_es.jsonl; LABEL_MODES = ("gold","label","spans")
+  class DatasetError(VigiaError, ValueError)   # el mensaje incluye la línea y el campo
+  validate_item(obj, *, where="item") -> dict   # normalizado: {id, group, messages, question, mode, answers, response, label, hallucinated_spans ([[s,e]] ordenados), type, evidence}
+    entrada: {id, messages|question, exactamente uno de answers | response+label | response+hallucinated_spans ([s,e] o substring único), group?, type?, evidence?}
+  parse_jsonl(source: str|bytes|Iterable[str], *, max_items=100_000) -> list[dict]   # ids únicos, rechaza NaN, UTF-8 con BOM
+  read_jsonl(path, *, max_items) -> list[dict] ; write_jsonl(path, items) ; item_to_json(item) -> dict (inverso de validate_item)
+  question_messages(question, instruction=DEFAULT_INSTRUCTION) -> [{"role":"user","content": f"{q}\n\n{instr}"}]
+  stratified_sample(items, n, *, key="type", seed=0) -> list   # asignación proporcional por resto mayor
+  load_mkqa_es(path=DEFAULT_MKQA_PATH, *, n=None, seed=0, types=None) -> list[item]
+  items_sha256(items) -> str
+
+vigia.evidence:
+  DEFAULT_TIERS=(F0,F1,H); file names ROWS_FILE, FEATURES_FILE, MANIFEST_FILE, DETECTOR_FILE, SPLIT_FILE, REPORT_JSON, REPORT_HTML, SUMMARY_FILE, BENCH_FILE
+  class EvidenceError(VigiaError)
+  gold_correct(prediction, answers, item_type=None) -> (bool, {exact_match, token_f1, numeric, date})
+  computable_labels(row) / judge_labels(row, judge) / label_row(row, judge=None) -> (labels per token, info)
+  class RunStore(out_dir): .open(manifest) (error if the configuration differs), .load_rows() (repairs a cut-off last line; a damaged middle line -> error), .append(row, X, names) (atomic chunk + fsync), .load_chunk(id), .rewrite_rows(rows), .manifest()
+  extract(backend, items, out_dir, *, tiers=DEFAULT_TIERS, max_tokens=24, seed=0, judge=None, progress_cb=None) -> list[row]   # resumable
+  @dataclass FeatureSet(names, X float32, labels, groups, response_ids, token_index, model_info, label_source, judge); .features(names=None) -> {name: float64 col}; .save(path); FeatureSet.load(path); .labeled_count()
+  build_features(out_dir, rows=None) -> FeatureSet (writes features.npz)
+  relabel(out_dir, *, judge=None) -> dict (rewrites rows, manifest and features.npz; writes labels_report.json with judge_vs_gold)
+  detector_feature_names(names) -> F0+F1 names
+  calibrate_features(fs, *, seed=0, alphas=DEFAULT_ALPHAS, default_alpha=0.1, feature_names=None) -> (Detector, split_report)
+  save_calibration(out_dir, detector, split_report) -> (detector.json, split.json)
+  evaluate_features(fs, *, detector=None, split=None, n_boot=2000, seed=0, alpha=None) -> report
+  model_quality(rows) -> {generated:{n,correct,accuracy,hallucination_rate,by_type}, teacher_forced, all}
+  run_evidence(backend, items, *, out_dir, max_tokens=24, tiers=DEFAULT_TIERS, seed=0, judge=None, n_boot=2000, alpha=None, bench_prompts=None, bench_runs=3, bench_warmup=1, progress_cb=None) -> report
+    report = evaluate_report(...) + evidence{n_items,n_rows,n_generated,n_teacher_forced,skipped,labels_rejected,tiers,detector_features,max_tokens,seed,dataset_sha256,label_source,judge,model_quality,generation{tokens,seconds,tokens_per_s}} + split + (latency{baseline,vigia,target} y bench | latency_error)
+  report_html(report) -> str (render_report_html + Table 5: model accuracy by type); summary_text(report) -> str; write_report(out_dir, report) -> paths; json_safe(obj); model_info_from_dict(d)
+
+vigia.serve:
+  create_app(backend, *, detector=None, policy=None, api_key=None, max_traces=1000, max_body_bytes=1_048_576, max_tokens_limit=4096, default_max_tokens=512) -> FastAPI
+    Bearer compared with hmac.compare_digest over sha256 (key >= 16 characters, no whitespace); without a key only loopback is accepted (403) and a warning is logged; credentials in the query -> 400; /livez, /readyz (503 if the backend fails); no docs/openapi; nosniff/no-store/CSP default-src 'none' headers; detector.check_model at creation; app.state.vigia_traces
+  class TraceStore(max_items=1000): put(TraceRecord), get(id) -> dict|None (thread-safe LRU)
+  trace_view(record) -> {id, object:"vigia.trace", created_at, model, source, finish_reason, response, vigia, latency_ms, overhead_ms, rag_status}   # on abstain: response=None, tokens/spans=[]
+  is_loopback(host) -> bool
+
+vigia.cli:
+  main(argv=None) -> int (0 ok, 1 error with "error: ..." on stderr, 2 usage, 130 interrupted); build_parser(); `python -m vigia.cli`
+  subcommands: extract, label (--judge-url/--judge-model; key only from VIGIA_JUDGE_API_KEY), calibrate (--tiers F0,F1), evaluate (needs split.json if a detector is used), bench, evidence (--bench N), serve (--host 127.0.0.1, --port, --detector, --policy, --api-key-env; refuses a non-loopback host without a key), models
+  make_tiny_backend(arch="mixtral"|"gpt_oss", *, seed=0) -> HFBackend   # deterministic for a given seed, offline, byte-level tokenizer, model_id "tiny:<arch>"; gpt_oss uses a harmony template that opens the final channel; does not touch the global RNG
+  load_backend(model, *, device="cpu", dtype="auto") -> HFBackend   # "tiny:<arch>" or an HF id/path
+  parse_tiers("F0,F1,H") -> tuple[Tier, ...]; TINY_ARCHS; JUDGE_KEY_ENV; class CLIError(VigiaError)
+```
+
+```text
+vigia_ee.runtime:
+  SettingsError(ValueError)
+  @dataclass Settings
+    Campos del contrato: data_dir, db_path, model, backend, vllm_url, vllm_model, max_tokens_limit=1024, default_max_tokens=256, max_body_bytes=1_048_576, max_upload_bytes=20_971_520, metrics_token, rag_allowed_hosts, webhook_allowed_hosts, secure_cookies=True, base_detector_path.
+    Campos extra, todos con default:
+      vllm_api_key (VIGIA_VLLM_API_KEY[_FILE])
+      peppers: PepperRing|None (None = PepperRing.from_env)
+      key_rate_per_minute=120, tenant_rate_per_minute=600
+      max_queue_depth=1000 (tope de /readyz)
+      review_min_reviewers=2
+    Settings.from_env(environ=None) exige VIGIA_MODEL. Los secretos aceptan *_FILE.
+  build_backend(settings)
+  make_tiny_backend(arch): delega en vigia.cli.make_tiny_backend
+  render_prompt(messages) -> 'rol: contenido' separados por línea vacía (formato de traces.prompt_text)
+  class Runtime(settings, *, backend=None, clock=None)
+    Atributos del contrato: settings, db, auth (rate limiters por key y tenant), backend, model_info, jobs (con el handler webhook registrado), metrics, calibration.
+    Atributos extra: base_detector, startup_complete, startup_errors, started_at.
+    Métodos del contrato: repo, detector_for, policy_for, save_policy, context_for, playground_stream, close.
+    save_policy hace merge sobre la política vigente, sube version, audita {changed, version} y rechaza un alpha menor que el mínimo del detector activo.
+    Métodos extra (el panel puede usarlos):
+      now()
+      create_org(name, *, store_text, retention_days): audita org_create e instala el detector base
+      ensure_base_detector(org_id)
+      detector_alert(org_id) / policy_alert(org_id) -> str|None: texto para un banner del panel
+      invalidate_detector(org_id)
+      emit_event(org_id, event_type, data): nunca lanza
+      store_trace(org_id, TraceRecord) -> trace_id
+      trace_view(org_id, trace_id)
+      readiness() -> {db, worker, queue}
+
+vigia_ee.calibration:
+  JOB_KIND='calibrate', MAX_ITEMS=5000, MIN_RESPONSES=20, PLATFORM_N_BOOT=500, ANSWER_MAX_TOKENS=64
+  Excepciones:
+    DatasetError(ValueError)
+    DatasetNotFound(DatasetError, LookupError)
+    DetectorNotFound(LookupError)
+    ActivationError(ValueError)
+    CalibrationJobError(PermanentJobError)
+  CalibrationItem, parse_dataset(content: bytes, *, max_items=5000)
+  class CalibrationService(runtime)
+    upload_dataset(principal, name, content) -> dataset_id
+    start(principal, dataset_id, *, alphas=None, seed=0) -> job_id (max_attempts=1)
+    job(org_id, job_id) / list_jobs(org_id, limit=20) -> dicts {id, state, created_at, updated_at, dataset_id, alphas, seed, result, error}
+      error es el mensaje para el usuario, o uno genérico ante una falla interna
+    activate(principal, detector_id): verifica modelo y alpha de la política, audita, invalida la cache y emite calibration.activated
+    dataset_from_reviews(principal, name) -> dataset_id
+  El reporte guardado es evaluate_report + report['calibration'] (job_id, dataset_id, dataset_name, n_items, n_responses, n_tokens, positive_rate, skipped, split).
+
+vigia_ee.app:
+  TRACE_ROUTE
+  UPLOAD_PATHS = ('/calibration/datasets',): solo esas rutas POST admiten max_upload_bytes + MULTIPART_MARGIN (65536); el resto usa max_body_bytes.
+  Middlewares: PathBodyLimitMiddleware, StatusMetricsMiddleware (401/403 -> inc_auth_failure, 429 -> inc_rate_limited), UniqueRequestIdMiddleware.
+  create_app(settings=None, *, runtime=None) -> FastAPI (docs/redoc/openapi desactivados). El lifespan arranca y detiene jobs y retention.schedule(24 h). Cierra el runtime solo si lo creó.
+  build_parser() / main(argv=None, *, environ=None) con los subcomandos:
+    init --org --email [--store-text --retention-days]: contraseña por getpass o VIGIA_OWNER_PASSWORD_FILE
+    create-key --org-id --name [--scopes --expires-days]
+    serve [--host 127.0.0.1 --port 8000 --proxy-headers --forwarded-allow-ips]: server_header=False, workers=1
+```
+
+```text
+vigia_ee.panel:
+- install_panel(app, runtime) incluye el router y registra panel_error_handler para PanelHTTPError. app.py ya lo usa.
+- create_panel_router(runtime) -> APIRouter. Las rutas van en la raíz, sin prefijo.
+- PanelHTTPError(HTTPException): un error de página se muestra en HTML con role=alert y request_id. Una página GET sin sesión redirige con 303 a /login?next=...
+- page(permission): envuelve require_session y conserva PERMISSION_ATTR para la introspección.
+- render, ENV, helpers fmt_* (es-AR, UTC-3), summary_stats, trace_window, latency_percentiles, usage_matrix, fragments_for, segments_for, parse_filters.
+
+Rutas públicas:
+- GET /login, POST /login
+- GET /static/{app.css|app.js|favicon.svg|charts.css}. charts.css se genera desde vigia.charts.CHART_CSS.
+
+Rutas con sesión:
+- POST /logout, GET /account, POST /account/password
+- GET / (resumen), GET /generations, GET /generations/{id}
+- POST /generations/{id}/review, POST /generations/{id}/delete
+- GET /playground, POST /playground (sin JS), POST /playground/stream (SSE, header X-CSRF-Token)
+- GET /model, GET /performance
+
+vigia_ee.panel_admin.register(router, runtime) agrega:
+- GET /review, POST /review/next, POST /review/dataset
+- GET /review/{id}, POST /review/{id}/reserve, POST /review/{id}/decide
+- GET /calibration, POST /calibration/datasets (multipart), POST /calibration/start
+- GET /calibration/jobs/{id}, GET /calibration/jobs/{id}/status (JSON)
+- GET /calibration/detectors/{id}, POST /calibration/detectors/{id}/activate
+- GET /policies, POST /policies
+- GET /settings, POST /settings/org
+- POST /settings/users, POST /settings/users/{id}/role, POST /settings/users/{id}/disable
+- POST /settings/keys, POST /settings/keys/{id}/revoke
+- POST /settings/webhooks, POST /settings/webhooks/{id}/delete, POST /settings/webhooks/{id}/test
+- GET /audit, GET /audit/export?formato=json|csv&desde&hasta
+- GET /data, GET /data/export, POST /data/delete
+
+Del Runtime consumo: settings, db, auth, repo, detector_for, policy_for, save_policy, playground_stream, calibration.*, model_info, backend.capabilities(), jobs.list/enqueue/now, emit_event e invalidate_detector (a través de calibration).
+```
+
+```text
+vigia.bench:
+  DEFAULT_TIERS_LIST = ((), (Tier.F0,), (Tier.F0, Tier.F1)); TARGET = 0.05; BENCH_SCHEMA_VERSION = "1"; BASELINE_LABEL = "sin_hooks"
+  tier_label(tiers) -> str  # () -> "sin_hooks"; si no, los niveles unidos con "+", ej. "F0+F1"
+  run_overhead_bench(backend: Backend | Callable[[], Backend], prompts: list[list[messages]], *, tiers_list=DEFAULT_TIERS_LIST, max_tokens=32 (>=2), warmup=3, runs=5, seed=0 (>=0), threads=None, ignore_eos=True, n_boot=1000, level=0.95, target=0.05, clock=time.perf_counter) -> dict
+    La línea base () siempre se mide y siempre va primero. Las configuraciones se miden intercaladas con un orden que rota. El GC queda apagado mientras se mide. torch.set_num_threads se restaura al terminar. Un backend que crea la fábrica se cierra siempre, también ante un error.
+    Devuelve {schema_version, config{model_id, model_type, tiers_list, n_prompts, max_tokens, warmup, runs, seed, threads, temperature, ignore_eos{requested, supported, applied, note}, order, metric, overhead, bootstrap{n_boot, level, seed, unit}, n_units, n_units_dropped, baseline_hooks}, baseline{p50, p95, p99, tpot_ms, ttft_ms, tok_s, n_requests, n_token_latencies}, tiers{<etiqueta>: {...las mismas claves..., overhead_ratio, ci:[lo, hi], ttft_overhead_ratio, ttft_ci, meets_target}}, vigia{la última configuración + label}, target, hardware{cpu, machine, threads, torch, python, platform}}.
+    p50, p95 y p99 son la latencia por token en ms: el intervalo entre eventos medido con reloj de pared, con hooks y end_step incluidos. overhead_ratio es la mediana, sobre las unidades pareadas (corrida, prompt), del cociente p50(nivel)/p50(base), menos 1. El IC es un bootstrap con 1000 réplicas sobre las unidades. El dict entra tal cual en report['latency'] de render_report_html, que usa baseline, vigia y target. Es compatible con las llamadas que ya hacen vigia/cli.py y vigia/evidence.py.
+vigia.extractor: la API pública no cambia. Cambian los internos: _Step.router ahora es dict[capa j -> logits Tensor (n, N) float32]; el uso acumulado es un ndarray (B, L, N). router_logits (con keep_router_logits) ya no es un clone: es una vista que vive solo durante el paso.
+vigia.features: las firmas no cambian. usage_counts usa np.bincount, que da el mismo resultado y es más rápido.
+vigia.backends.vllm_proxy: las firmas no cambian. top_logprob_features, usage_features y routed_usage_features delegan en vigia.features. usage_features ahora lanza ValueError si counts.shape != (n_experts,).
+```

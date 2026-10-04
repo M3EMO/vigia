@@ -39,7 +39,7 @@ def log_softmax(z: np.ndarray, axis: int = -1) -> np.ndarray:
 def entropy(p: np.ndarray, axis: int = -1) -> np.ndarray:
     """Entropía de Shannon en nats; 0 log 0 = 0. NaN en la entrada se propaga."""
     p = np.asarray(p, dtype=np.float64)
-    return -np.sum(p * np.log(np.maximum(p, _TINY)), axis=axis)
+    return -(p * np.log(np.maximum(p, _TINY))).sum(axis=axis)
 
 
 def normalized_entropy(p: np.ndarray, support: int, axis: int = -1) -> np.ndarray:
@@ -78,8 +78,8 @@ def top_n_entropy(log_probs: np.ndarray, n: int = TOP_N_OUTPUT) -> np.ndarray:
     top = _top_n(np.asarray(log_probs, dtype=np.float64), n)
     shifted = top - top[..., :1]
     e = np.exp(shifted)
-    se = np.sum(e, axis=-1)
-    return np.log(se) - np.sum(e * shifted, axis=-1) / se
+    se = e.sum(axis=-1)
+    return np.log(se) - (e * shifted).sum(axis=-1) / se
 
 
 def output_features(logits: np.ndarray, targets: np.ndarray) -> dict[str, np.ndarray]:
@@ -88,19 +88,20 @@ def output_features(logits: np.ndarray, targets: np.ndarray) -> dict[str, np.nda
     top = _top_n(z, TOP_N_OUTPUT)
     shifted = z - top[..., :1]
     e = np.exp(shifted)
-    se = np.sum(e, axis=-1)
+    se = e.sum(axis=-1)
     log_se = np.log(se)
     targets = np.asarray(targets, dtype=np.int64)
-    picked = np.take_along_axis(shifted, targets[..., None], axis=-1)[..., 0]
+    flat = shifted.reshape(-1, shifted.shape[-1])
+    picked = flat[np.arange(flat.shape[0]), targets.reshape(-1)].reshape(targets.shape)
     top_shifted = top - top[..., :1]
     e_top = np.exp(top_shifted)
-    se_top = np.sum(e_top, axis=-1)
+    se_top = e_top.sum(axis=-1)
     margin = (e_top[..., 0] - e_top[..., 1]) / se if z.shape[-1] > 1 else e_top[..., 0] / se
     return {
-        "out_entropy": log_se - np.sum(e * shifted, axis=-1) / se,
+        "out_entropy": log_se - (e * shifted).sum(axis=-1) / se,
         "out_nll": log_se - picked,
         "out_margin": margin,
-        "out_top20_entropy": np.log(se_top) - np.sum(e_top * top_shifted, axis=-1) / se_top,
+        "out_top20_entropy": np.log(se_top) - (e_top * top_shifted).sum(axis=-1) / se_top,
     }
 
 
@@ -228,27 +229,27 @@ def router_stats(z: np.ndarray, gating: Gating, k: int, **route_kwargs) -> dict[
     zs = z[rows, order]
     shifted = z - zs[:, :1]
     e = np.exp(shifted)
-    se = np.sum(e, axis=-1, keepdims=True)
+    se = e.sum(axis=-1, keepdims=True)
     p = e / se
     if gating in ("softmax_topk", "topk_softmax"):
         idx = order[:, :k]
         mass_w = p[rows, idx]
         if gating == "topk_softmax":
             ew = np.exp(zs[:, :k] - zs[:, :1])
-            w = ew / np.sum(ew, axis=-1, keepdims=True)
+            w = ew / ew.sum(axis=-1, keepdims=True)
         elif route_kwargs.get("renormalize"):
-            w = mass_w / np.sum(mass_w, axis=-1, keepdims=True)
+            w = mass_w / mass_w.sum(axis=-1, keepdims=True)
         else:
             w = mass_w
     else:
         idx, w = route(z, gating, k, **route_kwargs)
         mass_w = p[rows, idx]
-    wn = w / np.sum(w, axis=-1, keepdims=True)
+    wn = w / w.sum(axis=-1, keepdims=True)
     m = z.shape[0]
     out = {
-        "r_ent_n": (np.log(se[:, 0]) - np.sum(p * shifted, axis=-1)) / np.log(n) if n > 1 else np.zeros(m),
+        "r_ent_n": (np.log(se[:, 0]) - (p * shifted).sum(axis=-1)) / np.log(n) if n > 1 else np.zeros(m),
         "r_ent_k": entropy(wn) / np.log(k) if k > 1 else np.zeros(m),
-        "r_topk_mass": np.sum(mass_w, axis=-1),
+        "r_topk_mass": mass_w.sum(axis=-1),
         "r_margin12": zs[:, 0] - zs[:, 1] if n >= 2 else np.full(m, np.nan),
         "r_margin_kk1": zs[:, k - 1] - zs[:, k] if n > k else np.full(m, np.nan),
     }
@@ -269,11 +270,15 @@ def usage_counts(idx: np.ndarray, n_experts: int, weights: np.ndarray | None = N
     idx = np.asarray(idx, dtype=np.int64)
     if idx.size and (idx.min() < 0 or idx.max() >= n_experts):
         raise ValueError(f"índice de experto fuera de [0, {n_experts})")
-    w = np.ones(idx.shape) if weights is None else np.asarray(weights, dtype=np.float64)
     flat_idx = idx.reshape(-1, idx.shape[-1])
-    flat_out = np.zeros((flat_idx.shape[0], n_experts))
-    rows = np.repeat(np.arange(flat_idx.shape[0]), flat_idx.shape[1])
-    np.add.at(flat_out, (rows, flat_idx.ravel()), np.broadcast_to(w, idx.shape).ravel())
+    n_rows = flat_idx.shape[0]
+    bins = (np.arange(n_rows)[:, None] * n_experts + flat_idx).ravel()
+    w = None
+    if weights is not None:
+        w = np.asarray(weights, dtype=np.float64)
+        w = (w if w.shape == idx.shape else np.broadcast_to(w, idx.shape)).ravel()
+    # bincount suma repetidos igual que np.add.at, con un solo recorrido en C.
+    flat_out = np.bincount(bins, weights=w, minlength=n_rows * n_experts).astype(np.float64, copy=False)
     return flat_out.reshape(*idx.shape[:-1], n_experts)
 
 
@@ -304,9 +309,9 @@ def usage_stats(counts: np.ndarray) -> dict[str, np.ndarray]:
     """
     counts = np.asarray(counts, dtype=np.float64)
     n = counts.shape[-1]
-    total = np.sum(counts, axis=-1, keepdims=True)
+    total = counts.sum(axis=-1, keepdims=True)
     u = np.divide(counts, total, out=np.full_like(counts, np.nan), where=total > 0)  # NaN se propaga
-    sq = np.sum(u * u, axis=-1)
+    sq = (u * u).sum(axis=-1)
     ent = entropy(u)
     return {"u_gini": 1.0 - sq, "u_ihhi": 1.0 / sq / n, "u_ent": ent / np.log(n) if n > 1 else ent * 0.0}
 
@@ -315,7 +320,7 @@ def route_switch(prev_idx: np.ndarray, idx: np.ndarray) -> np.ndarray:
     """`r_switch`: 1 − |S(t) ∩ S(t−1)| / k."""
     prev_idx = np.asarray(prev_idx)
     idx = np.asarray(idx)
-    shared = np.sum(np.any(idx[..., :, None] == prev_idx[..., None, :], axis=-1), axis=-1)
+    shared = (idx[..., :, None] == prev_idx[..., None, :]).any(axis=-1).sum(axis=-1)
     return 1.0 - shared / idx.shape[-1]
 
 
@@ -374,7 +379,10 @@ def layer_aggregates(values: np.ndarray, axis: int = 0) -> dict[str, np.ndarray]
     """`mean`, `max`, `std` (poblacional) entre capas ignorando NaN. Todo NaN → NaN."""
     v = np.asarray(values, dtype=np.float64)
     if not np.isnan(v).any():
-        return {"mean": np.mean(v, axis=axis), "max": np.max(v, axis=axis), "std": np.std(v, axis=axis)}
+        mean = v.mean(axis=axis)
+        dev = v - np.expand_dims(mean, axis)
+        # Misma cuenta que np.std (poblacional), sin recalcular la media.
+        return {"mean": mean, "max": v.max(axis=axis), "std": np.sqrt((dev * dev).mean(axis=axis))}
     valid = ~np.isnan(v)
     count = np.sum(valid, axis=axis)
     filled = np.where(valid, v, 0.0)

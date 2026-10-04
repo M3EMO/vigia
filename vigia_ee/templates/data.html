@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% from "_macros.html" import csrf, alert_error with context %}
+{% block title %}Datos del tenant{% endblock %}
+{% block page_id %}data{% endblock %}
+{% block content %}
+<div class="vg-page-head">
+  <h1>Datos del tenant</h1>
+  <p class="vg-lead">Acceso y supresión de datos (Ley 25.326 art. 14 y 16).</p>
+</div>
+
+{{ alert_error(error) }}
+
+<section class="vg-card" aria-labelledby="exp-title">
+  <h2 id="exp-title">Exportar</h2>
+  <p>Descarga un JSON con todo lo de la organización: generaciones con tokens y fragmentos, revisiones, detectores, datasets, usuarios, API keys, webhooks y auditoría. Excluye contraseñas, HMAC de keys, secretos de webhooks y sesiones. La descarga queda en auditoría.</p>
+  {% if counts %}
+  <dl class="vg-kpis">
+    {% for name, n in counts.items() %}<div class="vg-kpi"><dt>{{ name }}</dt><dd>{{ n|count }}</dd></div>{% endfor %}
+  </dl>
+  {% endif %}
+  <p><a class="vg-btn" href="/data/export" download>Descargar export JSON</a></p>
+</section>
+
+{% if can("data:delete") %}
+<section class="vg-card" aria-labelledby="del-title">
+  <h2 id="del-title">Borrar la organización</h2>
+  <div class="vg-alert vg-alert-error"><p><strong>Es irreversible.</strong> Borra la organización y todos sus datos. La auditoría se conserva como evidencia. Todas las sesiones se cierran.</p></div>
+  <form method="post" action="/data/delete" class="vg-form">
+    {{ csrf() }}
+    <div class="vg-field">
+      <label for="confirm_name">Escribí el nombre exacto de la organización: <strong>{{ org.get("name", "")|clean }}</strong></label>
+      <input id="confirm_name" name="confirm_name" type="text" required maxlength="200" autocomplete="off">
+    </div>
+    <label class="vg-check"><input type="checkbox" name="confirm" value="yes" required> Entiendo que no se puede deshacer</label>
+    <div class="vg-actions"><button type="submit" class="vg-btn vg-btn-danger">Borrar la organización y sus datos</button></div>
+  </form>
+</section>
+{% endif %}
+{% endblock %}

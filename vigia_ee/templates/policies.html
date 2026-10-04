@@ -1,0 +1,153 @@
+{% extends "base.html" %}
+{% from "_macros.html" import csrf, field_error, invalid with context %}
+{% block title %}Políticas{% endblock %}
+{% block page_id %}policies{% endblock %}
+{% block content %}
+{% macro thr(v) %}{{ "" if v is none else v }}{% endmacro %}
+<div class="vg-page-head">
+  <h1>Políticas</h1>
+  <p class="vg-lead">Qué hace Vigía con cada respuesta según su P(error). Prioridad: abstención &gt; re-consulta RAG &gt; revisión humana &gt; anotar &gt; pasar.</p>
+</div>
+
+<section class="vg-card" aria-labelledby="alpha-title">
+  <h2 id="alpha-title">Alphas del detector activo</h2>
+  {% if thresholds %}
+  <p class="vg-hint">alpha es la tasa de errores por token que se acepta dejar sin marcar (FNR, garantizada por CRC). Menor alpha marca más texto. Detector <code>{{ detector_id }}</code>.</p>
+  <div class="vg-table-wrap">
+    <table class="vg-table">
+      <caption class="sr-only">Umbrales guardados del detector activo</caption>
+      <thead><tr><th scope="col">alpha</th><th scope="col" class="vg-num">τ</th><th scope="col" class="vg-num">Tasa de marcado esperada</th><th scope="col" class="vg-num">Precisión esperada</th></tr></thead>
+      <tbody>
+        {% for t in thresholds %}
+        <tr{% if t.alpha == policy.alpha %} aria-current="true"{% endif %}><th scope="row">{{ t.alpha|num(2) }}{% if t.alpha == policy.alpha %} (actual){% endif %}</th><td class="vg-num">{{ t.tau|num(3) }}</td><td class="vg-num">{{ t.expected_flag_rate|pct }}</td><td class="vg-num">{{ t.expected_precision|num(3) }}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <p class="vg-hint">Un alpha entre dos valores guardados interpola τ.</p>
+  {% else %}
+  <p>No hay un detector activo: el alpha se guarda, pero no marca nada hasta <a href="/calibration">activar un detector</a>.</p>
+  {% endif %}
+</section>
+
+{% if can("policy:write") %}
+{% if errors %}<div class="vg-alert vg-alert-error" role="alert"><p>La política no se guardó. {{ errors.get("_form", "Revisá los campos marcados.") }}</p></div>{% endif %}
+<form method="post" action="/policies" class="vg-card vg-form" aria-labelledby="pol-title">
+  {{ csrf() }}
+  <h2 id="pol-title">Editar la política (versión {{ policy.version }})</h2>
+
+  <fieldset>
+    <legend>Marcado de tokens</legend>
+    <div class="vg-form-inline">
+      <div class="vg-field">
+        <label for="alpha">alpha (FNR por token)</label>
+        <input id="alpha" name="alpha" type="number" min="0.001" max="0.999" step="0.001" inputmode="decimal" required value="{{ values.alpha }}"{{ invalid(errors, "alpha") }}>
+        {{ field_error(errors, "alpha") }}
+      </div>
+      <div class="vg-field">
+        <label for="gap_max">Palabras de hueco en un fragmento</label>
+        <input id="gap_max" name="gap_max" type="number" min="0" max="1000" step="1" required value="{{ values.gap_max }}"{{ invalid(errors, "gap_max") }}>
+        {{ field_error(errors, "gap_max") }}
+      </div>
+      <div class="vg-field">
+        <label for="min_tokens">Tokens mínimos por fragmento</label>
+        <input id="min_tokens" name="min_tokens" type="number" min="1" max="10000" step="1" required value="{{ values.min_tokens }}"{{ invalid(errors, "min_tokens") }}>
+        {{ field_error(errors, "min_tokens") }}
+      </div>
+    </div>
+    <label class="vg-check"><input type="checkbox" name="annotate"{% if values.annotate %} checked{% endif %}> Anotar las respuestas con fragmentos dudosos</label>
+  </fieldset>
+
+  <fieldset>
+    <legend>Umbrales de acción sobre el P(error) de la respuesta</legend>
+    <p class="vg-hint">Número entre 0 y 1. Vacío desactiva la acción.</p>
+    <div class="vg-form-inline">
+      <div class="vg-field">
+        <label for="human_review_at">Revisión humana desde</label>
+        <input id="human_review_at" name="human_review_at" type="number" min="0" max="1" step="0.01" inputmode="decimal" value="{{ thr(values.human_review_at) }}"{{ invalid(errors, "human_review_at") }}>
+        {{ field_error(errors, "human_review_at") }}
+      </div>
+      <div class="vg-field">
+        <label for="rag_retry_at">Re-consulta RAG desde</label>
+        <input id="rag_retry_at" name="rag_retry_at" type="number" min="0" max="1" step="0.01" inputmode="decimal" value="{{ thr(values.rag_retry_at) }}"{{ invalid(errors, "rag_retry_at") }}>
+        {{ field_error(errors, "rag_retry_at") }}
+      </div>
+      <div class="vg-field">
+        <label for="abstain_at">Abstención desde</label>
+        <input id="abstain_at" name="abstain_at" type="number" min="0" max="1" step="0.01" inputmode="decimal" value="{{ thr(values.abstain_at) }}"{{ invalid(errors, "abstain_at") }}>
+        {{ field_error(errors, "abstain_at") }}
+      </div>
+    </div>
+    <div class="vg-field">
+      <label for="abstain_message">Mensaje de abstención</label>
+      <textarea id="abstain_message" name="abstain_message" maxlength="2000" rows="2"{{ invalid(errors, "abstain_message") }}>{{ values.abstain_message }}</textarea>
+      {{ field_error(errors, "abstain_message") }}
+    </div>
+  </fieldset>
+
+  <fieldset>
+    <legend>Re-consulta RAG</legend>
+    <div class="vg-field">
+      <label for="rag_url">URL del retriever</label>
+      <input id="rag_url" name="rag_url" type="url" maxlength="2048" placeholder="https://buscador.interno/api/search" value="{{ values.rag_url or '' }}"{{ invalid(errors, "rag_url") }}>
+      {{ field_error(errors, "rag_url") }}
+      <p class="vg-hint">Solo hosts de la allowlist del despliegue, o https con IP pública.</p>
+    </div>
+    <div class="vg-form-inline">
+      <div class="vg-field">
+        <label for="rag_max_retries">Reintentos máximos</label>
+        <input id="rag_max_retries" name="rag_max_retries" type="number" min="0" max="5" step="1" required value="{{ values.rag_max_retries }}"{{ invalid(errors, "rag_max_retries") }}>
+        {{ field_error(errors, "rag_max_retries") }}
+      </div>
+      <div class="vg-field">
+        <label for="rag_fallback_action">Si la re-consulta falla</label>
+        <select id="rag_fallback_action" name="rag_fallback_action"{{ invalid(errors, "rag_fallback_action") }}>
+          <option value="human_review"{% if values.rag_fallback_action == "human_review" %} selected{% endif %}>Revisión humana</option>
+          <option value="abstain"{% if values.rag_fallback_action == "abstain" %} selected{% endif %}>Abstención</option>
+        </select>
+        {{ field_error(errors, "rag_fallback_action") }}
+      </div>
+    </div>
+  </fieldset>
+
+  <fieldset>
+    <legend>Fallas y streaming</legend>
+    <div class="vg-form-inline">
+      <div class="vg-field">
+        <label for="on_detector_error">Si el detector falla</label>
+        <select id="on_detector_error" name="on_detector_error"{{ invalid(errors, "on_detector_error") }}>
+          <option value="fail_closed"{% if values.on_detector_error == "fail_closed" %} selected{% endif %}>Rechazar con 503 (recomendado)</option>
+          <option value="fail_open"{% if values.on_detector_error == "fail_open" %} selected{% endif %}>Responder sin puntaje (degradado)</option>
+        </select>
+        {{ field_error(errors, "on_detector_error") }}
+      </div>
+      <div class="vg-field">
+        <label for="stream_policy">En streaming</label>
+        <select id="stream_policy" name="stream_policy"{{ invalid(errors, "stream_policy") }}>
+          <option value="annotate_only"{% if values.stream_policy == "annotate_only" %} selected{% endif %}>Solo anotar (texto en vivo)</option>
+          <option value="buffer"{% if values.stream_policy == "buffer" %} selected{% endif %}>Retener hasta decidir (permite abstención)</option>
+        </select>
+        {{ field_error(errors, "stream_policy") }}
+      </div>
+    </div>
+  </fieldset>
+
+  <div class="vg-actions"><button type="submit" class="vg-btn">Guardar la política</button></div>
+</form>
+{% else %}
+<section class="vg-card" aria-labelledby="pol-ro">
+  <h2 id="pol-ro">Política vigente (versión {{ policy.version }})</h2>
+  <dl class="vg-meta">
+    <dt>alpha</dt><dd>{{ policy.alpha|num(3) }}</dd>
+    <dt>Hueco / tokens mínimos</dt><dd>{{ policy.gap_max }} / {{ policy.min_tokens }}</dd>
+    <dt>Anotar</dt><dd>{{ "sí" if policy.annotate else "no" }}</dd>
+    <dt>Revisión humana desde</dt><dd>{{ policy.human_review_at|num(2) if policy.human_review_at is not none else "desactivada" }}</dd>
+    <dt>Re-consulta RAG desde</dt><dd>{{ policy.rag_retry_at|num(2) if policy.rag_retry_at is not none else "desactivada" }}</dd>
+    <dt>Abstención desde</dt><dd>{{ policy.abstain_at|num(2) if policy.abstain_at is not none else "desactivada" }}</dd>
+    <dt>Mensaje de abstención</dt><dd>{{ policy.abstain_message|clean }}</dd>
+    <dt>Si el detector falla</dt><dd>{{ "rechazar (503)" if policy.on_detector_error == "fail_closed" else "responder degradado" }}</dd>
+    <dt>Streaming</dt><dd>{{ "solo anotar" if policy.stream_policy == "annotate_only" else "retener" }}</dd>
+  </dl>
+</section>
+{% endif %}
+{% endblock %}

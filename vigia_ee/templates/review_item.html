@@ -1,0 +1,101 @@
+{% extends "base.html" %}
+{% from "_macros.html" import csrf, action_badge, marked_text, alert_error with context %}
+{% block title %}Item de revisión{% endblock %}
+{% block page_id %}review-item{% endblock %}
+{% block content %}
+<div class="vg-page-head">
+  <h1>Revisar {{ "la respuesta completa" if item.span_idx is none else "un fragmento" }}</h1>
+  <div class="vg-actions">
+    <span class="vg-badge{% if completed %} vg-badge-ok{% endif %}">{{ state_labels[item.state] }}</span>
+    <button type="button" class="vg-btn vg-btn-ghost vg-btn-small" data-open-dialog="shortcuts" hidden>Atajos <kbd>?</kbd></button>
+    <a class="vg-btn vg-btn-ghost vg-btn-small" href="/review">Volver a la cola</a>
+  </div>
+</div>
+
+{{ alert_error(error) }}
+
+<nav class="vg-pager" aria-label="Items de la cola">
+  {% if prev_id %}<a class="vg-btn vg-btn-ghost vg-btn-small" href="/review/{{ prev_id }}" rel="prev" data-nav-prev>← Item anterior</a>{% else %}<span></span>{% endif %}
+  {% if next_id %}<a class="vg-btn vg-btn-ghost vg-btn-small" href="/review/{{ next_id }}" rel="next" data-nav-next>Item siguiente →</a>{% endif %}
+</nav>
+
+<p class="vg-unverified" role="note">El texto sin marcar no está verificado. Juzgá {{ "la respuesta completa" if item.span_idx is none else "el fragmento marcado" }} con tu propio criterio.</p>
+
+<div class="vg-detail">
+  <div>
+    {% if prompt %}
+    <h2>Pregunta</h2>
+    <pre>{{ prompt|clean }}</pre>
+    {% endif %}
+    <h2>Respuesta</h2>
+    {% if text is none %}
+    <div class="vg-alert vg-alert-info"><p>La organización no guarda texto (<code>store_text = none</code>): revisá la respuesta en el sistema de origen con el id <code>{{ trace.id }}</code>.</p></div>
+    {% else %}
+    {{ marked_text(segments, prefix="rv") }}
+    {% endif %}
+    <p class="vg-hint"><a href="/generations/{{ trace.id }}">Abrir el detalle con señales</a></p>
+  </div>
+
+  <aside class="vg-detail-aside" aria-labelledby="decision-title">
+    <section class="vg-card">
+      <h2 id="decision-title">Decisión</h2>
+      <dl class="vg-meta">
+        <dt>Acción</dt><dd>{{ action_badge(trace.action) }}</dd>
+        <dt>P(error)</dt><dd>{{ trace.response_p_error|num(3) }}</dd>
+        <dt>Revisiones</dt><dd>{{ n_decisions }} de {{ item.min_reviewers }}</dd>
+        <dt>Reserva</dt><dd>{% if reserved_by_me %}tuya hasta {{ item.reserved_until|dt }}{% elif reserved_by_other %}de otro revisor hasta {{ item.reserved_until|dt }}{% else %}libre{% endif %}</dd>
+      </dl>
+
+      {% if mine %}
+      <p>Tu decisión: <strong>{{ label_text[mine.label] }}</strong>{% if mine.note %} · {{ mine.note|clean }}{% endif %}</p>
+      {% if not completed %}<p class="vg-hint">Las decisiones de otros revisores se muestran cuando el item se completa.</p>{% endif %}
+      {% endif %}
+
+      {% if completed %}
+      <h3>Decisiones</h3>
+      <ul>{% for d in visible %}<li>{{ d.email }}: <strong>{{ label_text[d.label] }}</strong>{% if d.note %} · {{ d.note|clean }}{% endif %}</li>{% endfor %}</ul>
+      {% endif %}
+
+      {% if can_decide %}
+      {% if not reserved_by_me %}
+      <form method="post" action="/review/{{ item.id }}/reserve" class="vg-actions">{{ csrf() }}<button type="submit" class="vg-btn vg-btn-secondary vg-btn-small">Reservar por 15 minutos</button></form>
+      {% endif %}
+      <form method="post" action="/review/{{ item.id }}/decide" class="vg-form" data-review-form>
+        {{ csrf() }}
+        <fieldset class="vg-labels">
+          <legend>¿{{ "La respuesta" if item.span_idx is none else "El fragmento" }} es correcto?</legend>
+          {% for lab in labels %}
+          <label class="vg-label-opt"><input type="radio" name="label" value="{{ lab }}" required data-key="{{ loop.index }}"> {{ label_text[lab] }} <kbd>{{ loop.index }}</kbd></label>
+          {% endfor %}
+        </fieldset>
+        <div class="vg-field">
+          <label for="note">Nota (opcional)</label>
+          <textarea id="note" name="note" maxlength="2000" rows="3"></textarea>
+        </div>
+        <div class="vg-actions">
+          <button type="submit" class="vg-btn" name="next" value="1" data-submit-next>Guardar y seguir <kbd>Ctrl</kbd>+<kbd>Enter</kbd></button>
+          <button type="submit" class="vg-btn vg-btn-secondary" name="next" value="0">Guardar</button>
+        </div>
+      </form>
+      {% elif not completed and not mine and can("review:write") and reserved_by_other %}
+      <p>Otro revisor tiene reservado este item. <a href="/review">Volver a la cola</a></p>
+      {% endif %}
+    </section>
+  </aside>
+</div>
+{% endblock %}
+
+{% block dialogs %}
+<dialog id="shortcuts" aria-labelledby="shortcuts-title">
+  <h2 id="shortcuts-title">Atajos de la revisión</h2>
+  <dl class="vg-shortcuts">
+    <dt><kbd>1</kbd></dt><dd>Correcto</dd>
+    <dt><kbd>2</kbd></dt><dd>Error</dd>
+    <dt><kbd>3</kbd></dt><dd>Incierto</dd>
+    <dt><kbd>Ctrl</kbd>+<kbd>Enter</kbd></dt><dd>Guardar y pasar al siguiente</dd>
+    <dt><kbd>←</kbd> / <kbd>→</kbd></dt><dd>Item anterior / siguiente</dd>
+    <dt><kbd>?</kbd></dt><dd>Abrir esta hoja</dd>
+  </dl>
+  <form method="dialog"><button type="submit" class="vg-btn">Cerrar</button></form>
+</dialog>
+{% endblock %}

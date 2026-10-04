@@ -1,0 +1,37 @@
+{% from "_macros.html" import logo with context %}
+<!doctype html>
+<html lang="es-AR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<meta name="referrer" content="no-referrer">
+<title>Ingresar · Vigía</title>
+<link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/static/app.css">
+<script src="/static/app.js" nonce="{{ nonce }}"></script>
+</head>
+<body data-page="login">
+<main class="vg-login" id="contenido">
+  <div class="vg-card vg-login-card">
+    <p class="vg-brand">{{ logo() }}<span>Vigía</span></p>
+    <h1>Ingresar al panel</h1>
+    {% if flash %}<div class="vg-alert vg-alert-ok" role="status"><p>{{ flash }}</p></div>{% endif %}
+    {% if error %}<div class="vg-alert vg-alert-error" role="alert"><p>{{ error }}</p></div>{% endif %}
+    <form method="post" action="/login" class="vg-form">
+      <input type="hidden" name="next" value="{{ next }}">
+      <div class="vg-field">
+        <label for="email">Email</label>
+        <input id="email" name="email" type="email" autocomplete="username" required maxlength="254" value="{{ email_value }}"{% if error %} aria-invalid="true"{% endif %}>
+      </div>
+      <div class="vg-field">
+        <label for="password">Contraseña</label>
+        <input id="password" name="password" type="password" autocomplete="current-password" required maxlength="128"{% if error %} aria-invalid="true"{% endif %}>
+        <p class="vg-hint">Podés pegar la contraseña desde tu gestor de contraseñas.</p>
+      </div>
+      <div class="vg-actions"><button type="submit" class="vg-btn">Ingresar</button></div>
+    </form>
+  </div>
+</main>
+</body>
+</html>

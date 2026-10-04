@@ -242,3 +242,49 @@ def test_AT_A09_api_marks_reduced_mode():
     choice = resp.json()["choices"][0]
     assert choice["message"]["content"] == "Hola niño"
     assert choice["vigia"]["mode"] == "reduced"
+
+
+def test_reduced_mode_formulas_match_hand_computation():
+    """Las features U del modo reducido (vía vigia.features) igualan al cálculo a mano token a token."""
+    rng = np.random.default_rng(7)
+    t_len, n_layers, n_exp = 7, 3, 6
+    routed = np.stack(
+        [np.stack([rng.choice(n_exp, 2, replace=False) for _ in range(n_layers)]) for _ in range(t_len)]
+    )
+    feats = routed_usage_features(routed, n_exp)
+    counts = np.zeros((n_layers, n_exp))
+    for t in range(t_len):
+        per_base = {b: [] for b in ("u_gini", "u_ihhi", "u_ent", "r_switch")}
+        for layer in range(n_layers):
+            counts[layer, routed[t, layer]] += 1
+            u = counts[layer] / counts[layer].sum()
+            nz = u[u > 0]
+            shared = 0 if t == 0 else len(set(routed[t, layer]) & set(routed[t - 1, layer]))
+            ref = {
+                "u_gini": 1 - (u * u).sum(),
+                "u_ihhi": 1 / (u * u).sum() / n_exp,
+                "u_ent": -(nz * np.log(nz)).sum() / np.log(n_exp),
+                "r_switch": math.nan if t == 0 else 1 - shared / 2,
+            }
+            for base, v in ref.items():
+                got = feats[t][f"{base}@{layer}"]
+                assert (math.isnan(v) and math.isnan(got)) or got == pytest.approx(v, abs=1e-12)
+                per_base[base].append(v)
+        for base, vals in per_base.items():
+            arr = np.array([v for v in vals if not math.isnan(v)])
+            for agg, fn in (("mean", np.mean), ("max", np.max), ("std", np.std)):
+                got = feats[t][f"agg_{agg}:{base}"]
+                assert math.isnan(got) if arr.size == 0 else got == pytest.approx(fn(arr), abs=1e-12)
+    assert routed_usage_features(np.zeros((0, 2, 2), dtype=np.int64), 4) == []
+
+
+def test_top_logprob_features_edge_cases():
+    feats = top_logprob_features(-0.2, [-0.2, float("-inf"), -2.0, float("nan")])
+    p = np.exp([-0.2, -2.0])
+    q = p / p.sum()
+    assert feats["out_margin"] == pytest.approx(p[0] - p[1])
+    assert feats["out_top20_entropy"] == pytest.approx(float(-(q * np.log(q)).sum()))
+    only_inf = top_logprob_features(float("-inf"), [float("-inf")])
+    assert all(math.isnan(v) for v in only_inf.values())
+    single = top_logprob_features(-0.1, [-0.1])
+    assert math.isnan(single["out_margin"]) and single["out_top20_entropy"] == pytest.approx(0.0)

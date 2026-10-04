@@ -9,8 +9,9 @@ al final del request, más logprobs top-20. Con eso Vigía calcula:
 - U: `u_gini`, `u_ihhi`, `u_ent` y `r_switch` por capa sobre el uso acumulado sin ponderar, más sus
   agregados `agg_{mean,max,std}` entre capas.
 
-ponytail: las fórmulas U y F0 de este módulo son locales porque `vigia.features` se escribe en paralelo.
-Unificarlas con `vigia.features` cuando exista, con un test de igualdad numérica.
+Las fórmulas son las de `vigia.features` (fuente única, la misma que usa el extractor HF):
+`usage_counts`, `usage_stats` (impureza de Gini, HHI inverso / N, entropía / log N),
+`route_switch` (NaN en t = 0), `layer_aggregates` y `top_n_entropy`.
 """
 
 from __future__ import annotations
@@ -25,6 +26,7 @@ from urllib.parse import urlsplit
 import httpx
 import numpy as np
 
+from vigia import features as fx
 from vigia.contracts import (
     AGGREGATES,
     USAGE_LAYER_FEATURES,
@@ -45,77 +47,58 @@ class VllmProxyError(VigiaError):
     """vLLM falló o devolvió una respuesta que Vigía no puede interpretar."""
 
 
-# --- Fórmulas locales ---------------------------------------------------------------------------
+# --- Features desde lo que entrega vLLM ---------------------------------------------------------
 
 
 def top_logprob_features(logprob: float | None, top: list[float]) -> dict[str, float]:
-    """F0 parcial desde el logprob emitido y los logprobs top-k (k <= 20)."""
+    """F0 parcial desde el logprob emitido y los logprobs top-k (k <= 20).
+
+    `out_margin` usa las probabilidades reales de los dos primeros; `out_top20_entropy` es
+    `features.top_n_entropy` sobre los logprobs finitos (renormalizados). `out_entropy` queda en NaN.
+    """
     feats = {"out_entropy": NAN, "out_nll": NAN, "out_margin": NAN, "out_top20_entropy": NAN}
     if logprob is not None and math.isfinite(logprob):
         feats["out_nll"] = -float(logprob)
-    probs = np.exp(np.asarray(sorted(top, reverse=True), dtype=np.float64)) if top else np.zeros(0)
-    if probs.size >= 2:
-        feats["out_margin"] = float(probs[0] - probs[1])
-    total = float(probs.sum())
-    if probs.size and total > 0:
-        q = probs / total
-        q = q[q > 0]
-        feats["out_top20_entropy"] = float(-(q * np.log(q)).sum())
+    values = np.asarray([t for t in top if not math.isnan(t)], dtype=np.float64)
+    if values.size >= 2:
+        best = -np.sort(-values)[:2]
+        feats["out_margin"] = float(np.exp(best[0]) - np.exp(best[1]))
+    finite = values[np.isfinite(values)]
+    if finite.size:
+        feats["out_top20_entropy"] = float(fx.top_n_entropy(finite, fx.TOP_N_OUTPUT))
     return feats
 
 
 def usage_features(counts: np.ndarray, n_experts: int) -> tuple[float, float, float]:
-    """(u_gini, u_ihhi, u_ent) de un vector de conteos acumulados de una capa.
+    """(u_gini, u_ihhi, u_ent) de un vector de conteos acumulados de una capa (`features.usage_stats`).
 
     u_gini es la impureza de Gini 1 - Σ u_i²; u_ihhi es (1 / Σ u_i²) / N; u_ent es la entropía / log N.
+    Uso nulo → NaN.
     """
-    total = float(counts.sum())
-    if total <= 0:
-        return NAN, NAN, NAN
-    u = counts.astype(np.float64) / total
-    s2 = float((u * u).sum())
-    nz = u[u > 0]
-    ent = float(-(nz * np.log(nz)).sum())
-    u_ent = ent / math.log(n_experts) if n_experts > 1 else 0.0
-    return 1.0 - s2, (1.0 / s2) / n_experts, u_ent
+    counts = np.asarray(counts, dtype=np.float64)
+    if counts.shape != (n_experts,):
+        raise ValueError(f"counts debe tener forma ({n_experts},)")
+    stats = fx.usage_stats(counts)
+    return float(stats["u_gini"]), float(stats["u_ihhi"]), float(stats["u_ent"])
 
 
 def routed_usage_features(routed: np.ndarray, n_experts: int) -> list[dict[str, float]]:
     """Features U causales por token desde IDs [T, L, k]. El valor en t usa solo los tokens <= t."""
-    t_len, n_layers, k = routed.shape
-    counts = np.zeros((n_layers, n_experts), dtype=np.int64)
-    out: list[dict[str, float]] = []
-    prev: list[set[int]] | None = None
-    for t in range(t_len):
-        feats: dict[str, float] = {}
-        per_base: dict[str, list[float]] = {b: [] for b in USAGE_LAYER_FEATURES}
-        current: list[set[int]] = []
-        for layer in range(n_layers):
-            ids = routed[t, layer]
-            np.add.at(counts[layer], ids, 1)
-            gini, ihhi, ent = usage_features(counts[layer], n_experts)
-            sel = {int(i) for i in ids}
-            switch = NAN if prev is None else 1.0 - len(sel & prev[layer]) / k
-            current.append(sel)
-            for base, val in zip(USAGE_LAYER_FEATURES, (gini, ihhi, ent, switch), strict=True):
-                feats[layer_feature(base, layer)] = val
-                per_base[base].append(val)
-        for base, vals in per_base.items():
-            arr = np.asarray(vals, dtype=np.float64)
-            arr = arr[np.isfinite(arr)]
-            for agg in AGGREGATES:
-                if arr.size == 0:
-                    v = NAN
-                elif agg == "mean":
-                    v = float(arr.mean())
-                elif agg == "max":
-                    v = float(arr.max())
-                else:
-                    v = float(arr.std())
-                feats[agg_feature(agg, base)] = v
-        prev = current
-        out.append(feats)
-    return out
+    t_len, n_layers, _ = routed.shape
+    if t_len == 0:
+        return []
+    cum = np.cumsum(fx.usage_counts(routed, n_experts), axis=0)  # (T, L, N) sin ponderar
+    usage = fx.usage_stats(cum)
+    switch = np.full((t_len, n_layers), np.nan)
+    switch[1:] = fx.route_switch(routed[:-1], routed[1:])
+    values = np.stack([usage["u_gini"], usage["u_ihhi"], usage["u_ent"], switch])  # (bases, T, L)
+    aggs = fx.layer_aggregates(values, axis=2)  # cada una (bases, T)
+    names = [layer_feature(b, layer) for b in USAGE_LAYER_FEATURES for layer in range(n_layers)]
+    names += [agg_feature(a, b) for b in USAGE_LAYER_FEATURES for a in AGGREGATES]
+    by_layer = values.transpose(1, 0, 2).reshape(t_len, -1)
+    agg_values = np.stack([aggs[a] for a in AGGREGATES], axis=1).transpose(2, 0, 1).reshape(t_len, -1)
+    matrix = np.hstack([by_layer, agg_values])
+    return [dict(zip(names, row, strict=True)) for row in matrix.tolist()]
 
 
 def nan_usage(n_layers: int) -> dict[str, float]:

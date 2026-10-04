@@ -391,3 +391,85 @@ def test_f0_requires_logits_and_batch_size_is_fixed():
         out = model(input_ids=ids_of(3, batch=2))
         with pytest.raises(ValueError, match="batch"):
             ex.end_step(out.logits, torch.zeros(2, 3, dtype=torch.long))
+
+
+def test_hook_only_stores_step_router_logits():
+    """El pre-hook guarda los logits (n_tokens, N) float32 del paso; la reducción es de end_step."""
+    model = tiny("mixtral")
+    with torch.inference_mode(), SignalExtractor(model, (Tier.F1,)) as ex:
+        ex.begin_step()
+        model(input_ids=ids_of(5))
+        stored = dict(ex._step.router)
+        assert sorted(stored) == [0, 1]
+        for logits in stored.values():
+            assert logits.shape == (5, 4) and logits.dtype == torch.float32 and not logits.requires_grad
+        ex.end_step()
+        assert ex._step is None  # ningún logit sobrevive al paso
+        assert ex._counts.shape == (1, 2, 4)
+
+
+def _reference_router_features(model, ids, scored):
+    """Oráculo token a token: stats por capa, uso acumulado y r_switch contra la posición previa."""
+    blocks = find_moe_blocks(model)
+    with torch.inference_mode(), SignalExtractor(model, (Tier.F1,), keep_router_logits=True) as ex:
+        ex.begin_step()
+        model(input_ids=ids)
+        logits = {layer: t[0].numpy() for layer, t in ex.router_logits.items()}
+        ex.end_step()
+    stats = [fx.router_stats(logits[b.layer], b.spec.gating, 2, **routing_params(b)) for b in blocks]
+    counts = np.zeros((len(blocks), 4))
+    prev = None
+    out = []
+    for p in range(ids.shape[1]):
+        idx = np.stack([s["idx"][p] for s in stats])
+        if scored[p]:
+            w = np.stack([s["w"][p] for s in stats])
+            for layer in range(len(blocks)):
+                for slot in range(2):
+                    counts[layer, idx[layer, slot]] += w[layer, slot]
+            feats = {}
+            for li, b in enumerate(blocks):
+                u = counts[li] / counts[li].sum()
+                feats[layer_feature("u_gini", b.layer)] = 1 - (u * u).sum()
+                feats[layer_feature("u_ihhi", b.layer)] = 1 / (u * u).sum() / 4
+                nz = u[u > 0]
+                feats[layer_feature("u_ent", b.layer)] = -(nz * np.log(nz)).sum() / np.log(4)
+                shared = 0 if prev is None else len(set(idx[li]) & set(prev[li]))
+                feats[layer_feature("r_switch", b.layer)] = math.nan if prev is None else 1 - shared / 2
+                for name in F1_LAYER_FEATURES:
+                    feats[layer_feature(name, b.layer)] = stats[li][name][p]
+            out.append((feats, idx.tolist()))
+        prev = idx
+    return out
+
+
+@pytest.mark.parametrize("model_type", ["mixtral", "deepseek_v3"])
+def test_vectorized_reduction_matches_token_by_token_oracle(model_type):
+    """end_step vectorizado = oráculo token a token, con huecos en la máscara y dos pasos con KV."""
+    model = tiny(model_type)
+    if model_type == "deepseek_v3":  # sesgos distintos por capa: ruteo no compartido
+        with torch.no_grad():
+            for i, b in enumerate(find_moe_blocks(model)):
+                b.router.e_score_correction_bias.copy_(torch.tensor([0.0, 0.3, -0.2, 0.1]) * (i + 1))
+    ids = ids_of(8, seed=5)
+    scored = np.array([0, 1, 1, 0, 1, 0, 1, 1], dtype=bool)
+    expected = _reference_router_features(model, ids, scored)
+    got = []
+    with torch.inference_mode(), SignalExtractor(model, (Tier.F1,)) as ex:
+        assert ex._shared_route is (model_type == "mixtral")
+        ex.begin_step(score_mask=torch.as_tensor(scored[None, :5]))
+        out = model(input_ids=ids[:, :5], use_cache=True)
+        got += ex.end_step()[0]
+        ex.begin_step(score_mask=torch.as_tensor(scored[None, 5:]))
+        model(input_ids=ids[:, 5:], past_key_values=out.past_key_values, use_cache=True)
+        got += ex.end_step()[0]
+    assert len(got) == len(expected) == scored.sum()
+    for sig, (feats, ids_ref) in zip(got, expected, strict=True):
+        assert sig.expert_ids == ids_ref
+        assert_same_features({k: sig.features[k] for k in feats}, feats, atol=1e-5)
+        for base in USAGE_LAYER_FEATURES + F1_LAYER_FEATURES:
+            vals = np.array([sig.features[layer_feature(base, layer)] for layer in (0, 1)])
+            agg = fx.layer_aggregates(vals)
+            for name in AGGREGATES:
+                a, b = sig.features[agg_feature(name, base)], float(agg[name])
+                assert (math.isnan(a) and math.isnan(b)) or a == pytest.approx(b, abs=1e-12)

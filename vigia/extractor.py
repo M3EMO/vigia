@@ -11,8 +11,15 @@ Alineación: la posición p de un forward produce las features del token muestre
 logits de p (`targets[b, p]`). Así F0 y F1 describen el mismo cómputo que eligió el token.
 
 - F1: un `forward_pre_hook` sobre cada bloque MoE recalcula `F.linear(x, W_router, b)` en float32,
-  así que funciona aunque el bloque no llame al router (MXFP4). La reducción a escalares ocurre
-  dentro del hook; nunca se guardan tensores por experto.
+  así que funciona aunque el bloque no llame al router (MXFP4). El hook solo guarda esos logits
+  del paso (tensor `(n_tokens, N)` float32, sin grafo).
+- Regla de reducción: la reducción ocurre en `end_step`, por paso; nunca se acumulan logits entre
+  pasos. `end_step` apila las capas `(L, n, N)`, se queda con las filas que hacen falta (puntuadas,
+  la válida previa a cada una y la última válida), convierte a numpy una sola vez y reduce todas
+  las capas y tokens del paso con una sola llamada vectorizada a `vigia.features`. Entre pasos solo
+  persiste el estado causal chico: uso acumulado `(B, L, N)` y la última selección `(L, k)` por fila.
+  La reducción usa numpy y no torch: con tensores de pocas decenas de elementos manda el costo de
+  despacho por operación, y torch tarda ~3x más que numpy en las mismas fórmulas (medido en CPU).
 - U/F1: el uso acumulado y `r_switch` son causales por fila: solo cuentan posiciones puntuadas
   (tokens generados) hasta t. `r_switch` compara con la posición válida anterior.
 - F2 (opt-in): un forward hook sobre el módulo de expertos recalcula la salida de cada experto
@@ -62,7 +69,7 @@ class _Step:
     valid: np.ndarray | None = None  # (B, T) bool
     scored: np.ndarray | None = None  # (B, T) bool
     shape: tuple[int, int] | None = None  # (B, T) visto por los hooks
-    router: dict[int, tuple[np.ndarray, np.ndarray]] = field(default_factory=dict)  # (packed, idx)
+    router: dict[int, torch.Tensor] = field(default_factory=dict)  # capa j -> logits (n, N) float32
     experts: dict[int, dict[str, np.ndarray]] = field(default_factory=dict)
     hidden: tuple[np.ndarray, np.ndarray] | None = None  # (filas planas, valores (n, d))
     fired: set[tuple[str, int]] = field(default_factory=set)
@@ -129,6 +136,19 @@ def resolve_probe_layer(probe_layer: int | None, n_layers: int) -> int:
     return p
 
 
+def _same_route_kwargs(a: dict[str, Any], b: dict[str, Any]) -> bool:
+    if a.keys() != b.keys():
+        return False
+    for key, va in a.items():
+        vb = b[key]
+        if isinstance(va, np.ndarray) or isinstance(vb, np.ndarray):
+            if va is None or vb is None or not np.array_equal(va, vb):
+                return False
+        elif va != vb:
+            return False
+    return True
+
+
 def _as_bool(mask: Any) -> np.ndarray | None:
     if mask is None:
         return None
@@ -154,18 +174,13 @@ class SignalExtractor:
         self.model = model
         self.blocks = find_moe_blocks(model)
         self.layers = tuple(b.layer for b in self.blocks)
-        self._layer_rows = np.arange(len(self.layers))[:, None]
-        self._nan_layers = np.full(len(self.layers), np.nan)
-        self._names = {
-            bases: (
-                [layer_feature(base, layer) for base in bases for layer in self.layers],
-                [agg_feature(agg, base) for base in bases for agg in AGGREGATES],
-            )
-            for bases in (F1_LAYER_FEATURES + USAGE_LAYER_FEATURES, USAGE_LAYER_FEATURES)
-        }
         self.n_experts = int(self.blocks[0].router.weight.shape[0])
         self.top_k = top_k(model)
         self._route_kw = [routing_params(b) for b in self.blocks]
+        # Una sola llamada a features.router_stats para todas las capas si comparten el ruteo.
+        self._shared_route = len({b.spec.gating for b in self.blocks}) == 1 and all(
+            _same_route_kwargs(kw, self._route_kw[0]) for kw in self._route_kw
+        )
         self.disabled: list[str] = []
         wanted = {Tier(t) for t in tiers}
         if Tier.F2 in wanted:
@@ -174,6 +189,12 @@ class SignalExtractor:
                 self.disabled.append(reason)
                 wanted.discard(Tier.F2)
         self.tiers = frozenset(wanted)
+        self._weighted = Tier.F1 in self.tiers  # F1 pondera el uso con el router; U cuenta IDs
+        bases = F1_LAYER_FEATURES + USAGE_LAYER_FEATURES if self._weighted else USAGE_LAYER_FEATURES
+        self._router_names = [layer_feature(base, layer) for base in bases for layer in self.layers] + [
+            agg_feature(agg, base) for base in bases for agg in AGGREGATES
+        ]
+        self._f2_names = [layer_feature(base, b.layer) for b in self.blocks for base in F2_LAYER_FEATURES]
         self._lens: tuple[nn.Module, nn.Module] | None = None
         if Tier.F2 in self.tiers:
             norm, head = final_norm(model), model.get_output_embeddings()
@@ -186,6 +207,8 @@ class SignalExtractor:
         )
         self.keep_router_logits = keep_router_logits
         self.router_logits: dict[int, torch.Tensor] = {}  # capa -> (B, T, N) del último paso
+        self._counts: np.ndarray | None = None  # (B, L, N): uso acumulado por fila
+        self._prev_sel: list[np.ndarray | None] = []  # por fila: selección (L, k) de la última válida
         self._handles: list[torch.utils.hooks.RemovableHandle] = []
         self._step: _Step | None = None
         self.reset()
@@ -225,8 +248,8 @@ class SignalExtractor:
 
     def reset(self) -> None:
         """Borra el estado causal (uso acumulado, selección previa). Llamar entre secuencias."""
-        self._counts: list[np.ndarray] | None = None
-        self._prev_sel: list[np.ndarray | None] = []
+        self._counts = None
+        self._prev_sel = []
 
     # --- hooks ------------------------------------------------------------------------------
 
@@ -236,6 +259,7 @@ class SignalExtractor:
         return self._step
 
     def _router_hook(self, j: int, module: nn.Module, args: tuple, kwargs: dict) -> None:
+        """Solo recalcula y guarda los logits del router del paso; la reducción es de `end_step`."""
         x = args[0] if args else next(v for v in kwargs.values() if isinstance(v, torch.Tensor))
         block = self.blocks[j]
         with _inference():
@@ -244,17 +268,12 @@ class SignalExtractor:
             logits = F.linear(
                 h, block.router.weight.detach().float(), None if bias is None else bias.detach().float()
             )
-            stats = fx.router_stats(logits.cpu().numpy(), block.spec.gating, self.top_k, **self._route_kw[j])
         step = self._current()
         step.shape = tuple(x.shape[:-1]) if x.dim() == 3 else (1, h.shape[0])
-        # (N, 5 + k): las 5 features F1 en el orden del contrato y los pesos top-k; idx aparte.
-        step.router[j] = (
-            np.column_stack([stats[name] for name in F1_LAYER_FEATURES] + [stats["w"]]),
-            stats["idx"],
-        )
+        step.router[j] = logits
         step.fired.add(("router", j))
         if self.keep_router_logits:
-            self.router_logits[block.layer] = logits.reshape(*step.shape, -1).clone()
+            self.router_logits[block.layer] = logits.reshape(*step.shape, -1)
 
     def _experts_hook(self, j: int, module: nn.Module, args: tuple, kwargs: dict, output: Any) -> None:
         hidden = args[0] if args else kwargs["hidden_states"]
@@ -361,53 +380,48 @@ class SignalExtractor:
         valid = step.valid if step.valid is not None else np.ones(shape, dtype=bool)
         scored = step.scored if step.scored is not None else valid
         if self._counts is None:
-            self._counts = [np.zeros((len(self.blocks), self.n_experts)) for _ in range(bsz)]
+            self._counts = np.zeros((bsz, len(self.blocks), self.n_experts))
             self._prev_sel = [None] * bsz
-        elif len(self._counts) != bsz:
+        elif self._counts.shape[0] != bsz:
             raise ValueError("el tamaño de batch cambió: llamar a reset() entre secuencias")
 
-        f0 = self._f0(logits, targets, scored, seq) if Tier.F0 in self.tiers else None
-        router = self._stack_router(step) if self.tiers & _ROUTER_TIERS else None
-        hidden_pos = {}
+        bs, ps = np.nonzero(scored)  # posiciones puntuadas, por fila y en orden de posición
+        flat = bs * seq + ps
+        names: list[str] = []
+        columns: list[np.ndarray] = []
+        expert_ids: list[list[list[int]]] | None = None
+        if Tier.F0 in self.tiers:
+            f0 = self._f0(logits, targets, bs, ps, seq)
+            names += list(f0)
+            columns.append(np.array(list(f0.values())).T.reshape(len(flat), len(f0)))
+        if self.tiers & _ROUTER_TIERS:
+            values, expert_ids = self._router_step(step, valid, scored, seq)
+            names += self._router_names
+            columns.append(values)
+        if step.experts:
+            last = step.experts[len(self.blocks) - 1]
+            f2 = [step.experts[j][base][flat] for j in range(len(self.blocks)) for base in F2_LAYER_FEATURES]
+            names += [*self._f2_names, "e_jsd"]
+            columns.append(np.column_stack([*f2, last["e_jsd"][flat]]).reshape(len(flat), len(f2) + 1))
         if step.hidden is not None:
-            hidden_pos = {int(r): i for i, r in enumerate(step.hidden[0])}
-
+            rows, vecs = step.hidden
+            pos = np.searchsorted(rows, flat)
+            if len(flat) and (pos.max() >= len(rows) or not np.array_equal(rows[pos], flat)):
+                raise ValueError("la sonda H no capturó todas las posiciones puntuadas")
+            names += [f"h_{i}" for i in range(vecs.shape[1])]
+            columns.append(vecs[pos])
+        # Una sola conversión a float de Python para todo el paso.
+        matrix = np.concatenate(columns, axis=1) if columns else np.empty((len(flat), 0))
         out: list[list[TokenSignals]] = [[] for _ in range(bsz)]
-        k_f0 = 0
-        for b in range(bsz):
-            pending: int | None = None
-            for p in range(seq):
-                if not valid[b, p]:
-                    continue
-                n = b * seq + p
-                if not scored[b, p]:
-                    pending = n
-                    continue
-                if router is not None and pending is not None:
-                    self._prev_sel[b] = router["idx"][:, pending]
-                pending = None
-                feats: dict[str, float] = {}
-                expert_ids = None
-                if f0 is not None:
-                    for name, values in f0.items():
-                        feats[name] = float(values[k_f0])
-                    k_f0 += 1
-                if router is not None:
-                    expert_ids = self._router_features(b, n, router, feats)
-                if step.experts:
-                    self._f2_features(n, step, feats)
-                if step.hidden is not None and n in hidden_pos:
-                    vec = step.hidden[1][hidden_pos[n]]
-                    feats.update({f"h_{i}": float(v) for i, v in enumerate(vec)})
-                out[b].append(TokenSignals(feats, expert_ids))
-            if router is not None and pending is not None:
-                self._prev_sel[b] = router["idx"][:, pending]
+        for i, (b, row) in enumerate(zip(bs.tolist(), matrix.tolist(), strict=True)):
+            ids = None if expert_ids is None else expert_ids[i]
+            out[b].append(TokenSignals(dict(zip(names, row, strict=True)), ids))
         return out
 
     # --- reducciones ------------------------------------------------------------------------
 
     def _f0(
-        self, logits: torch.Tensor | None, targets: Any, scored: np.ndarray, seq: int
+        self, logits: torch.Tensor | None, targets: Any, bs: np.ndarray, ps: np.ndarray, seq: int
     ) -> dict[str, np.ndarray]:
         if logits is None or targets is None:
             raise ValueError("el nivel F0 necesita logits y targets en end_step")
@@ -418,49 +432,108 @@ class SignalExtractor:
         offset = seq - kept
         if offset < 0:
             raise ValueError("logits cubre más posiciones que el paso")
-        bs, ps = np.nonzero(scored)
         if len(ps) and ps.min() < offset:
             raise ValueError("hay posiciones puntuadas sin logits (logits_to_keep demasiado chico)")
-        rows = logits.detach()[torch.as_tensor(bs), torch.as_tensor(ps - offset)].float().cpu().numpy()
+        lg = logits.detach()
+        if offset == 0 and len(bs) == lg.shape[0] * lg.shape[1]:  # todas puntuadas (decodificación)
+            rows = lg.reshape(len(bs), -1).float().cpu().numpy()
+            return fx.output_features(rows, tgt.reshape(-1))
+        rows = lg[torch.as_tensor(bs), torch.as_tensor(ps - offset)].float().cpu().numpy()
         return fx.output_features(rows, tgt[bs, ps - offset])
 
-    def _stack_router(self, step: _Step) -> dict[str, np.ndarray]:
-        packed = [step.router[j] for j in range(len(self.blocks))]
-        return {"packed": np.stack([p[0] for p in packed]), "idx": np.stack([p[1] for p in packed])}
+    def _route(self, z: np.ndarray) -> dict[str, np.ndarray]:
+        """Features F1, `idx` y `w` de logits `(L, m, N)`; una sola llamada si las capas comparten ruteo."""
+        if self._shared_route:
+            return fx.router_stats(z, self.blocks[0].spec.gating, self.top_k, **self._route_kw[0])
+        per = [
+            fx.router_stats(z[j], b.spec.gating, self.top_k, **self._route_kw[j])
+            for j, b in enumerate(self.blocks)
+        ]
+        return {key: np.stack([s[key] for s in per]) for key in per[0]}
 
-    def _router_features(
-        self, b: int, n: int, router: dict[str, np.ndarray], feats: dict[str, float]
-    ) -> list:
-        idx = router["idx"][:, n]  # (Lm, k)
-        packed = router["packed"][:, n]  # (Lm, 5 + k)
-        n_f1 = len(F1_LAYER_FEATURES)
-        weighted = Tier.F1 in self.tiers
-        counts = self._counts[b]  # type: ignore[index]
-        np.add.at(counts, (self._layer_rows, idx), packed[:, n_f1:] if weighted else 1.0)
-        prev = self._prev_sel[b]
-        usage = fx.usage_stats(counts)
-        bases = F1_LAYER_FEATURES + USAGE_LAYER_FEATURES if weighted else USAGE_LAYER_FEATURES
-        values = np.empty((len(bases), len(self.layers)))
-        head = n_f1 if weighted else 0
-        if weighted:
-            values[:n_f1] = packed[:, :n_f1].T
-        values[head] = usage["u_gini"]
-        values[head + 1] = usage["u_ihhi"]
-        values[head + 2] = usage["u_ent"]
-        values[head + 3] = self._nan_layers if prev is None else fx.route_switch(prev, idx)
-        self._prev_sel[b] = idx
-        aggs = fx.layer_aggregates(values, axis=1)
-        agg_values = np.empty((len(bases), len(AGGREGATES)))
-        for i, agg in enumerate(AGGREGATES):
-            agg_values[:, i] = aggs[agg]
-        names, agg_names = self._names[bases]
-        feats.update(zip(names, values.ravel().tolist(), strict=True))
-        feats.update(zip(agg_names, agg_values.ravel().tolist(), strict=True))
-        return idx.tolist()
+    def _router_plan(
+        self, valid: np.ndarray, scored: np.ndarray, seq: int
+    ) -> tuple[np.ndarray | None, list[tuple[Any, np.ndarray, int | None]]]:
+        """Filas del paso que hay que reducir y, por fila del batch, dónde está cada cosa.
 
-    def _f2_features(self, n: int, step: _Step, feats: dict[str, float]) -> None:
-        for j, block in enumerate(self.blocks):
-            res = step.experts[j]
-            for base in F2_LAYER_FEATURES:
-                feats[layer_feature(base, block.layer)] = float(res[base][n])
-        feats["e_jsd"] = float(step.experts[len(self.blocks) - 1]["e_jsd"][n])
+        Devuelve `rows` (índices planos `b * seq + p` en orden, o None si son todas) y por fila
+        `(cols, prev_cols, last_col)`: columnas de las posiciones puntuadas, columna de la posición
+        válida anterior a cada una (-1: usar la selección del paso previo) y columna de la última
+        posición válida. Las columnas indexan la matriz reducida.
+        """
+        bsz = valid.shape[0]
+        if valid.size and valid.all() and scored.all():  # decodificación o pasada sin máscaras
+            plans = []
+            for b in range(bsz):
+                prev_cols = np.arange(b * seq - 1, (b + 1) * seq - 1)
+                prev_cols[0] = -1
+                plans.append((slice(b * seq, (b + 1) * seq), prev_cols, (b + 1) * seq - 1))
+            return None, plans
+        raw = []
+        need: list[np.ndarray] = []
+        for b in range(bsz):
+            pv, psc = np.flatnonzero(valid[b]), np.flatnonzero(scored[b])
+            prev = np.searchsorted(pv, psc) - 1  # índice en pv de la posición válida anterior
+            prev_pos = np.where(prev >= 0, pv[np.maximum(prev, 0)], -1) if len(pv) else prev
+            last = int(pv[-1]) if len(pv) else None
+            raw.append((psc, prev_pos, last))
+            need += [b * seq + psc, b * seq + prev_pos[prev_pos >= 0]]
+            if last is not None:
+                need.append(np.array([b * seq + last]))
+        rows = np.unique(np.concatenate(need))
+        plans = []
+        for b, (psc, prev_pos, last) in enumerate(raw):
+            prev_cols = np.where(prev_pos >= 0, np.searchsorted(rows, b * seq + prev_pos), -1)
+            last_col = None if last is None else int(np.searchsorted(rows, b * seq + last))
+            plans.append((np.searchsorted(rows, b * seq + psc), prev_cols, last_col))
+        return rows, plans
+
+    def _router_step(
+        self, step: _Step, valid: np.ndarray, scored: np.ndarray, seq: int
+    ) -> tuple[np.ndarray, list[list[list[int]]]]:
+        """Features F1/U de todas las posiciones puntuadas del paso, vectorizadas entre capas.
+
+        Devuelve la matriz `(m, columnas)` en el orden de `self._router_names` y los IDs de expertos
+        `[token][capa][k]`. Actualiza el uso acumulado y la última selección de cada fila.
+        """
+        width = len(self._router_names)
+        rows, plans = self._router_plan(valid, scored, seq)
+        if rows is not None and rows.size == 0:
+            return np.empty((0, width)), []
+        stacked = torch.stack([step.router[j] for j in range(len(self.blocks))])  # (L, n, N)
+        if rows is not None and rows.size < stacked.shape[1]:  # prefill: solo las filas necesarias
+            stacked = stacked[:, torch.from_numpy(rows).to(stacked.device)]
+        stats = self._route(stacked.cpu().numpy())  # única conversión a numpy del paso
+        all_idx = stats["idx"]  # (L, filas, k)
+
+        blocks: list[np.ndarray] = []
+        expert_ids: list[list[list[int]]] = []
+        for b, (cols, prev_cols, last_col) in enumerate(plans):
+            idx = all_idx[:, cols]  # (L, m, k)
+            m = idx.shape[1]
+            if m:
+                no_prev = prev_cols < 0
+                prev_idx = all_idx[:, np.maximum(prev_cols, 0)]
+                carried = self._prev_sel[b]
+                if carried is not None:
+                    prev_idx[:, no_prev] = carried[:, None, :]
+                    no_prev[:] = False
+                switch = fx.route_switch(prev_idx, idx)  # (L, m)
+                switch[:, no_prev] = np.nan
+                inc = fx.usage_counts(idx, self.n_experts, stats["w"][:, cols] if self._weighted else None)
+                # cumsum desde el acumulado previo: mismo orden de sumas que paso a paso (causal).
+                cum = np.concatenate([self._counts[b][:, None], inc], axis=1).cumsum(axis=1)[:, 1:]
+                self._counts[b] = cum[:, -1]
+                usage = fx.usage_stats(cum)
+                per_layer = [stats[name][:, cols] for name in F1_LAYER_FEATURES] if self._weighted else []
+                per_layer += [usage["u_gini"], usage["u_ihhi"], usage["u_ent"], switch]
+                values = np.array(per_layer)  # (bases, L, m)
+                aggs = fx.layer_aggregates(values, axis=1)  # cada una (bases, m)
+                agg_values = np.array([aggs[a] for a in AGGREGATES])  # (aggs, bases, m)
+                by_layer = values.transpose(2, 0, 1).reshape(m, -1)  # base mayor, capa menor
+                by_agg = agg_values.transpose(2, 1, 0).reshape(m, -1)  # base mayor, agregado menor
+                blocks.append(np.concatenate([by_layer, by_agg], axis=1))
+                expert_ids += idx.transpose(1, 0, 2).tolist()
+            if last_col is not None:
+                self._prev_sel[b] = all_idx[:, last_col]
+        return (np.concatenate(blocks, axis=0) if blocks else np.empty((0, width))), expert_ids

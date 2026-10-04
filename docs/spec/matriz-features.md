@@ -34,7 +34,8 @@ Reglas del contrato:
 - Toda feature es causal: el valor en t no cambia al agregar tokens posteriores (test).
 - Las capas densas y los expertos compartidos quedan fuera de F1 (DeepSeek, Qwen2-MoE).
 - Con MXFP4 o kernels fusionados, F2 se reporta como capacidad deshabilitada, sin fallar.
-- La reducción a escalares ocurre dentro del hook, con `detach()` bajo `inference_mode`.
+- El hook solo guarda los logits del router del paso (`detach()` bajo `inference_mode`). La reducción
+  a escalares ocurre en `end_step`, por paso, vectorizada entre capas. Nunca se acumulan logits entre pasos.
 
 ## 2. Producto
 

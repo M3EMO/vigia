@@ -30,7 +30,7 @@ import re
 import secrets
 import unicodedata
 import zlib
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any
@@ -895,11 +895,21 @@ def _label(route: Any) -> str:
     return f"{methods} {getattr(route, 'path', '?')}"
 
 
+def _walk_routes(routes: Iterable[Any]) -> Iterator[Any]:
+    """Aplana los routers incluidos (FastAPI >= 0.140 guarda `_IncludedRouter` perezosos en app.routes)."""
+    for route in routes:
+        inner = getattr(route, "original_router", None)
+        if inner is not None:
+            yield from _walk_routes(inner.routes)
+        else:
+            yield route
+
+
 def undeclared_routes(app: FastAPI, *, exempt_paths: Iterable[str] = ()) -> list[str]:
     """Rutas sin permiso declarado. Una ruta que no es de FastAPI (mount, docs) solo pasa si está exenta."""
     exempt = set(exempt_paths)
     out = []
-    for route in app.routes:
+    for route in _walk_routes(app.routes):
         if isinstance(route, APIRoute):
             if route_permission(route) is None:
                 out.append(_label(route))
@@ -911,7 +921,7 @@ def undeclared_routes(app: FastAPI, *, exempt_paths: Iterable[str] = ()) -> list
 def viewer_mutation_violations(app: FastAPI) -> list[str]:
     """Rutas que mutan y que un viewer podría usar (salvo acciones sobre su propia cuenta)."""
     out = []
-    for route in app.routes:
+    for route in _walk_routes(app.routes):
         if not isinstance(route, APIRoute) or not (route.methods & MUTATING_METHODS):
             continue
         spec = route_permission(route)

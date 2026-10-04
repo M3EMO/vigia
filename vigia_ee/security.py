@@ -246,7 +246,8 @@ class RequestContextMiddleware:
             if message["type"] == "http.response.start":
                 started = True
                 status = message["status"]
-                message["headers"] = [*message.get("headers", []), (b"x-request-id", rid.encode())]
+                kept = [(k, v) for k, v in message.get("headers", []) if k.lower() != b"x-request-id"]
+                message["headers"] = [*kept, (b"x-request-id", rid.encode())]
             await send(message)
 
         try:

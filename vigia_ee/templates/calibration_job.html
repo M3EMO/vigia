@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}Calibración en curso{% endblock %}
+{% block page_id %}calibration-job{% endblock %}
+{% block content %}
+<div class="vg-page-head">
+  <h1>Calibración {{ job.id[:12] }}</h1>
+  <a class="vg-btn vg-btn-ghost vg-btn-small" href="/calibration">Volver a calibración</a>
+</div>
+
+{% set running = job.state in ("queued", "running") %}
+<section class="vg-card" aria-labelledby="job-state-title" data-job-status="/calibration/jobs/{{ job.id }}/status" aria-busy="{{ 'true' if running else 'false' }}">
+  <h2 id="job-state-title">Estado</h2>
+  <p class="vg-status" aria-live="polite" data-job-label>
+    {{ job_labels.get(job.state, job.state) }}{% if running %}: el entrenamiento corre en segundo plano.{% endif %}
+  </p>
+  <div data-job-error>{% if job.error %}<div class="vg-alert vg-alert-error" role="alert"><p>{{ job.error }}</p></div>{% endif %}</div>
+  <p data-job-result>{% if job.result and job.result.detector_id %}<a class="vg-btn" href="/calibration/detectors/{{ job.result.detector_id }}">Ver el reporte del detector</a>{% endif %}</p>
+  {% if running %}<p><a class="vg-btn vg-btn-secondary vg-btn-small" href="/calibration/jobs/{{ job.id }}" data-job-refresh>Actualizar estado</a></p>{% endif %}
+  <dl class="vg-meta">
+    <dt>Creado</dt><dd>{{ job.created_at|dt }}</dd>
+    <dt>Última actualización</dt><dd>{{ job.updated_at|dt }}</dd>
+    <dt>Alphas</dt><dd>{% if job.alphas %}{% for a in job.alphas %}{{ a|num(2) }}{% if not loop.last %}; {% endif %}{% endfor %}{% else %}por defecto{% endif %}</dd>
+    <dt>Semilla</dt><dd>{{ job.seed if job.seed is not none else "s/d" }}</dd>
+  </dl>
+</section>
+{% endblock %}

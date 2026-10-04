@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% block title %}Auditoría{% endblock %}
+{% block page_id %}audit{% endblock %}
+{% block content %}
+<div class="vg-page-head">
+  <h1>Auditoría</h1>
+  <p class="vg-lead">Registro append-only con cadena de hashes · horarios en UTC−3</p>
+</div>
+
+<form method="get" action="/audit" class="vg-card vg-form-inline" aria-label="Rango de fechas">
+  <div class="vg-field"><label for="a-desde">Desde</label><input id="a-desde" name="desde" type="date" value="{{ desde }}"></div>
+  <div class="vg-field"><label for="a-hasta">Hasta</label><input id="a-hasta" name="hasta" type="date" value="{{ hasta }}"></div>
+  <div class="vg-actions">
+    <button type="submit" class="vg-btn">Filtrar</button>
+    <button type="submit" class="vg-btn vg-btn-secondary" name="verificar" value="1">Verificar la cadena</button>
+    <button type="submit" class="vg-btn vg-btn-ghost" formaction="/audit/export" name="formato" value="json">Exportar JSON</button>
+    <button type="submit" class="vg-btn vg-btn-ghost" formaction="/audit/export" name="formato" value="csv">Exportar CSV</button>
+  </div>
+</form>
+
+{% if errors %}<div class="vg-alert vg-alert-error" role="alert"><ul>{% for e in errors %}<li>{{ e }}</li>{% endfor %}</ul></div>{% endif %}
+
+{% if check %}
+{% if check.ok %}
+<div class="vg-alert vg-alert-ok" role="status"><p><strong>La cadena es íntegra.</strong> Se verificaron {{ check.checked|count }} eventos desde el inicio.</p></div>
+{% else %}
+<div class="vg-alert vg-alert-error" role="alert"><p><strong>La cadena está rota</strong> en el evento #{{ check.broken_at }} (tras {{ check.checked|count }} eventos válidos). Alguien alteró o borró registros: exportá el rango y escalalo.</p></div>
+{% endif %}
+{% endif %}
+
+{% if rows %}
+<p class="vg-hint">{{ total|count }} eventos en el rango{% if total > page_size %}; se muestran los {{ page_size }} más recientes (el export trae todos){% endif %}.</p>
+<div class="vg-table-wrap">
+  <table class="vg-table vg-table-cards">
+    <caption class="sr-only">Eventos de auditoría</caption>
+    <thead><tr><th scope="col">#</th><th scope="col">Fecha</th><th scope="col">Actor</th><th scope="col">Acción</th><th scope="col">Objeto</th><th scope="col">Detalle</th></tr></thead>
+    <tbody>
+      {% for r in rows %}
+      <tr>
+        <th scope="row" data-label="#">{{ r.seq }}</th>
+        <td data-label="Fecha">{{ r.ts|dt }}</td>
+        <td data-label="Actor">{% if r.actor_user_id %}{{ users.get(r.actor_user_id, "cuenta borrada") }}{% elif r.actor_key_id %}API key <code>{{ r.actor_key_id }}</code>{% else %}sistema{% endif %}</td>
+        <td data-label="Acción"><code>{{ r.action }}</code></td>
+        <td data-label="Objeto">{% if r.target %}<code>{{ r.target|clean }}</code>{% else %}s/d{% endif %}</td>
+        <td data-label="Detalle">{% if r.detail %}<code>{{ r.detail_json|clean }}</code>{% else %}s/d{% endif %}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+<div class="vg-card vg-empty"><p>No hay eventos en este rango.</p></div>
+{% endif %}
+{% endblock %}

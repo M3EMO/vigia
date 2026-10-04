@@ -1,0 +1,210 @@
+{% extends "base.html" %}
+{% from "_macros.html" import csrf, field_error, invalid, secret_box with context %}
+{% block title %}Configuración{% endblock %}
+{% block page_id %}settings{% endblock %}
+{% block content %}
+<div class="vg-page-head">
+  <h1>Configuración</h1>
+  <p class="vg-lead">Organización {{ org.get("name", "")|clean }}</p>
+</div>
+
+{{ secret_box(secret) }}
+{% if errors %}<div class="vg-alert vg-alert-error" role="alert"><p>No se pudo completar la acción. Revisá los campos marcados.</p></div>{% endif %}
+
+<section class="vg-card" id="org" aria-labelledby="org-title">
+  <h2 id="org-title">Datos y retención</h2>
+  {% if can("settings:write") %}
+  <form method="post" action="/settings/org" class="vg-form">
+    {{ csrf() }}
+    <fieldset>
+      <legend>Qué texto se guarda de cada generación</legend>
+      {% for mode in store_modes %}
+      <label class="vg-check"><input type="radio" name="store_text" value="{{ mode }}"{% if org.store_text == mode %} checked{% endif %} required> {{ store_labels[mode] }}</label>
+      {% endfor %}
+      {{ field_error(errors, "store_text") }}
+    </fieldset>
+    <div class="vg-field">
+      <label for="retention_days">Retención (días)</label>
+      <input id="retention_days" name="retention_days" type="number" min="1" max="3650" step="1" required value="{{ org.retention_days }}"{{ invalid(errors, "retention_days") }}>
+      {{ field_error(errors, "retention_days") }}
+      <p class="vg-hint">Las generaciones más viejas se purgan solas (Ley 25.326 art. 4).</p>
+    </div>
+    <label class="vg-check"><input type="checkbox" name="external_judge_allowed"{% if org.external_judge_allowed %} checked{% endif %}> Permitir un juez LLM externo para etiquetar calibraciones</label>
+    <p class="vg-hint">Enviar texto a una API fuera del país puede ser una transferencia internacional (Ley 25.326 art. 12). El cambio queda en auditoría.</p>
+    <div class="vg-actions"><button type="submit" class="vg-btn">Guardar</button></div>
+  </form>
+  {% else %}
+  <dl class="vg-meta">
+    <dt>Texto guardado</dt><dd>{{ store_labels.get(org.store_text, org.store_text) }}</dd>
+    <dt>Retención</dt><dd>{{ org.retention_days }} días</dd>
+    <dt>Juez externo</dt><dd>{{ "permitido" if org.external_judge_allowed else "no permitido" }}</dd>
+  </dl>
+  <p class="vg-hint">Solo un owner cambia estos datos.</p>
+  {% endif %}
+</section>
+
+{% if can("users:read") %}
+<section class="vg-card" id="users" aria-labelledby="users-title">
+  <h2 id="users-title">Usuarios</h2>
+  <div class="vg-table-wrap">
+    <table class="vg-table vg-table-cards">
+      <caption class="sr-only">Usuarios de la organización</caption>
+      <thead><tr><th scope="col">Email</th><th scope="col">Rol</th><th scope="col">Estado</th><th scope="col">Alta</th>{% if can("users:write") %}<th scope="col">Acciones</th>{% endif %}</tr></thead>
+      <tbody>
+        {% for u in users %}
+        <tr>
+          <th scope="row" data-label="Email">{{ u.email }}{% if u.id == principal.user_id %} (vos){% endif %}</th>
+          <td data-label="Rol">{{ role_labels.get(u.role, u.role) }}</td>
+          <td data-label="Estado">{% if u.disabled %}<span class="vg-badge vg-badge-danger">Deshabilitada</span>{% elif u.locked_until and u.locked_until > now_iso %}<span class="vg-badge vg-badge-warn">Bloqueada</span>{% else %}<span class="vg-badge vg-badge-ok">Activa</span>{% endif %}</td>
+          <td data-label="Alta">{{ u.created_at|dt }}</td>
+          {% if can("users:write") %}
+          <td data-label="Acciones">
+            {% if u.id != principal.user_id and (u.role != "owner" or principal.role == "owner") %}
+            <form method="post" action="/settings/users/{{ u.id }}/role">
+              {{ csrf() }}
+              <label class="sr-only" for="role-{{ u.id }}">Rol de {{ u.email }}</label>
+              <select id="role-{{ u.id }}" name="role">
+                {% for r in assignable %}<option value="{{ r }}"{% if r == u.role %} selected{% endif %}>{{ role_labels[r] }}</option>{% endfor %}
+              </select>
+              <button type="submit" class="vg-btn vg-btn-secondary vg-btn-small">Cambiar rol</button>
+            </form>
+            <form method="post" action="/settings/users/{{ u.id }}/disable">
+              {{ csrf() }}
+              <input type="hidden" name="disabled" value="{{ '0' if u.disabled else '1' }}">
+              <button type="submit" class="vg-btn {{ 'vg-btn-secondary' if u.disabled else 'vg-btn-danger' }} vg-btn-small">{{ "Habilitar" if u.disabled else "Deshabilitar" }}</button>
+            </form>
+            {% else %}<span class="vg-hint">Sin acciones</span>{% endif %}
+          </td>
+          {% endif %}
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% if can("users:write") %}
+  <h3>Invitar a una persona</h3>
+  <form method="post" action="/settings/users" class="vg-form-inline">
+    {{ csrf() }}
+    <div class="vg-field">
+      <label for="invite-email">Email</label>
+      <input id="invite-email" name="email" type="email" required maxlength="254" autocomplete="off"{{ invalid(errors, "invite_email") }}>
+      {{ field_error(errors, "invite_email") }}
+    </div>
+    <div class="vg-field">
+      <label for="invite-role">Rol</label>
+      <select id="invite-role" name="role"{{ invalid(errors, "invite_role") }}>
+        {% for r in assignable %}<option value="{{ r }}"{% if r == "reviewer" %} selected{% endif %}>{{ role_labels[r] }}</option>{% endfor %}
+      </select>
+      {{ field_error(errors, "invite_role") }}
+    </div>
+    <div class="vg-actions"><button type="submit" class="vg-btn">Crear cuenta con contraseña temporal</button></div>
+  </form>
+  {% endif %}
+</section>
+{% endif %}
+
+{% if can("keys:read") %}
+<section class="vg-card" id="keys" aria-labelledby="keys-title">
+  <h2 id="keys-title">API keys</h2>
+  {% if keys %}
+  <div class="vg-table-wrap">
+    <table class="vg-table vg-table-cards">
+      <caption class="sr-only">API keys de la organización</caption>
+      <thead><tr><th scope="col">Nombre</th><th scope="col">Id</th><th scope="col">Scopes</th><th scope="col">Último uso</th><th scope="col">Vence</th><th scope="col">Estado</th>{% if can("keys:write") %}<th scope="col">Acciones</th>{% endif %}</tr></thead>
+      <tbody>
+        {% for k in keys %}
+        {% set expired = k.expires_at and k.expires_at <= now_iso %}
+        <tr>
+          <th scope="row" data-label="Nombre">{{ k.name|clean }}</th>
+          <td data-label="Id"><code>{{ k.id }}</code></td>
+          <td data-label="Scopes">{{ k.scopes.replace(",", ", ") }}</td>
+          <td data-label="Último uso">{{ k.last_used_at|dt if k.last_used_at else "nunca" }}</td>
+          <td data-label="Vence">{{ k.expires_at|dt if k.expires_at else "no vence" }}</td>
+          <td data-label="Estado">{% if k.revoked_at %}<span class="vg-badge vg-badge-danger">Revocada</span>{% elif expired %}<span class="vg-badge vg-badge-warn">Vencida</span>{% else %}<span class="vg-badge vg-badge-ok">Activa</span>{% endif %}</td>
+          {% if can("keys:write") %}
+          <td data-label="Acciones">{% if not k.revoked_at %}<form method="post" action="/settings/keys/{{ k.id }}/revoke">{{ csrf() }}<button type="submit" class="vg-btn vg-btn-danger vg-btn-small">Revocar</button></form>{% endif %}</td>
+          {% endif %}
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p>No hay API keys.</p>
+  {% endif %}
+  {% if can("keys:write") %}
+  <h3>Crear una API key</h3>
+  <form method="post" action="/settings/keys" class="vg-form">
+    {{ csrf() }}
+    <div class="vg-field">
+      <label for="key-name">Nombre</label>
+      <input id="key-name" name="name" type="text" required maxlength="100" placeholder="backend de producción"{{ invalid(errors, "key_name") }}>
+      {{ field_error(errors, "key_name") }}
+    </div>
+    <fieldset{{ invalid(errors, "key_scopes") }}>
+      <legend>Scopes</legend>
+      <label class="vg-check"><input type="checkbox" name="scopes" value="ingest" checked> ingest: enviar generaciones para puntuar</label>
+      <label class="vg-check"><input type="checkbox" name="scopes" value="read"> read: leer trazas por id</label>
+      <label class="vg-check"><input type="checkbox" name="scopes" value="admin"> admin: todo lo anterior</label>
+      {{ field_error(errors, "key_scopes") }}
+    </fieldset>
+    <div class="vg-field">
+      <label for="key-exp">Vence en (días, opcional)</label>
+      <input id="key-exp" name="expires_days" type="number" min="1" max="3650" step="1"{{ invalid(errors, "key_expires") }}>
+      {{ field_error(errors, "key_expires") }}
+    </div>
+    <div class="vg-actions"><button type="submit" class="vg-btn">Crear API key</button></div>
+  </form>
+  {% endif %}
+</section>
+{% endif %}
+
+<section class="vg-card" id="webhooks" aria-labelledby="hooks-title">
+  <h2 id="hooks-title">Webhooks</h2>
+  <p class="vg-hint">Entregas firmadas con Standard Webhooks, con reintentos. Destinos internos (localhost, redes privadas, 169.254.169.254) bloqueados salvo allowlist del despliegue.</p>
+  {% if hooks %}
+  <div class="vg-table-wrap">
+    <table class="vg-table vg-table-cards">
+      <caption class="sr-only">Webhooks de la organización</caption>
+      <thead><tr><th scope="col">Destino</th><th scope="col">Eventos</th><th scope="col">Última entrega</th><th scope="col">Estado</th>{% if can("settings:write") %}<th scope="col">Acciones</th>{% endif %}</tr></thead>
+      <tbody>
+        {% for h in hooks %}
+        {% set last = deliveries.get(h.id) %}
+        <tr>
+          <th scope="row" data-label="Destino"><code>{{ h.url|clean }}</code></th>
+          <td data-label="Eventos">{{ h.events.replace(",", ", ") }}</td>
+          <td data-label="Última entrega">{% if last %}{{ job_labels.get(last.state, last.state) }} · {{ last.updated_at|dt }}{% if last.state == "failed" and last.error %} · {{ last.error|clean }}{% endif %}{% else %}sin entregas{% endif %}</td>
+          <td data-label="Estado">{% if h.disabled %}<span class="vg-badge vg-badge-danger">Deshabilitado</span>{% else %}<span class="vg-badge vg-badge-ok">Activo</span>{% endif %}</td>
+          {% if can("settings:write") %}
+          <td data-label="Acciones">
+            {% if not h.disabled %}<form method="post" action="/settings/webhooks/{{ h.id }}/test">{{ csrf() }}<button type="submit" class="vg-btn vg-btn-secondary vg-btn-small">Probar</button></form>{% endif %}
+            <form method="post" action="/settings/webhooks/{{ h.id }}/delete">{{ csrf() }}<button type="submit" class="vg-btn vg-btn-danger vg-btn-small">Borrar</button></form>
+          </td>
+          {% endif %}
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p>No hay webhooks.</p>
+  {% endif %}
+  {% if can("settings:write") %}
+  <h3>Crear un webhook</h3>
+  <form method="post" action="/settings/webhooks" class="vg-form">
+    {{ csrf() }}
+    <div class="vg-field">
+      <label for="hook-url">URL de destino</label>
+      <input id="hook-url" name="url" type="url" required maxlength="2048" placeholder="https://mi-sistema.example/hooks/vigia"{{ invalid(errors, "hook_url") }}>
+      {{ field_error(errors, "hook_url") }}
+    </div>
+    <fieldset{{ invalid(errors, "hook_events") }}>
+      <legend>Eventos</legend>
+      {% for e in event_types %}<label class="vg-check"><input type="checkbox" name="events" value="{{ e }}"{% if loop.first %} checked{% endif %}> <code>{{ e }}</code></label>{% endfor %}
+      {{ field_error(errors, "hook_events") }}
+    </fieldset>
+    <div class="vg-actions"><button type="submit" class="vg-btn">Crear webhook</button></div>
+  </form>
+  {% endif %}
+</section>
+{% endblock %}

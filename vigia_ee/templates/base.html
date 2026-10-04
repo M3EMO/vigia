@@ -1,0 +1,49 @@
+{% from "_macros.html" import csrf, logo with context %}
+<!doctype html>
+<html lang="es-AR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<meta name="referrer" content="no-referrer">
+<title>{% block title %}Panel{% endblock %} · Vigía</title>
+<link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/static/app.css">
+<link rel="stylesheet" href="/static/charts.css">
+<script src="/static/app.js" nonce="{{ nonce }}"></script>
+</head>
+<body data-page="{% block page_id %}generic{% endblock %}">
+<a class="vg-skip" href="#contenido">Saltar al contenido</a>
+<header class="vg-topbar">
+  {% if nav %}<button type="button" class="vg-btn vg-btn-ghost vg-btn-small vg-menu-toggle" aria-expanded="false" aria-controls="vg-nav" data-nav-toggle>Menú</button>{% endif %}
+  <a class="vg-brand" href="/">{{ logo() }}<span>Vigía</span></a>
+  <span class="vg-topbar-spacer"></span>
+  <button type="button" class="vg-btn vg-btn-ghost vg-btn-small" data-theme-toggle hidden>Tema: sistema</button>
+  {% if principal %}
+  <span class="vg-user">{{ email or "" }} · {{ ROLE_LABELS.get(principal.role, principal.role) }}</span>
+  <form method="post" action="/logout">{{ csrf() }}<button type="submit" class="vg-btn vg-btn-ghost vg-btn-small">Salir</button></form>
+  {% endif %}
+</header>
+<div class="vg-shell">
+  {% if nav %}
+  <nav class="vg-nav" id="vg-nav" aria-label="Secciones del panel">
+    {% for group in nav %}
+    <p class="vg-nav-group" id="nav-g{{ loop.index }}">{{ group.title }}</p>
+    <ul aria-labelledby="nav-g{{ loop.index }}">
+      {% for link in group.links %}
+      <li><a href="{{ link.href }}"{% if link.current %} aria-current="page"{% endif %}>{{ link.label }}</a></li>
+      {% endfor %}
+    </ul>
+    {% endfor %}
+  </nav>
+  {% endif %}
+  <main id="contenido" class="vg-main" tabindex="-1">
+    <div class="vg-main-inner">
+      {% if flash %}<div class="vg-alert vg-alert-ok" role="status"><p>{{ flash }}</p></div>{% endif %}
+      {% block content %}{% endblock %}
+    </div>
+  </main>
+</div>
+{% block dialogs %}{% endblock %}
+</body>
+</html>

@@ -1,0 +1,131 @@
+{% extends "base.html" %}
+{% from "_macros.html" import csrf, alert_error with context %}
+{% block title %}Calibración{% endblock %}
+{% block page_id %}calibration{% endblock %}
+{% block content %}
+<div class="vg-page-head">
+  <h1>Calibración</h1>
+  <p class="vg-lead">Entrená un detector con datos propios, revisá su reporte y activalo.</p>
+</div>
+
+{{ alert_error(error) }}
+
+{% if not active_id %}
+<div class="vg-alert vg-alert-warn" role="status"><p><strong>No hay un detector activo.</strong> Hasta activar uno, los puntajes salen como null y el panel no resalta.</p></div>
+{% endif %}
+
+{% if can("calibration:write") %}
+<div class="vg-grid-2">
+  <section class="vg-card" aria-labelledby="up-title">
+    <h2 id="up-title">1. Subir un dataset</h2>
+    <p class="vg-hint">JSONL, una línea por item, hasta {{ max_mb|num(0) }} MB y 5.000 items. Cada item lleva <code>id</code>, <code>question</code> o <code>messages</code>, y uno de: <code>answers</code> (gold: Vigía genera y etiqueta), <code>response</code> + <code>label</code> (0 correcta, 1 errónea) o <code>response</code> + <code>hallucinated_spans</code>.</p>
+    <form method="post" action="/calibration/datasets" enctype="multipart/form-data" class="vg-form">
+      {{ csrf() }}
+      <div class="vg-field">
+        <label for="file">Archivo JSONL</label>
+        <input id="file" name="file" type="file" accept=".jsonl,.json,.txt,application/jsonl,application/x-ndjson" required{% if error_field == "file" %} aria-invalid="true"{% endif %}>
+      </div>
+      <div class="vg-field">
+        <label for="ds-name">Nombre (opcional)</label>
+        <input id="ds-name" name="name" type="text" maxlength="200">
+      </div>
+      <div class="vg-actions"><button type="submit" class="vg-btn">Validar y subir</button></div>
+    </form>
+  </section>
+
+  <section class="vg-card" aria-labelledby="start-title">
+    <h2 id="start-title">2. Lanzar una calibración</h2>
+    {% if datasets %}
+    <form method="post" action="/calibration/start" class="vg-form">
+      {{ csrf() }}
+      <div class="vg-field">
+        <label for="dataset_id">Dataset</label>
+        <select id="dataset_id" name="dataset_id" required>
+          {% for d in datasets %}<option value="{{ d.id }}">{{ d.name|clean }} · {{ d.n_items|count }} items · {{ d.created_at|dt }}</option>{% endfor %}
+        </select>
+      </div>
+      <div class="vg-field">
+        <label for="alphas">Alphas (opcional)</label>
+        <input id="alphas" name="alphas" type="text" maxlength="200" placeholder="0,05; 0,1; 0,2; 0,3" aria-describedby="alphas-hint"{% if error_field == "alphas" %} aria-invalid="true"{% endif %}>
+        <p class="vg-hint" id="alphas-hint">FNR objetivo por token para los umbrales CRC, separados por punto y coma. Vacío usa 0,05; 0,1; 0,2; 0,3.</p>
+      </div>
+      <div class="vg-field">
+        <label for="seed">Semilla</label>
+        <input id="seed" name="seed" type="number" min="0" max="2147483647" step="1" value="0"{% if error_field == "seed" %} aria-invalid="true"{% endif %}>
+      </div>
+      <div class="vg-actions"><button type="submit" class="vg-btn">Calibrar</button></div>
+    </form>
+    {% else %}
+    <p>Primero subí un dataset{% if can("review:read") %} o creá uno <a href="/review">desde la cola de revisión</a>{% endif %}.</p>
+    {% endif %}
+  </section>
+</div>
+{% endif %}
+
+<section aria-labelledby="det-title">
+  <h2 id="det-title">Detectores</h2>
+  {% if detectors %}
+  <div class="vg-table-wrap">
+    <table class="vg-table vg-table-cards">
+      <caption class="sr-only">Detectores calibrados del tenant</caption>
+      <thead><tr><th scope="col">Detector</th><th scope="col">Creado</th><th scope="col" class="vg-num">AUROC por token</th><th scope="col">Estado</th></tr></thead>
+      <tbody>
+        {% for d in detectors %}
+        <tr>
+          <th scope="row" data-label="Detector"><a href="/calibration/detectors/{{ d.id }}"><code>{{ d.id }}</code></a></th>
+          <td data-label="Creado">{{ d.created_at|dt }}</td>
+          <td data-label="AUROC" class="vg-num">{{ d.auroc|num(3) }}</td>
+          <td data-label="Estado">{% if d.status == "active" %}<span class="vg-badge vg-badge-ok">Activo</span>{% elif d.status == "candidate" %}<span class="vg-badge vg-badge-info">Candidato</span>{% else %}<span class="vg-badge">Retirado</span>{% endif %}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="vg-card vg-empty"><p>Todavía no hay detectores.</p><p>Lanzá una calibración: el detector queda como candidato con su reporte.</p></div>
+  {% endif %}
+</section>
+
+<section aria-labelledby="jobs-title">
+  <h2 id="jobs-title">Calibraciones recientes</h2>
+  {% if jobs %}
+  <div class="vg-table-wrap">
+    <table class="vg-table vg-table-cards">
+      <caption class="sr-only">Jobs de calibración</caption>
+      <thead><tr><th scope="col">Job</th><th scope="col">Creado</th><th scope="col">Estado</th><th scope="col">Resultado</th></tr></thead>
+      <tbody>
+        {% for j in jobs %}
+        <tr>
+          <th scope="row" data-label="Job"><a href="/calibration/jobs/{{ j.id }}">{{ j.id[:12] }}</a></th>
+          <td data-label="Creado">{{ j.created_at|dt }}</td>
+          <td data-label="Estado"><span class="vg-badge{% if j.state == 'done' %} vg-badge-ok{% elif j.state == 'failed' %} vg-badge-danger{% else %} vg-badge-info{% endif %}">{{ job_labels.get(j.state, j.state) }}</span></td>
+          <td data-label="Resultado">{% if j.result and j.result.detector_id %}<a href="/calibration/detectors/{{ j.result.detector_id }}">Detector {{ j.result.detector_id }}</a>{% elif j.error %}{{ j.error }}{% else %}s/d{% endif %}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="vg-hint">Sin calibraciones todavía.</p>
+  {% endif %}
+</section>
+
+<section aria-labelledby="ds-list-title">
+  <h2 id="ds-list-title">Datasets</h2>
+  {% if datasets %}
+  <div class="vg-table-wrap">
+    <table class="vg-table vg-table-cards">
+      <caption class="sr-only">Datasets de calibración</caption>
+      <thead><tr><th scope="col">Nombre</th><th scope="col">Subido</th><th scope="col" class="vg-num">Items</th><th scope="col">SHA-256</th></tr></thead>
+      <tbody>
+        {% for d in datasets %}
+        <tr><th scope="row" data-label="Nombre">{{ d.name|clean }}</th><td data-label="Subido">{{ d.created_at|dt }}</td><td data-label="Items" class="vg-num">{{ d.n_items|count }}</td><td data-label="SHA-256"><code>{{ d.sha256[:16] }}</code></td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="vg-hint">Sin datasets todavía.</p>
+  {% endif %}
+</section>
+{% endblock %}

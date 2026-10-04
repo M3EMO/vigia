@@ -1,0 +1,54 @@
+{# Macros compartidas. Todo texto pasa por autoescape; nada se marca como seguro si viene del modelo o del usuario. #}
+
+{% macro csrf() -%}
+<input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+{%- endmacro %}
+
+{% macro logo() -%}
+<svg class="vg-brand-mark" viewBox="0 0 32 32" aria-hidden="true" focusable="false"><path class="vg-eye" d="M2 16 C8 6 24 6 30 16 C24 26 8 26 2 16 Z"/><circle class="vg-pupil" cx="16" cy="16" r="5"/></svg>
+{%- endmacro %}
+
+{% macro field_error(errors, name) -%}
+{% if errors.get(name) %}<p class="vg-field-error" id="err-{{ name }}">{{ errors[name] }}</p>{% endif %}
+{%- endmacro %}
+
+{% macro invalid(errors, name) -%}
+{% if errors.get(name) %} aria-invalid="true" aria-describedby="err-{{ name }}"{% endif %}
+{%- endmacro %}
+
+{% macro alert_error(message) -%}
+{% if message %}<div class="vg-alert vg-alert-error" role="alert"><p><strong>No se pudo completar la acción.</strong> {{ message }}</p></div>{% endif %}
+{%- endmacro %}
+
+{% macro secret_box(secret) -%}
+{% if secret %}
+<section class="vg-alert vg-alert-warn" role="status" aria-labelledby="secret-title">
+  <h2 id="secret-title">{{ secret.title }}</h2>
+  <p>{{ secret.label }}. <strong>Se muestra una sola vez.</strong> {{ secret.note }}</p>
+  <div class="vg-secret">
+    <code id="secret-value">{{ secret.value }}</code>
+    <button type="button" class="vg-btn vg-btn-secondary vg-btn-small" data-copy="secret-value" hidden>Copiar</button>
+    <span class="vg-hint" data-copy-status aria-live="polite"></span>
+  </div>
+</section>
+{% endif %}
+{%- endmacro %}
+
+{% macro action_badge(action) -%}
+{% set cls = {"pass": "vg-badge", "annotate": "vg-badge vg-badge-info", "human_review": "vg-badge vg-badge-warn", "rag_retry": "vg-badge vg-badge-warn", "abstain": "vg-badge vg-badge-danger"} %}
+<span class="{{ cls.get(action, 'vg-badge') }}">{{ ACTION_LABELS.get(action, action) }}</span>
+{%- endmacro %}
+
+{% macro legend() -%}
+<ul class="vg-legend" aria-label="Niveles de duda">
+  <li><mark class="vg-mark vg-lvl-low">bajo</mark> P(error) menor que 0,5, subrayado punteado</li>
+  <li><mark class="vg-mark vg-lvl-medium">medio</mark> de 0,5 a 0,8, subrayado ondulado</li>
+  <li><mark class="vg-mark vg-lvl-high">alto</mark> 0,8 o más, subrayado doble</li>
+</ul>
+{%- endmacro %}
+
+{# Texto con fragmentos marcados: fondo + subrayado por nivel + descripción para lector de pantalla. #}
+{% macro marked_text(segments, prefix="frag") -%}
+<div class="vg-response" data-marked-text>{% for seg in segments %}{% if seg.mark %}<mark class="vg-mark vg-lvl-{{ seg.mark.level }}" id="{{ prefix }}-{{ seg.mark.n }}" tabindex="0" data-fragment="{{ seg.mark.n }}" aria-describedby="{{ prefix }}-{{ seg.mark.n }}-desc">{{ seg.text }}</mark>{% else %}{{ seg.text }}{% endif %}{% endfor %}</div>
+<div hidden>{% for seg in segments if seg.mark %}<span id="{{ prefix }}-{{ seg.mark.n }}-desc">Fragmento dudoso {{ seg.mark.n }}, nivel {{ seg.mark.level_label }}, P(error) {{ seg.mark.score|num(2) }}.</span>{% endfor %}</div>
+{%- endmacro %}

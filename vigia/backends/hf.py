@@ -350,6 +350,7 @@ class HFBackend:
         seed: int | None = None,
         stop: list[str] | None = None,
         tiers: tuple[Tier, ...] = DEFAULT_TIERS,
+        ignore_eos: bool = False,
     ) -> GenerationStream:
         if not isinstance(max_tokens, int) or max_tokens < 1:
             raise ValueError("max_tokens debe ser un entero >= 1")
@@ -365,7 +366,7 @@ class HFBackend:
         out = GenerationStream()
         out.prompt_tokens = len(prompt_ids)
         out._gen = self._run(
-            out, prompt_ids, max_tokens, float(temperature), float(top_p), seed, stop, wanted
+            out, prompt_ids, max_tokens, float(temperature), float(top_p), seed, stop, wanted, ignore_eos
         )
         return out
 
@@ -392,6 +393,7 @@ class HFBackend:
         seed: int | None,
         stop: list[str],
         tiers: tuple[Tier, ...],
+        ignore_eos: bool = False,
     ) -> Iterator[TokenEvent]:
         generator = None
         if seed is not None:
@@ -416,7 +418,7 @@ class HFBackend:
                 logits = res.logits[0, -1]
                 token = _sample(logits, temperature, top_p, generator)
                 signals = ex.end_step(res.logits[:, -1:], torch.tensor([[token]]))[0][0]
-                if token in self._eos_ids:
+                if token in self._eos_ids and not ignore_eos:
                     finish = "stop"
                     break
                 logprob = float(torch.log_softmax(logits.float(), dim=-1)[token])

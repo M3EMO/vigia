@@ -1,0 +1,87 @@
+{% extends "base.html" %}
+{% from "_macros.html" import csrf, alert_error with context %}
+{% block title %}Detector {{ detector.id }}{% endblock %}
+{% block page_id %}detector{% endblock %}
+{% block content %}
+<div class="vg-page-head">
+  <h1>Detector <code>{{ detector.id }}</code></h1>
+  <div class="vg-actions">
+    {% if detector.status == "active" %}<span class="vg-badge vg-badge-ok">Activo</span>{% elif detector.status == "candidate" %}<span class="vg-badge vg-badge-info">Candidato</span>{% else %}<span class="vg-badge">Retirado</span>{% endif %}
+    <a class="vg-btn vg-btn-ghost vg-btn-small" href="/calibration">Volver a calibración</a>
+  </div>
+</div>
+
+{{ alert_error(error) }}
+
+<div class="vg-grid-2">
+  <section class="vg-card" aria-labelledby="det-meta">
+    <h2 id="det-meta">Datos</h2>
+    <dl class="vg-meta">
+      <dt>Creado</dt><dd>{{ detector.created_at|dt }}</dd>
+      <dt>Modelo</dt><dd>{{ (model.get("model_id") or "s/d")|clean }} ({{ model.get("model_type") or "s/d" }}, cuantización {{ model.get("quantization") or "s/d" }})</dd>
+      <dt>Etiquetas</dt><dd>{{ training.get("label_source") or "s/d" }}</dd>
+      <dt>Respuestas</dt><dd>{{ training.get("n_responses")|count }}</dd>
+      <dt>Tokens</dt><dd>{{ training.get("n_tokens")|count }}</dd>
+      {% if summary %}<dt>Dataset</dt><dd>{{ (summary.get("dataset_name") or "")|clean }} · {{ summary.get("n_items")|count }} items</dd>{% endif %}
+      <dt>alpha / τ del reporte</dt><dd>{{ report.get("alpha")|num(2) }} / {{ report.get("tau")|num(3) }}</dd>
+    </dl>
+  </section>
+
+  {% if can("calibration:write") and detector.status != "active" %}
+  <section class="vg-card" aria-labelledby="act-title">
+    <h2 id="act-title">Activar</h2>
+    <p>El detector activo puntúa todos los requests siguientes del tenant. El anterior queda retirado y se puede volver a activar.</p>
+    <form method="post" action="/calibration/detectors/{{ detector.id }}/activate" class="vg-form">
+      {{ csrf() }}
+      <label class="vg-check"><input type="checkbox" name="confirm" value="yes" required> Revisé el reporte y quiero activar este detector</label>
+      <div class="vg-actions"><button type="submit" class="vg-btn">Activar detector</button></div>
+    </form>
+  </section>
+  {% endif %}
+</div>
+
+{% if metrics %}
+<section aria-labelledby="met-title">
+  <h2 id="met-title">Métricas en test</h2>
+  <div class="vg-table-wrap">
+    <table class="vg-table">
+      <caption class="sr-only">Métricas por token con intervalo de confianza por bootstrap de pregunta</caption>
+      <thead><tr><th scope="col">Métrica</th><th scope="col" class="vg-num">Valor</th><th scope="col" class="vg-num">IC 95 %</th></tr></thead>
+      <tbody>
+        {% for m in metrics %}
+        <tr><th scope="row">{{ m.label }}</th>
+          <td class="vg-num">{{ m.value|pct if m.kind == "pct" else m.value|num(3) }}</td>
+          <td class="vg-num">{% if m.ci %}{{ m.ci[0]|pct if m.kind == "pct" else m.ci[0]|num(3) }} – {{ m.ci[1]|pct if m.kind == "pct" else m.ci[1]|num(3) }}{% else %}s/d{% endif %}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endif %}
+
+{% if thresholds %}
+<section aria-labelledby="th-title">
+  <h2 id="th-title">Umbrales por alpha (CRC)</h2>
+  <div class="vg-table-wrap">
+    <table class="vg-table">
+      <caption class="sr-only">Umbral por FNR objetivo</caption>
+      <thead><tr><th scope="col">alpha</th><th scope="col" class="vg-num">τ</th><th scope="col" class="vg-num">Tasa de marcado esperada</th><th scope="col" class="vg-num">Precisión esperada</th></tr></thead>
+      <tbody>
+        {% for t in thresholds %}
+        <tr><th scope="row">{{ t.alpha|num(2) }}</th><td class="vg-num">{{ t.tau|num(3) }}</td><td class="vg-num">{{ t.expected_flag_rate|pct }}</td><td class="vg-num">{{ t.expected_precision|num(3) }}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endif %}
+
+<section aria-labelledby="fig-title">
+  <h2 id="fig-title">Gráficos del reporte</h2>
+  {% if figures %}
+  <div class="vg-grid-2">{% for f in figures %}{{ f }}{% endfor %}</div>
+  {% else %}
+  <div class="vg-card vg-empty"><p>Este detector no tiene reporte de evaluación.</p></div>
+  {% endif %}
+</section>
+{% endblock %}
