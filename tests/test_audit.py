@@ -188,7 +188,7 @@ def test_migration_backfills_org_seq_and_keeps_audit_append_only(tmp_path, monke
     old.close()
     monkeypatch.undo()
     new = Database(path)
-    assert new.schema_version() == 2
+    assert new.schema_version() == len(db_module.MIGRATIONS)
     assert [r["seq"] for r in audit.export_range(new, a)] == [1, 2, 3]
     assert [r["seq"] for r in audit.export_range(new, b)] == [1, 2, 3]
     assert audit.verify_chain(new, a).ok and audit.verify_chain(new, b).ok

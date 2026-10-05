@@ -413,3 +413,62 @@ def test_api_key_rows_hide_hmac_and_revoke_once(two_orgs):
     assert a.revoke_api_key("0123456789abcdef")
     assert not a.revoke_api_key("0123456789abcdef")
     assert dbm.lookup_api_key(a.db, "0123456789abcdef")["hmac"] == "ff"
+
+
+# --- migración 3: status y rag_status de las trazas ----------------------------------------------
+
+
+@pytest.mark.parametrize("old_version", [1, 2])
+def test_migration_3_adds_trace_status_to_existing_bases(tmp_path, monkeypatch, old_version):
+    """Una base v1 o v2 con trazas migra sin perder datos: las trazas viejas quedan con status 'ok'."""
+    path = tmp_path / f"v{old_version}.db"
+    monkeypatch.setattr(dbm, "MIGRATIONS", MIGRATIONS[:old_version])
+    old = Database(path)
+    assert old.schema_version() == old_version
+    org = create_org(old, "Vieja", store_text="full")
+    old.execute(
+        "INSERT INTO traces (id, org_id, created_at, model_id, text_sha256, n_tokens, action) "
+        "VALUES ('trazavieja01', ?, '2026-10-01T00:00:00.000000Z', 'tiny', 'x', 0, 'pass')",
+        (org,),
+    )
+    old.close()
+    monkeypatch.undo()
+    new = Database(path)
+    assert new.schema_version() == len(MIGRATIONS)
+    repo = TenantScopedRepository(new, org)
+    legacy = repo.get_trace("trazavieja01")
+    assert legacy["status"] == "ok" and legacy["rag_status"] is None
+    trace_id = _trace(repo, status="truncated_before_final", rag_status="retried")
+    stored = repo.get_trace(trace_id)
+    assert (stored["status"], stored["rag_status"]) == ("truncated_before_final", "retried")
+    exported = {t["id"]: t for t in repo.export_all()["traces"]}
+    assert exported[trace_id]["rag_status"] == "retried" and exported["trazavieja01"]["status"] == "ok"
+    new.close()
+
+
+def test_insert_trace_defaults_status_ok_and_rag_status_null(two_orgs):
+    a, _ = two_orgs
+    stored = a.get_trace(_trace(a))
+    assert stored["status"] == "ok" and stored["rag_status"] is None
+
+
+def test_database_closes_the_connection_when_opening_fails(tmp_path, monkeypatch):
+    """Regresión: con un archivo que no es SQLite, Database.__init__ dejaba la conexión abierta hasta el
+    GC (en Windows retiene el archivo)."""
+    import sqlite3
+
+    closed: list[bool] = []
+
+    class Tracking(sqlite3.Connection):
+        def close(self) -> None:
+            closed.append(True)
+            super().close()
+
+    real_connect = sqlite3.connect
+    monkeypatch.setattr(dbm.sqlite3, "connect", lambda *a, **k: real_connect(*a, factory=Tracking, **k))
+    bad = tmp_path / "no-es-sqlite.db"
+    bad.write_bytes(b"esto no es una base SQLite" * 100)
+    with pytest.raises(sqlite3.DatabaseError):
+        Database(bad)
+    assert closed == [True]
+    bad.unlink()  # el archivo quedó libre

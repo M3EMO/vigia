@@ -40,6 +40,7 @@ from markupsafe import Markup
 from starlette.types import Receive, Scope, Send
 
 from vigia import charts
+from vigia.api import GenerationBusy, generation_gate
 from vigia.contracts import ScoredToken
 from vigia.spans import build_spans
 from vigia_ee import audit, pii, retention
@@ -56,7 +57,14 @@ from vigia_ee.auth import (
     verify_password,
 )
 from vigia_ee.db import TenantScopedRepository, lookup_user_by_email, parse_iso, utcnow
-from vigia_ee.security import SESSION_COOKIE, RateLimitExceeded, check_fetch_site, enforce_rate_limit
+from vigia_ee.runtime import DRIFT_TRACES
+from vigia_ee.security import (
+    DEV_SESSION_COOKIE,
+    SESSION_COOKIE,
+    RateLimitExceeded,
+    check_fetch_site,
+    enforce_rate_limit,
+)
 
 PANEL_TZ = timezone(timedelta(hours=-3), "UTC-3")
 TEMPLATES_DIR = Path(__file__).with_name("templates")
@@ -484,7 +492,7 @@ def set_cookie(response: Response, raw_id: str, *, secure: bool) -> None:
         set_session_cookie(response, raw_id, max_age=SESSION_MAX_AGE)
     else:  # solo desarrollo local sin TLS (Settings.secure_cookies = False)
         response.set_cookie(
-            SESSION_COOKIE,
+            DEV_SESSION_COOKIE,
             raw_id,
             max_age=int(SESSION_MAX_AGE.total_seconds()),
             path="/",
@@ -494,7 +502,8 @@ def set_cookie(response: Response, raw_id: str, *, secure: bool) -> None:
 
 
 def clear_cookie(response: Response, *, secure: bool) -> None:
-    response.delete_cookie(SESSION_COOKIE, path="/", secure=secure, httponly=True, samesite="strict")
+    name = SESSION_COOKIE if secure else DEV_SESSION_COOKIE
+    response.delete_cookie(name, path="/", secure=secure, httponly=True, samesite="strict")
 
 
 def safe_next(value: str | None) -> str:
@@ -883,6 +892,38 @@ def playground_quota_wait(runtime: Any, principal: Principal) -> int | None:
     return None
 
 
+DRIFT_LABELS = {
+    "p_error": "P(error) por token",
+    "flag": "Tasa de tokens marcados",
+    "agg_mean:r_ent_n": "Entropía del router (media por capa)",
+    "out_entropy": "Entropía de salida",
+}
+DRIFT_LEVELS = {
+    "ok": ("Estable", "vg-badge-ok"),
+    "warn": ("Atención", "vg-badge-warn"),
+    "alert": ("Alerta: recalibrá", "vg-badge-danger"),
+}
+
+
+def drift_rows(drift: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """Filas de la tabla de drift en el orden de `DRIFT_LABELS`, con el estado en texto."""
+    rows = []
+    for name, label in DRIFT_LABELS.items():
+        entry = (drift.get("features") or {}).get(name)
+        if entry is None:
+            continue
+        text, badge = DRIFT_LEVELS.get(entry["level"], (entry["level"], ""))
+        rows.append({"label": label, "psi": entry["psi"], "n": entry["n"], "state": text, "badge": badge})
+    return rows
+
+
+BUSY_MESSAGE = "El modelo está ocupado con otras generaciones. Reintentá en unos segundos."
+
+
+def busy_retry_after(gate: Any) -> int:
+    return max(1, min(60, int(getattr(gate, "waiting", 0)) + 1))
+
+
 def quota_message(retry_after: int) -> str:
     return (
         "Tu organización alcanzó el límite de generaciones por minuto. "
@@ -933,18 +974,25 @@ class ClosingStreamingResponse(StreamingResponse):
     normal, `close()` no hace nada.
     """
 
-    def __init__(self, content: Iterator[str], **kwargs: Any) -> None:
+    def __init__(
+        self, content: Iterator[str], *, on_close: Callable[[], None] | None = None, **kwargs: Any
+    ) -> None:
         super().__init__(content, **kwargs)
         self._sync_iterator = content
+        self._on_close = on_close
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         try:
             await super().__call__(scope, receive, send)
         finally:
-            close = getattr(self._sync_iterator, "close", None)
-            if callable(close):
-                with anyio.CancelScope(shield=True):
-                    await anyio.to_thread.run_sync(close)
+            try:
+                close = getattr(self._sync_iterator, "close", None)
+                if callable(close):
+                    with anyio.CancelScope(shield=True):
+                        await anyio.to_thread.run_sync(close)
+            finally:
+                if self._on_close is not None:
+                    self._on_close()
 
 
 # Dependencias por permiso (a nivel de módulo: FastAPI resuelve las anotaciones por nombre).
@@ -1012,7 +1060,7 @@ def create_panel_router(runtime: Any) -> APIRouter:
                 email,
                 password,
                 ip=ip,
-                previous_session_id=request.cookies.get(SESSION_COOKIE),
+                previous_session_id=request.cookies.get(runtime.auth.cookie_name),
             )
         except LoginFailed as exc:
             return render(request, "login.html", status=401, next=target, error=str(exc), email_value=email)
@@ -1035,7 +1083,7 @@ def create_panel_router(runtime: Any) -> APIRouter:
     def logout_submit(request: Request, p: OptionalSelfP) -> Response:
         # Idempotente: con la sesión vencida no hay nada que validar; igual se borra la cookie.
         if p is not None:
-            logout(runtime.auth, request.cookies.get(SESSION_COOKIE))
+            logout(runtime.auth, request.cookies.get(runtime.auth.cookie_name))
         response = redirect("/login", "logged_out")
         clear_cookie(response, secure=secure)
         return response
@@ -1276,7 +1324,28 @@ def create_panel_router(runtime: Any) -> APIRouter:
             )
             resp.headers["Retry-After"] = str(retry_after)
             return resp
-        out = await run_in_threadpool(run_playground, runtime, p, inp)
+        # El mismo cupo de generación que la API: la espera ocurre en el event loop y ningún hilo del
+        # threadpool queda bloqueado en el lock del backend.
+        gate = generation_gate(runtime.backend)
+        try:
+            await gate.acquire()
+        except GenerationBusy:
+            resp = render(
+                request,
+                "playground.html",
+                status=503,
+                values=values,
+                errors={},
+                result=None,
+                stream_error=BUSY_MESSAGE,
+                settings=settings,
+            )
+            resp.headers["Retry-After"] = str(busy_retry_after(gate))
+            return resp
+        try:
+            out = await run_in_threadpool(run_playground, runtime, p, inp)
+        finally:
+            gate.release()
         result = None
         if out["done"]:
             done = out["done"]
@@ -1319,11 +1388,27 @@ def create_panel_router(runtime: Any) -> APIRouter:
                 status_code=429,
                 headers={"Retry-After": str(retry_after)},
             )
-        return ClosingStreamingResponse(
-            sse_events(runtime, p, inp),
-            media_type="text/event-stream",
-            headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
-        )
+        gate = generation_gate(runtime.backend)
+        try:
+            await gate.acquire()
+        except GenerationBusy:
+            retry = busy_retry_after(gate)
+            return JSONResponse(
+                {"error": "server_overloaded", "message": BUSY_MESSAGE, "retry_after": retry},
+                status_code=503,
+                headers={"Retry-After": str(retry)},
+            )
+        try:
+            events = sse_events(runtime, p, inp)
+            return ClosingStreamingResponse(
+                events,
+                on_close=gate.release,  # el cupo se devuelve al terminar o al cortar el cliente
+                media_type="text/event-stream",
+                headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
+            )
+        except BaseException:
+            gate.release()
+            raise
 
     # -- modelo y rendimiento --
 
@@ -1367,6 +1452,7 @@ def create_panel_router(runtime: Any) -> APIRouter:
             for r in rows
             if _finite(r["latency_ms"]) and r["latency_ms"] > 0 and r["n_tokens"]
         ]
+        drift = runtime.drift_for(p.org_id)
         return render(
             request,
             "performance.html",
@@ -1375,6 +1461,9 @@ def create_panel_router(runtime: Any) -> APIRouter:
             n=n_measured,
             tps_p50=percentile(tps, 0.5),
             days=PERF_DAYS,
+            drift=drift,
+            drift_rows=drift_rows(drift),
+            drift_max=DRIFT_TRACES,
         )
 
     panel_admin.register(router, runtime)

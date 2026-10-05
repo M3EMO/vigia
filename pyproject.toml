@@ -8,8 +8,11 @@ dependencies = ["numpy>=1.26"]
 
 [project.optional-dependencies]
 hf = ["torch>=2.4", "transformers>=5.0", "safetensors", "accelerate"]
-serve = ["fastapi>=0.110", "uvicorn>=0.29", "httpx>=0.27"]
-ee = ["jinja2>=3.1", "python-multipart>=0.0.9"]
+# httpx/httpcore acotados: vigia_ee.webhooks envuelve el backend de red privado de httpcore 1.x para
+# imponer un plazo total por entrega; si cambia, make_delivery_handler falla al arrancar (nunca entrega
+# sin plazo).
+serve = ["fastapi>=0.110", "uvicorn>=0.29", "httpx>=0.27,<0.29"]
+ee = ["jinja2>=3.1", "python-multipart>=0.0.9", "httpcore>=1.0,<2"]
 dev = ["pytest>=8", "ruff", "scikit-learn>=1.4", "playwright>=1.45", "openai>=1.40", "axe-playwright-python>=0.1.4"]
 
 [project.scripts]
@@ -18,6 +21,10 @@ vigia-platform = "vigia_ee.app:main"
 
 [tool.setuptools.packages.find]
 include = ["vigia*"]
+
+# Sin esto, un `pip install .` no editable deja afuera el esquema, las plantillas y los estáticos.
+[tool.setuptools.package-data]
+vigia_ee = ["schema.sql", "templates/*.html", "templates/**/*.html", "static/*", "LICENSE"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

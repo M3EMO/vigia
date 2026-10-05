@@ -275,3 +275,14 @@ def test_render_does_not_block_on_a_hung_depth_source(monkeypatch):
     deadline = time.monotonic() + 5
     while value_of(parse(m.render()), "vigia_jobs_queue_depth") != "4":
         assert time.monotonic() < deadline  # al soltar la base, los gauges vuelven a refrescarse
+
+
+def test_drift_gauge_has_bounded_feature_labels():
+    """vigia_drift_psi{feature}: solo los nombres de vigia.drift.DRIFT_FEATURES, valores finitos >= 0."""
+    source = {"p_error": 0.31, "org_123": 9.0, "flag": float("nan"), "out_entropy": -1}
+    text = Metrics(version="t", drift=lambda: source).render()
+    assert 'vigia_drift_psi{feature="p_error"} 0.31' in text
+    assert "org_123" not in text and 'feature="flag"' not in text and 'feature="out_entropy"' not in text
+    m = Metrics(version="t")
+    m.set_drift({"agg_mean:r_ent_n": 0.05})
+    assert 'vigia_drift_psi{feature="agg_mean:r_ent_n"} 0.05' in m.render()

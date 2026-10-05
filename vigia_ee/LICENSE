@@ -1,0 +1,29 @@
+Licencia comercial de Vigía Platform (vigia_ee)
+
+Copyright (c) 2026 los titulares de Vigía. Todos los derechos reservados.
+
+Este aviso cubre todo el contenido del directorio `vigia_ee/` y sus subdirectorios (código,
+plantillas, estáticos y esquema de datos). El resto del repositorio, salvo indicación expresa,
+se distribuye bajo la Apache License 2.0 (ver el archivo LICENSE en la raíz).
+
+1. El software de este directorio no es software libre ni de código abierto. Su publicación junto
+   al núcleo abierto no otorga ninguna licencia.
+
+2. El uso, la copia, la modificación, la distribución, la sublicencia y la prestación del software
+   como servicio a terceros requieren un contrato escrito vigente con los titulares. El alcance de
+   cada uso es el que fije ese contrato.
+
+3. Sin contrato, solo se permite leer el código y ejecutarlo en un entorno de desarrollo o prueba
+   sin datos reales, con el único fin de evaluarlo. Este permiso no habilita el uso en producción y
+   se revoca al terminar la evaluación.
+
+4. No se puede quitar, alterar ni ocultar este aviso ni los avisos de copyright.
+
+5. El software se entrega "TAL CUAL", sin garantías de ningún tipo, expresas o implícitas, salvo
+   las que fije el contrato. En la máxima medida que permita la ley aplicable, los titulares no
+   responden por daños derivados del uso del software sin contrato.
+
+6. Las contribuciones a este directorio requieren un acuerdo de cesión o de licencia con los
+   titulares antes de ser aceptadas.
+
+Consultas de licenciamiento: contactar a los titulares del proyecto.

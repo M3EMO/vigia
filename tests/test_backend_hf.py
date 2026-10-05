@@ -285,3 +285,23 @@ def test_stream_steps_run_without_autograd_from_any_thread(backend):
     assert any(name.startswith("worker") for name, _, _ in seen)
     assert [(name, grad, req) for name, grad, req in seen if grad or req] == []
     assert not backend._lock.locked()
+
+
+def test_prompt_rejections_are_typed_invalid_request_errors(backend, monkeypatch):
+    """Regresión: el prompt fuera de contexto salía como ValueError genérico y la API respondía 400
+    invalid_prompt; ahora es InvalidRequestError con code context_length_exceeded."""
+    from vigia.contracts import InvalidRequestError
+
+    monkeypatch.setattr(backend, "_max_positions", 8)
+    with pytest.raises(InvalidRequestError) as exc:
+        backend.stream([{"role": "user", "content": "palabra " * 50}], max_tokens=2)
+    assert exc.value.code == "context_length_exceeded" and "excede el contexto" in str(exc.value)
+    with pytest.raises(InvalidRequestError) as exc:
+        backend.teacher_force([{"role": "user", "content": "hola"}], "respuesta " * 20)
+    assert exc.value.code == "context_length_exceeded"
+    monkeypatch.setattr(backend, "_max_positions", 0)
+    monkeypatch.setattr(backend.tokenizer, "chat_template", None, raising=False)
+    monkeypatch.setattr(backend, "tokenizer", lambda text, **kw: {"input_ids": []})
+    with pytest.raises(InvalidRequestError) as exc:
+        backend._prompt_ids(MESSAGES)
+    assert exc.value.code == "invalid_prompt"

@@ -128,6 +128,27 @@ def test_at_m02_detector_for_other_model_is_rejected(trained):
         (lambda a: a["thresholds"].reverse(), "crecientes"),
         (lambda a: a.update(feature_names=["aaa_bad", "out_entropy"]), "feature"),
         (lambda a: a["training"].pop("judge"), "training"),
+        (lambda a: a["model"].update(router_sha256="abc"), "router_sha256"),
+        (lambda a: a["model"].update(revision="x"), "model"),
+        (lambda a: a["metrics"].update(drift_reference=[]), "drift_reference"),
+        (
+            lambda a: a["metrics"].update(
+                drift_reference={"p_error": {"edges": [0.5, 0.2], "fractions": [0.3, 0.3, 0.4], "n": 3}}
+            ),
+            "creciente",
+        ),
+        (
+            lambda a: a["metrics"].update(
+                drift_reference={"p_error": {"edges": [0.5], "fractions": [0.3, 0.3], "n": 3}}
+            ),
+            "suman 1",
+        ),
+        (
+            lambda a: a["metrics"].update(
+                drift_reference={"flag": {"edges": [0.5], "fractions": [0.5, 0.5], "n": 0}}
+            ),
+            "entero positivo",
+        ),
     ],
 )
 def test_at_m02_structural_errors_are_explicit(mutate, message):
@@ -210,3 +231,32 @@ def test_runtime_does_not_import_sklearn_or_scipy():
 def test_tau_accepts_numpy_scalars():
     assert _hand_detector().tau(np.float32(0.3)) == pytest.approx(0.6, abs=1e-6)
     assert _hand_detector().tau(np.float32(0.2)) == pytest.approx(0.2, abs=1e-6)
+
+
+def test_artifact_keys_accept_optional_router_hash_and_drift_reference():
+    """Las claves nuevas son opcionales: el artefacto sin ellas y con ellas valida."""
+    art = _hand_detector().artifact
+    art["model"]["router_sha256"] = "a" * 64
+    art["metrics"]["drift_reference"] = {
+        "p_error": {"edges": [0.2, 0.5], "fractions": [0.5, 0.25, 0.25], "n": 4},
+        "flag": {"edges": [0.5], "fractions": [0.75, 0.25], "n": 4, "tau": 0.5},
+    }
+    art["sha256"] = artifact_sha256(art)
+    det = Detector.load(art)
+    assert det.model["router_sha256"] == "a" * 64
+    assert det.drift_reference["flag"]["tau"] == 0.5
+    assert _hand_detector().drift_reference is None
+
+
+def test_check_model_compares_router_hash_only_when_both_have_it():
+    import dataclasses
+
+    with_hash = dataclasses.replace(INFO, router_sha256="b" * 64)
+    art = _hand_detector().artifact
+    art["model"]["router_sha256"] = "a" * 64
+    art["sha256"] = artifact_sha256(art)
+    det = Detector.load(art)
+    det.check_model(INFO)  # el modelo no conoce su hash (proxy vLLM): no se compara
+    with pytest.raises(DetectorMismatchError, match="router"):
+        det.check_model(with_hash)
+    _hand_detector().check_model(with_hash)  # detector previo al campo: sigue valiendo

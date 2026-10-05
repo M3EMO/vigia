@@ -378,3 +378,59 @@ def test_vllm_unknown_finish_reason_is_none():
 
     assert normalize_finish_reason("abort") is None and normalize_finish_reason(None) is None
     assert normalize_finish_reason("eos") == "stop" and normalize_finish_reason("length") == "length"
+
+
+# --- cupo, ping del upstream y error de contrato ---------------------------------------------------
+
+
+def test_max_concurrency_defaults_to_16_and_is_validated():
+    """Regresión: 'El proxy vLLM serializa todas las generaciones'. El cupo es configurable."""
+    from vigia.api import generation_gate
+
+    assert make_backend({}).max_concurrency == 16
+    backend = make_backend({}, max_concurrency=3)
+    assert backend.max_concurrency == 3 and generation_gate(backend).slots == 3
+    for bad in (0, -1, True, 2.5):
+        with pytest.raises(ValueError, match="max_concurrency"):
+            make_backend({}, max_concurrency=bad)
+
+
+def test_vllm_proxy_error_is_a_backend_unavailable_error():
+    from vigia.contracts import BackendUnavailableError
+
+    assert issubclass(VllmProxyError, BackendUnavailableError)
+    assert make_backend({}).model_info().router_sha256 is None  # vLLM no expone los pesos del router
+
+
+def _ping_backend(handler) -> VllmProxyBackend:
+    return VllmProxyBackend(
+        "http://vllm.local:8000/v1", "m", "sk-test", httpx.Client(transport=httpx.MockTransport(handler))
+    )
+
+
+def test_ping_checks_models_endpoint_and_caches(monkeypatch):
+    """Regresión: '/readyz no ve un vLLM caído'. ping() pide /v1/models, cachea 5 s y nunca lanza."""
+    import vigia.backends.vllm_proxy as vp
+
+    calls: list[httpx.Request] = []
+    status = {"code": 200}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        return httpx.Response(status["code"], json={"data": []})
+
+    now = {"t": 1000.0}
+    monkeypatch.setattr(vp.time, "monotonic", lambda: now["t"])
+    backend = _ping_backend(handler)
+    assert backend.ping() is True
+    assert str(calls[0].url) == "http://vllm.local:8000/v1/models"
+    assert calls[0].headers["authorization"] == "Bearer sk-test"
+    status["code"] = 503
+    assert backend.ping() is True and len(calls) == 1  # dentro de la ventana de cache
+    now["t"] += vp.PING_CACHE_S
+    assert backend.ping() is False and len(calls) == 2
+
+    def broken(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("caído")
+
+    assert _ping_backend(broken).ping() is False

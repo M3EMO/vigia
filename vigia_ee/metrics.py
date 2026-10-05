@@ -8,6 +8,7 @@ Reglas de cardinalidad (P-34): todo label sale de un conjunto acotado.
 - `status` es la clase (`2xx` … `5xx`).
 - `action` sale de las acciones de `vigia.contracts`; otro valor cae en `other`.
 - `detector_id` solo acepta ids de artefacto (16 hex) y está acotado por los detectores activos.
+- `feature` (drift) sale de `vigia.drift.DRIFT_FEATURES`; otro nombre se descarta.
 - Nunca hay `org_id`, `trace_id`, usuario ni email en un label.
 """
 
@@ -18,11 +19,12 @@ import math
 import re
 import threading
 import time
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from importlib import metadata
 from typing import Any, get_args
 
 from vigia.contracts import Action
+from vigia.drift import DRIFT_FEATURES
 from vigia_ee.security import log_event
 
 CONTENT_TYPE = "text/plain; version=0.0.4; charset=utf-8"
@@ -125,11 +127,13 @@ class Metrics:
         version: str | None = None,
         jobs_depth: Callable[[], int] | None = None,
         review_depth: Callable[[], int] | None = None,
+        drift: Callable[[], Mapping[str, float]] | None = None,
     ) -> None:
         self._lock = threading.Lock()
         self.version = version or _version()
         self._jobs_depth_fn = jobs_depth
         self._review_depth_fn = review_depth
+        self._drift_fn = drift
         self._requests: dict[tuple[str, str], int] = {}
         self._durations: dict[str, _Histogram] = {}
         self._routes: set[str] = set()
@@ -142,6 +146,7 @@ class Metrics:
         self._rate_limited = 0
         self._review_depth = 0
         self._jobs_depth = 0
+        self._drift: dict[str, float] = {}
         self._refresh_lock = threading.Lock()
         self._refresher: threading.Thread | None = None
 
@@ -213,11 +218,25 @@ class Metrics:
         with self._lock:
             self._jobs_depth = max(0, int(depth))
 
+    def set_drift(self, values: Mapping[str, float]) -> None:
+        """Reemplaza el PSI por feature. Solo acepta `DRIFT_FEATURES` y valores finitos no negativos."""
+        clean = {
+            name: float(v)
+            for name, v in values.items()
+            if name in DRIFT_FEATURES
+            and isinstance(v, int | float)
+            and not isinstance(v, bool)
+            and math.isfinite(v)
+            and v >= 0
+        }
+        with self._lock:
+            self._drift = clean
+
     # -- exposición --
 
     def _refresh_gauges(self) -> None:
         """Lanza (o reusa) la lectura de las fuentes y la espera como máximo `GAUGE_TIMEOUT_S`."""
-        if self._jobs_depth_fn is None and self._review_depth_fn is None:
+        if self._jobs_depth_fn is None and self._review_depth_fn is None and self._drift_fn is None:
             return
         with self._refresh_lock:
             thread = self._refresher
@@ -233,6 +252,7 @@ class Metrics:
         for fn, setter in (
             (self._jobs_depth_fn, self.set_jobs_queue_depth),
             (self._review_depth_fn, self.set_review_queue_depth),
+            (self._drift_fn, self.set_drift),
         ):
             if fn is None:
                 continue
@@ -287,6 +307,17 @@ class Metrics:
 
             header("vigia_jobs_queue_depth", "gauge", "Jobs pendientes o en ejecución.")
             out.append(f"vigia_jobs_queue_depth {self._jobs_depth}")
+
+            header(
+                "vigia_drift_psi",
+                "gauge",
+                "PSI del tráfico reciente contra la calibración del detector activo (máximo entre tenants).",
+            )
+            for name in DRIFT_FEATURES:
+                if name in self._drift:
+                    out.append(
+                        f"vigia_drift_psi{_labels([('feature', name)])} {format_value(self._drift[name])}"
+                    )
 
             header("vigia_build_info", "gauge", "Versión de Vigía (valor 1).")
             out.append(f"vigia_build_info{_labels([('version', self.version)])} 1")

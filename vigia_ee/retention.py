@@ -69,8 +69,13 @@ def purge_all(db: Database, jobs: JobQueue | None = None, *, now: datetime | Non
             continue  # el tenant se borró entre el listado y la purga
         except Exception as exc:  # se reintenta en la próxima corrida; el resto sigue
             failed += 1
-            log_event(_log, "retention_purge_error", level=logging.ERROR, org_id=org_id,
-                      error_type=type(exc).__name__)
+            log_event(
+                _log,
+                "retention_purge_error",
+                level=logging.ERROR,
+                org_id=org_id,
+                error_type=type(exc).__name__,
+            )
             continue
         totals["orgs"] += 1
         totals["traces"] += result["traces"]

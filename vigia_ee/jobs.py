@@ -501,8 +501,14 @@ class JobQueue:
                 "WHERE id = ? AND state = 'running'",
                 (to_iso(now), error, job["id"]),
             )
-            log_event(_log, "job_failed", level=logging.WARNING, org_id=job["org_id"],
-                      action=job["kind"], error_type=type(exc).__name__)
+            log_event(
+                _log,
+                "job_failed",
+                level=logging.WARNING,
+                org_id=job["org_id"],
+                action=job["kind"],
+                error_type=type(exc).__name__,
+            )
             return
         delay = self.retry_delay(job["id"], job["attempts"], schedule)
         self.db.execute(
@@ -510,8 +516,14 @@ class JobQueue:
             "WHERE id = ? AND state = 'running'",
             (to_iso(now), to_iso(now + timedelta(seconds=delay)), error, job["id"]),
         )
-        log_event(_log, "job_retry", org_id=job["org_id"], action=job["kind"],
-                  error_type=type(exc).__name__, retry_after=round(delay, 3))
+        log_event(
+            _log,
+            "job_retry",
+            org_id=job["org_id"],
+            action=job["kind"],
+            error_type=type(exc).__name__,
+            retry_after=round(delay, 3),
+        )
 
     def run_until_idle(self, max_jobs: int = 1000) -> int:
         """Ejecuta jobs vencidos hasta vaciar la cola (o `max_jobs`). Devuelve cuántos corrió."""

@@ -141,3 +141,84 @@ def test_register_adds_architecture_by_data():
         assert adapters.model_info(model, "x").model_type == "mixtral_test"
     finally:
         adapters._REGISTRY.pop("mixtral_test")
+
+
+# --- fingerprint de los routers (control de deriva, docs/spec/mf-moe-revision.md) ----------------
+
+
+def _router_detector(info):
+    from vigia.detector import Detector
+
+    return Detector.build(
+        model=info.fingerprint(),
+        feature_names=["out_entropy"],
+        mean=[0.0],
+        std=[1.0],
+        weights=[1.0],
+        bias=0.0,
+        platt={"a": 1.0, "b": 0.0},
+        response_calibrator={"a": 1.0, "b": 0.0},
+        thresholds=[{"alpha": 0.1, "tau": 0.5, "expected_flag_rate": 0.2, "expected_precision": None}],
+        default_alpha=0.1,
+        metrics={},
+        training={
+            "dataset_sha256": "0" * 64,
+            "n_tokens": 10,
+            "n_responses": 2,
+            "label_source": "computable",
+            "judge": None,
+            "created_at": "2026-10-04T00:00:00+00:00",
+        },
+    )
+
+
+@pytest.mark.parametrize("model_type", ["mixtral", "gpt_oss", "deepseek_v3"])
+def test_router_sha256_is_stable_and_enters_the_fingerprint(model_type):
+    a = adapters.model_info(tiny(model_type), "m")
+    b = adapters.model_info(tiny(model_type), "m")
+    assert a.router_sha256 is not None and len(a.router_sha256) == 64
+    assert a.router_sha256 == b.router_sha256  # mismos pesos -> mismo hash
+    assert a.fingerprint()["router_sha256"] == a.router_sha256
+
+
+def test_fine_tuned_router_invalidates_the_detector():
+    """Un fine-tune que toca un router y conserva el model_id invalida la calibración."""
+    from vigia.contracts import DetectorMismatchError
+
+    model = tiny("mixtral")
+    info = adapters.model_info(model, "cliente/modelo")
+    detector = _router_detector(info)
+    detector.check_model(info)
+    with torch.no_grad():  # fine-tune simulado: un paso chico sobre el router de la última capa
+        adapters.find_moe_blocks(model)[-1].router.weight.add_(1e-3)
+    tuned = adapters.model_info(model, "cliente/modelo")
+    assert tuned.fingerprint()["model_id"] == info.model_id and tuned.router_sha256 != info.router_sha256
+    with pytest.raises(DetectorMismatchError, match="router"):
+        detector.check_model(tuned)
+
+
+def test_router_bias_changes_the_hash():
+    model = tiny("gpt_oss")  # el router de gpt-oss tiene bias
+    before = adapters.model_info(model, "m").router_sha256
+    with torch.no_grad():
+        adapters.find_moe_blocks(model)[0].router.bias.add_(1e-3)
+    assert adapters.model_info(model, "m").router_sha256 != before
+
+
+def test_detector_without_router_hash_stays_valid():
+    """Compatibilidad: un detector calibrado antes de router_sha256 sigue valiendo con el modelo nuevo,
+    y un backend que no conoce el hash (proxy vLLM) acepta un detector que sí lo tiene."""
+    import dataclasses
+
+    info = adapters.model_info(tiny("mixtral"), "m")
+    legacy = _router_detector(dataclasses.replace(info, router_sha256=None))
+    assert "router_sha256" not in legacy.model
+    legacy.check_model(info)
+    _router_detector(info).check_model(dataclasses.replace(info, router_sha256=None))
+
+
+def test_meta_router_weights_give_unknown_hash():
+    model = tiny("mixtral")
+    blocks = adapters.find_moe_blocks(model)
+    blocks[0].router.weight = torch.nn.Parameter(torch.empty(4, 32, device="meta"))
+    assert adapters.router_sha256(blocks) is None

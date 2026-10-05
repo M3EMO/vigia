@@ -276,6 +276,46 @@ def test_computable_labels_by_mode():
     assert computable_labels(row) == ([1, 1, 1, IGNORE_LABEL], {"correct": False})
 
 
+def test_computable_labels_maps_harmony_spans_to_the_final_text():
+    """Regresión (gpt-oss): con marcado harmony en la respuesta del dataset, los spans se referían a la
+    respuesta con marcado y los tokens al texto final; el item quedaba rechazado o mal marcado."""
+    tokens = [
+        {"i": 0, "id": 1, "text": "Goya", "start": 0, "end": 4, "channel": "final", "special": False},
+        {"i": 1, "id": 2, "text": " en", "start": 4, "end": 7, "channel": "final", "special": False},
+        {"i": 2, "id": 3, "text": " 1900", "start": 7, "end": 12, "channel": "final", "special": False},
+    ]
+    marked = (
+        "<|channel|>analysis<|message|>Creo que 1900.<|end|><|start|>assistant<|channel|>final"
+        "<|message|>Goya en 1900<|return|>"
+    )
+    at = marked.rindex("1900")
+    item = {"mode": "spans", "response": marked, "hallucinated_spans": [[at, at + 4]]}
+    row = {"id": "h", "response": "Goya en 1900", "tokens": tokens, "item": item}
+    assert computable_labels(row) == ([0, 0, 1], {"correct": False})
+    analysis_only = marked.index("1900")  # un span que cae en analysis no marca nada del texto final
+    row["item"] = {**item, "hallucinated_spans": [[analysis_only, analysis_only + 4]]}
+    assert computable_labels(row) == ([0, 0, 0], {"correct": True})
+
+
+def test_parse_jsonl_rejects_deep_nesting_as_dataset_error():
+    """Regresión: una línea con anidamiento profundo levantaba RecursionError, no el error de validación."""
+    with pytest.raises(DatasetError, match="línea 1: JSON inválido"):
+        parse_jsonl("[" * 100_000 + "]" * 100_000)
+
+
+def test_run_store_resumes_a_manifest_without_router_hash(tmp_path):
+    """Compatibilidad: una corrida previa a ModelInfo.router_sha256 se reanuda con el mismo modelo; un
+    router distinto sí la rechaza."""
+    info = {"model_id": "m", "model_type": "mixtral", "n_experts": 4, "router_sha256": None}
+    manifest = {"schema_version": "1", "model_info": info, "tiers": ["F0"], "max_tokens": 8, "seed": 0}
+    RunStore(tmp_path).open(manifest)
+    RunStore(tmp_path).open({**manifest, "model_info": {**info, "router_sha256": "a" * 64}})
+    store = tmp_path / "otra"
+    RunStore(store).open({**manifest, "model_info": {**info, "router_sha256": "a" * 64}})
+    with pytest.raises(EvidenceError, match="model_info"):
+        RunStore(store).open({**manifest, "model_info": {**info, "router_sha256": "b" * 64}})
+
+
 # --- Experimento de evidencia ----------------------------------------------------------------------
 
 
@@ -397,7 +437,7 @@ def test_corrupt_middle_line_is_an_error(backend, items, tmp_path):
 def test_skipped_item_is_recorded_once(backend, items, tmp_path):
     long_item = validate_item({"id": "largo", "question": "x" * 2000, "answers": ["a"]})
     rows = extract(backend, [items[0], long_item], tmp_path, max_tokens=8)
-    assert rows[1]["skipped"].startswith("ValueError") and rows[1]["tokens"] == []
+    assert rows[1]["skipped"].startswith("InvalidRequestError") and rows[1]["tokens"] == []
     counting = CountingBackend(backend)
     extract(counting, [items[0], long_item], tmp_path, max_tokens=8)
     assert counting.calls == 0

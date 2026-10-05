@@ -22,7 +22,7 @@ from fastapi.testclient import TestClient
 
 from vigia_ee import panel
 from vigia_ee.auth import has_permission, route_permission
-from vigia_ee.security import SESSION_COOKIE
+from vigia_ee.security import DEV_SESSION_COOKIE, SESSION_COOKIE
 
 TEMPLATES = Path(panel.TEMPLATES_DIR)
 PAGES = {
@@ -84,7 +84,8 @@ def test_login_rejects_bad_password_and_open_redirect(env):
     )
     assert ok.status_code == 303 and ok.headers["location"] == "/"
     cookie = ok.headers["set-cookie"]
-    assert SESSION_COOKIE in cookie and "HttpOnly" in cookie and "samesite=strict" in cookie.lower()
+    # El fixture corre sin TLS: la cookie usa DEV_SESSION_COOKIE (un navegador rechaza __Host- sin Secure).
+    assert DEV_SESSION_COOKIE in cookie and "HttpOnly" in cookie and "samesite=strict" in cookie.lower()
 
 
 def test_login_with_secure_cookies_sets_secure_flag(tmp_path):
@@ -1059,7 +1060,7 @@ def test_logout_with_an_expired_session_clears_cookie_and_lands_on_login(env):
     resp = client.post("/logout", data={"csrf_token": token}, follow_redirects=False)
     assert resp.status_code == 303 and resp.headers["location"] == "/login?ok=logged_out"
     cookie = resp.headers["set-cookie"]
-    assert SESSION_COOKIE in cookie and "Max-Age=0" in cookie
+    assert DEV_SESSION_COOKIE in cookie and "Max-Age=0" in cookie
     # Sin sesión: un request que el navegador declara cross-site sigue rechazado.
     anon = TestClient(app, base_url="https://testserver")
     cross = anon.post("/logout", headers={"Sec-Fetch-Site": "cross-site"}, follow_redirects=False)
@@ -1176,3 +1177,64 @@ def test_overview_empty_state_buttons_are_spaced(tmp_path):
         assert "text-align: left" in _css_rule(css, ".vg-empty pre")
     finally:
         runtime.close()
+
+
+# --- cupo de generación del playground y drift (ronda de integración) ---------------------------
+
+
+def test_playground_shares_the_generation_gate_and_answers_503_when_busy(env, monkeypatch):
+    """Regresión: el playground usaba runtime.backend fuera del cupo de la API y bloqueaba hilos del
+    threadpool esperando el lock del modelo. Ahora toma el mismo cupo y responde 503 si está lleno."""
+    from vigia.api import generation_gate
+
+    runtime, org, users, app = env
+    activate_detector(runtime, org)
+    client = login(app, users["reviewer"])
+    token = csrf_of(client, "/playground")
+    form = {"csrf_token": token, "prompt": "hola", "max_tokens": "16", "temperature": "0"}
+    body = {"prompt": "hola", "max_tokens": 16, "temperature": 0}
+    gate = generation_gate(runtime.backend)
+    monkeypatch.setattr(gate, "_free", 0)  # otra generación tiene el cupo
+    monkeypatch.setattr(gate, "max_waiting", 0)  # y no hay lugar para esperar
+    busy = client.post("/playground", data=form)
+    assert busy.status_code == 503 and int(busy.headers["Retry-After"]) >= 1
+    assert panel.BUSY_MESSAGE in busy.text and 'role="alert"' in busy.text
+    sse = client.post("/playground/stream", json=body, headers={"X-CSRF-Token": token})
+    assert sse.status_code == 503 and sse.json()["error"] == "server_overloaded"
+    monkeypatch.undo()
+    free = gate._free
+    assert client.post("/playground", data=form).status_code == 200
+    ok = client.post("/playground/stream", json=body, headers={"X-CSRF-Token": token})
+    assert ok.status_code == 200 and '"type": "done"' in ok.text
+    assert gate._free == free == gate.slots  # los dos caminos devuelven el cupo
+
+
+def _drift_detector():
+    import numpy as np
+    from _panel_support import make_detector
+
+    from vigia.detector import Detector, artifact_sha256
+    from vigia.drift import build_reference
+
+    art = make_detector().artifact
+    art["metrics"] = {"drift_reference": build_reference(np.linspace(0.05, 0.95, 400), 0.5)}
+    art["sha256"] = artifact_sha256(art)
+    return Detector(art)
+
+
+def test_performance_page_shows_drift_against_the_active_detector(env):
+    """P-36: la página de Rendimiento muestra el PSI por señal con el estado en texto (no solo color)."""
+    runtime, org, users, app = env
+    client = login(app, users["viewer"])
+    assert "No hay un detector calibrado activo." in client.get("/performance").text
+    det = activate_detector(runtime, org, _drift_detector())
+    tokens = [
+        {"idx": i, "text": "x", "start": i, "end": i + 1, "p_error": 0.9, "flag": True} for i in range(250)
+    ]
+    runtime.repo(org).insert_trace(
+        model_id="tiny-panel", response_text="x" * 250, action="pass", tokens=tokens, calibration_id=det.id
+    )
+    html = client.get("/performance").text
+    assert 'id="drift-title"' in html and "Estado de deriva: Alerta" in html
+    assert "P(error) por token" in html and "Tasa de tokens marcados" in html
+    assert "Alerta: recalibrá" in html and 'aria-describedby="drift-status"' in html

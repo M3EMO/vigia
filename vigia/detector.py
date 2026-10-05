@@ -28,6 +28,10 @@ from vigia.contracts import (
 )
 
 _FINGERPRINT_KEYS = ("model_id", "model_type", "n_experts", "top_k", "quantization")
+# Clave opcional del fingerprint (contracts.ModelInfo.router_sha256). Un artefacto sin ella sigue valiendo.
+_ROUTER_KEY = "router_sha256"
+# Resumen de referencia para el monitor de drift (vigia.drift), opcional dentro de `metrics`.
+DRIFT_REFERENCE_KEY = "drift_reference"
 _TRAINING_KEYS = ("dataset_sha256", "n_tokens", "n_responses", "label_source", "judge", "created_at")
 _ARTIFACT_KEYS = (
     "schema_version",
@@ -138,7 +142,7 @@ def validate_artifact(artifact: Mapping[str, Any]) -> None:
     if artifact["schema_version"] != DETECTOR_SCHEMA_VERSION:
         raise _fail(f"schema_version {artifact['schema_version']!r}, se esperaba {DETECTOR_SCHEMA_VERSION!r}")
     sha = artifact["sha256"]
-    if not isinstance(sha, str) or len(sha) != 64 or any(c not in "0123456789abcdef" for c in sha):
+    if not _is_sha256(sha):
         raise _fail("`sha256` debe ser 64 caracteres hex en minúscula")
     try:
         expected = artifact_sha256(artifact)
@@ -148,8 +152,10 @@ def validate_artifact(artifact: Mapping[str, Any]) -> None:
         raise DetectorMismatchError("el hash SHA-256 del detector no valida: el artefacto fue alterado")
 
     model = artifact["model"]
-    if not isinstance(model, dict) or set(model) != set(_FINGERPRINT_KEYS):
-        raise _fail(f"`model` debe tener exactamente {list(_FINGERPRINT_KEYS)}")
+    if not isinstance(model, dict) or set(model) - {_ROUTER_KEY} != set(_FINGERPRINT_KEYS):
+        raise _fail(f"`model` debe tener exactamente {list(_FINGERPRINT_KEYS)} (+ {_ROUTER_KEY} opcional)")
+    if _ROUTER_KEY in model and not _is_sha256(model[_ROUTER_KEY]):
+        raise _fail(f"`model.{_ROUTER_KEY}` debe ser 64 caracteres hex en minúscula")
     names = artifact["feature_names"]
     if not isinstance(names, list) or not names or not all(isinstance(n, str) for n in names):
         raise _fail("`feature_names` debe ser una lista no vacía de strings")
@@ -175,6 +181,8 @@ def validate_artifact(artifact: Mapping[str, Any]) -> None:
         raise _fail("`default_alpha` debe estar en [min alpha guardado, 1)")
     if not isinstance(artifact["metrics"], dict):
         raise _fail("`metrics` debe ser un objeto")
+    if DRIFT_REFERENCE_KEY in artifact["metrics"]:
+        _validate_drift_reference(artifact["metrics"][DRIFT_REFERENCE_KEY])
     training = artifact["training"]
     if not isinstance(training, dict) or set(training) != set(_TRAINING_KEYS):
         raise _fail(f"`training` debe tener exactamente {list(_TRAINING_KEYS)}")
@@ -184,6 +192,38 @@ def validate_artifact(artifact: Mapping[str, Any]) -> None:
     for key in ("dataset_sha256", "label_source", "created_at"):
         if not isinstance(training[key], str):
             raise _fail(f"`training.{key}` debe ser string")
+
+
+def _is_sha256(value: Any) -> bool:
+    return isinstance(value, str) and len(value) == 64 and all(c in "0123456789abcdef" for c in value)
+
+
+def _validate_drift_reference(raw: Any) -> None:
+    """`metrics.drift_reference`: {feature: {edges, fractions, n, tau?}} (ver `vigia.drift`)."""
+    if not isinstance(raw, dict):
+        raise _fail("`metrics.drift_reference` debe ser un objeto")
+    for name, summary in raw.items():
+        where = f"`metrics.drift_reference.{name}`"
+        if not isinstance(summary, dict) or not {"edges", "fractions", "n"} <= set(summary):
+            raise _fail(f"{where} debe tener edges, fractions y n")
+        if set(summary) - {"edges", "fractions", "n", "tau"}:
+            raise _fail(f"{where} tiene claves desconocidas")
+        edges, fractions, n = summary["edges"], summary["fractions"], summary["n"]
+        if not isinstance(edges, list) or not all(_is_number(e) for e in edges):
+            raise _fail(f"{where}.edges debe ser una lista de números finitos")
+        if any(b <= a for a, b in zip(edges, edges[1:], strict=False)):
+            raise _fail(f"{where}.edges debe ser estrictamente creciente")
+        if (
+            not isinstance(fractions, list)
+            or len(fractions) != len(edges) + 1
+            or not all(_is_number(f) and 0 <= f <= 1 for f in fractions)
+            or abs(sum(fractions) - 1.0) > 1e-6
+        ):
+            raise _fail(f"{where}.fractions debe tener len(edges)+1 fracciones en [0, 1] que suman 1")
+        if isinstance(n, bool) or not isinstance(n, int) or n < 1:
+            raise _fail(f"{where}.n debe ser un entero positivo")
+        if "tau" in summary and not (_is_number(summary["tau"]) and 0 <= summary["tau"] <= 1):
+            raise _fail(f"{where}.tau debe estar en [0, 1]")
 
 
 def _reject_constant(name: str) -> Any:
@@ -384,11 +424,28 @@ class Detector:
             raise ValueError(f"alpha {alpha} es menor que el mínimo calibrado ({self._alphas[0]})")
         return float(self._taus[np.searchsorted(self._alphas, alpha, side="right") - 1])
 
+    @property
+    def drift_reference(self) -> dict[str, Any] | None:
+        """Resumen de referencia del set de calibración para `vigia.drift`; None en artefactos viejos."""
+        ref = self._artifact["metrics"].get(DRIFT_REFERENCE_KEY)
+        return json.loads(canonical_json(ref)) if ref is not None else None
+
     def check_model(self, info: ModelInfo) -> None:
-        """Lanza DetectorMismatchError si el detector fue calibrado para otro modelo."""
+        """Lanza DetectorMismatchError si el detector fue calibrado para otro modelo.
+
+        `router_sha256` se compara solo si el artefacto y el modelo lo tienen: un detector previo a ese
+        campo, o un backend que no lo conoce (proxy vLLM), sigue valiendo. Si difieren, los pesos de
+        los routers cambiaron (fine-tune con el mismo `model_id`) y la calibración ya no vale.
+        """
         expected = self._artifact["model"]
         actual = info.fingerprint()
         diffs = [k for k in _FINGERPRINT_KEYS if expected.get(k) != actual.get(k)]
         if diffs:
             detail = ", ".join(f"{k}: {expected.get(k)!r} != {actual.get(k)!r}" for k in diffs)
             raise DetectorMismatchError(f"el detector {self.id} fue calibrado para otro modelo ({detail})")
+        want, got = expected.get(_ROUTER_KEY), actual.get(_ROUTER_KEY)
+        if want is not None and got is not None and want != got:
+            raise DetectorMismatchError(
+                f"el detector {self.id} fue calibrado con otros pesos de router ({_ROUTER_KEY}: "
+                f"{want[:12]}… != {got[:12]}…); el modelo cambió (¿fine-tune?): recalibrá"
+            )

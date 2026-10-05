@@ -48,9 +48,18 @@ CREATE TRIGGER audit_log_no_update BEFORE UPDATE ON audit_log
 BEGIN SELECT RAISE(ABORT, 'audit_log es append-only'); END;
 CREATE UNIQUE INDEX IF NOT EXISTS ux_audit_org_seq ON audit_log(org_id, org_seq);
 """
+# 3: `traces.status` (VigiaResult.status) y `traces.rag_status` (None | retried | error | unavailable),
+# para que `GET /v1/vigia/traces/{id}` devuelva lo mismo que la respuesta. Una traza previa queda con
+# status 'ok' y rag_status NULL. Las columnas no van en schema.sql: la migración 1 corre en una base
+# nueva y esta fallaría con 'duplicate column'.
+_TRACE_STATUS = """
+ALTER TABLE traces ADD COLUMN status TEXT NOT NULL DEFAULT 'ok';
+ALTER TABLE traces ADD COLUMN rag_status TEXT;
+"""
 MIGRATIONS: tuple[tuple[int, str], ...] = (
     (1, SCHEMA_PATH.read_text(encoding="utf-8")),
     (2, _AUDIT_ORG_SEQ),
+    (3, _TRACE_STATUS),
 )
 # Eventos de auditoría de una org tal como salen hacia el tenant: `seq` es la posición por organización.
 AUDIT_SELECT = (
@@ -122,14 +131,20 @@ class Database:
         self._lock = threading.RLock()
         self._depth = 0
         conn = sqlite3.connect(self.path, check_same_thread=False, isolation_level=None)
-        conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA foreign_keys=ON")
-        conn.execute(f"PRAGMA busy_timeout={int(busy_timeout_ms)}")
-        if self.path != ":memory:":
-            conn.execute("PRAGMA journal_mode=WAL")
-            conn.execute("PRAGMA synchronous=NORMAL")
-        self._conn = conn
-        self.migrate()
+        try:
+            conn.row_factory = sqlite3.Row
+            conn.execute("PRAGMA foreign_keys=ON")
+            conn.execute(f"PRAGMA busy_timeout={int(busy_timeout_ms)}")
+            if self.path != ":memory:":
+                conn.execute("PRAGMA journal_mode=WAL")
+                conn.execute("PRAGMA synchronous=NORMAL")
+            self._conn = conn
+            self.migrate()
+        except BaseException:
+            # Un archivo que no es SQLite o una migración que falla no deja la conexión abierta hasta el
+            # GC: en Windows eso retiene el archivo.
+            conn.close()
+            raise
 
     # -- migraciones --
 
@@ -563,13 +578,16 @@ class TenantScopedRepository:
         finish_reason: str | None = None,
         usage: Mapping[str, Any] | None = None,
         created_at: datetime | None = None,
+        status: str = "ok",
+        rag_status: str | None = None,
     ) -> str:
         """Guarda una traza con sus tokens y fragmentos en una transacción.
 
         Recibe el texto crudo y aplica `store_text` de la organización acá, en la frontera:
         `none` no guarda texto, `redacted` guarda marcadores de PII y re-mapea los offsets de
         tokens y fragmentos al texto redactado, `full` guarda todo. Los tokens y fragmentos aceptan
-        dicts o los dataclasses `ScoredToken` / `Span` de `vigia.contracts`.
+        dicts o los dataclasses `ScoredToken` / `Span` de `vigia.contracts`. `status` y `rag_status` son
+        los de `VigiaResult`.
         """
         if source not in TRACE_SOURCES:
             raise ValueError(f"source inválido; opciones: {TRACE_SOURCES}")
@@ -598,8 +616,8 @@ class TenantScopedRepository:
                 "INSERT INTO traces (id, org_id, created_at, api_key_id, source, model_id, mode, "
                 "prompt_text, "
                 "response_text, text_sha256, n_tokens, response_p_error, action, calibration_id, alpha, tau, "
-                "latency_ms, overhead_ms, degraded, finish_reason, usage_json) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "latency_ms, overhead_ms, degraded, finish_reason, usage_json, status, rag_status) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     trace_id,
                     self.org_id,
@@ -622,6 +640,8 @@ class TenantScopedRepository:
                     1 if degraded else 0,
                     finish_reason,
                     _json(dict(usage)) if usage is not None else None,
+                    status,
+                    rag_status,
                 ),
             )
             token_rows = []
@@ -742,6 +762,23 @@ class TenantScopedRepository:
             rows = rows[:limit]
             next_cursor = _encode_cursor(rows[-1]["created_at"], rows[-1]["id"])
         return rows, next_cursor
+
+    def recent_token_signals(self, calibration_id: str, *, limit_traces: int = 500) -> dict[str, Any]:
+        """Señales por token de las últimas `limit_traces` trazas puntuadas con `calibration_id`.
+
+        Para el monitor de drift: `{n_traces, tokens: [{p_error, flag, r_ent_mean, out_entropy}]}`.
+        Excluye trazas degradadas y tokens sin p_error (especiales y canales no puntuados).
+        """
+        limit = max(1, min(int(limit_traces), 10_000))
+        rows = self.db.query(
+            "SELECT tt.trace_id, tt.p_error, tt.flag, tt.r_ent_mean, tt.out_entropy FROM trace_tokens tt "
+            "WHERE tt.org_id = ? AND tt.p_error IS NOT NULL AND tt.trace_id IN ("
+            "SELECT id FROM traces WHERE org_id = ? AND calibration_id = ? AND degraded = 0 "
+            "ORDER BY created_at DESC, id DESC LIMIT ?)",
+            (self.org_id, self.org_id, calibration_id, limit),
+        )
+        n_traces = len({r.pop("trace_id") for r in rows})
+        return {"n_traces": n_traces, "tokens": rows}
 
     def delete_trace(self, trace_id: str) -> bool:
         """Borra una traza con sus tokens, fragmentos e items de revisión (cascada)."""
@@ -1078,7 +1115,9 @@ class TenantScopedRepository:
             "api_keys": self.list_api_keys(),
             "traces": traces,
             "review_items": q("SELECT * FROM review_items WHERE org_id = ? ORDER BY created_at, rowid", o),
-            "review_decisions": q("SELECT * FROM review_decisions WHERE org_id = ? ORDER BY created_at, rowid", o),
+            "review_decisions": q(
+                "SELECT * FROM review_decisions WHERE org_id = ? ORDER BY created_at, rowid", o
+            ),
             "detectors": q("SELECT * FROM detectors WHERE org_id = ? ORDER BY created_at, rowid", o),
             "datasets": datasets,
             "webhooks": self.list_webhooks(),

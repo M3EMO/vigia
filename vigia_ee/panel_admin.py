@@ -1141,7 +1141,7 @@ def register(router: APIRouter, runtime: Any) -> None:  # noqa: C901 - registro 
             )
         audit.append(runtime.db, p.org_id, p, "org_delete", p.org_id)
         repo.delete_org()
-        runtime.invalidate_detector(p.org_id)  # saca su detector de la cache y de /metrics
+        runtime.forget_org(p.org_id)  # saca su detector, política y retriever de memoria y de /metrics
         response = redirect("/login", "org_deleted")
         clear_cookie(response, secure=secure)
         return response

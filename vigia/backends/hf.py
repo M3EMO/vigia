@@ -24,7 +24,7 @@ from typing import Any
 import torch
 
 from vigia.adapters import find_moe_blocks, model_info
-from vigia.contracts import Capabilities, Generation, ModelInfo, Tier, TokenEvent
+from vigia.contracts import Capabilities, Generation, InvalidRequestError, ModelInfo, Tier, TokenEvent
 from vigia.extractor import SignalExtractor, TokenSignals, f2_unsupported_reason
 from vigia.harmony import CONTROL, SCORED_CHANNEL, STOP_TOKENS, HarmonyParser, has_markup
 
@@ -269,7 +269,10 @@ class HFBackend:
 
             model_id = model_id or model_id_or_model
             tokenizer = tokenizer or AutoTokenizer.from_pretrained(model_id_or_model)
-            model = AutoModelForCausalLM.from_pretrained(model_id_or_model, dtype=dtype or "auto")
+            # Solo safetensors y sin código remoto: un checkpoint con pickle no se carga (supply chain).
+            model = AutoModelForCausalLM.from_pretrained(
+                model_id_or_model, dtype=dtype or "auto", use_safetensors=True, trust_remote_code=False
+            )
         else:
             model = model_id_or_model
             if tokenizer is None:
@@ -333,10 +336,11 @@ class HFBackend:
             text = "".join(f"{m['role']}: {m['content']}\n" for m in messages) + "assistant: "
         ids = list(self.tokenizer(text, add_special_tokens=False)["input_ids"])
         if not ids:
-            raise ValueError("el prompt quedó vacío después de tokenizar")
+            raise InvalidRequestError("el prompt quedó vacío después de tokenizar", code="invalid_prompt")
         if self._max_positions and len(ids) >= self._max_positions:
-            raise ValueError(
-                f"el prompt ({len(ids)} tokens) excede el contexto del modelo ({self._max_positions})"
+            raise InvalidRequestError(
+                f"el prompt ({len(ids)} tokens) excede el contexto del modelo ({self._max_positions})",
+                code="context_length_exceeded",
             )
         return ids
 
@@ -486,8 +490,9 @@ class HFBackend:
             resp_ids = self._final_header_ids(prompt_ids) + resp_ids
         total = len(prompt_ids) + len(resp_ids)
         if self._max_positions and total > self._max_positions:
-            raise ValueError(
-                f"prompt + respuesta ({total} tokens) excede el contexto ({self._max_positions})"
+            raise InvalidRequestError(
+                f"prompt + respuesta ({total} tokens) excede el contexto ({self._max_positions})",
+                code="context_length_exceeded",
             )
         n_prompt, n_resp = len(prompt_ids), len(resp_ids)
         with self._lock, torch.inference_mode(), SignalExtractor(self.model, wanted, self.probe_layer) as ex:

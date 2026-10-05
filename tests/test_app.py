@@ -112,7 +112,11 @@ def test_AT_P14_health_routes_follow_their_contract(rt, app, monkeypatch):
     org = rt.create_org("Organización Secreta SA")
     client = TestClient(app)
     assert client.get("/livez").json() == {"status": "ok"}
-    assert client.get("/startupz").json() == {"status": "ok", "checks": {"model": True, "detectors": True}}
+    assert client.get("/startupz").json() == {
+        "status": "ok",
+        "checks": {"model": True, "detectors": True},
+        "detector_errors": 0,
+    }
     not_ready = client.get("/readyz")
     assert not_ready.status_code == 503
     assert not_ready.json() == {
@@ -130,8 +134,9 @@ def test_AT_P14_health_routes_follow_their_contract(rt, app, monkeypatch):
             body = running.get(path).text
             assert org not in body and "Secreta" not in body
     assert rt.jobs.is_alive() is False, "el lifespan detiene el worker al salir"
-    rt.startup_errors = 1
-    assert client.get("/startupz").status_code == 503
+    rt.startup_errors = 1  # un detector roto de una org no deja al pod reiniciando en bucle
+    started = client.get("/startupz")
+    assert started.status_code == 200 and started.json()["detector_errors"] == 1
     rt.startup_errors = 0
 
     def db_down(*args):

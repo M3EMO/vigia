@@ -168,13 +168,16 @@ def _health_router() -> APIRouter:
     async def startupz(request: Request) -> JSONResponse:
         runtime = getattr(request.app.state, "runtime", None)
         model = runtime is not None and getattr(runtime, "model_info", None) is not None
-        detectors = (
-            runtime is not None
-            and bool(getattr(runtime, "startup_complete", False))
-            and (getattr(runtime, "startup_errors", 1) == 0)
-        )
+        # Un detector de una org que no carga no reinicia el pod en bucle: esa org queda sin
+        # calibración (banner en su panel) y el error se cuenta, pero el arranque termina.
+        detectors = runtime is not None and bool(getattr(runtime, "startup_complete", False))
+        errors = int(getattr(runtime, "startup_errors", 0) or 0) if runtime is not None else 0
         ok = model and detectors
-        body = {"status": "ok" if ok else "starting", "checks": {"model": model, "detectors": detectors}}
+        body = {
+            "status": "ok" if ok else "starting",
+            "checks": {"model": model, "detectors": detectors},
+            "detector_errors": errors,
+        }
         return JSONResponse(body, status_code=200 if ok else 503)
 
     @router.get("/readyz", dependencies=public, include_in_schema=False)

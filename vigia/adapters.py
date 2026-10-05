@@ -8,6 +8,7 @@ Los expertos compartidos (`shared_experts_attr`) nunca entran en las señales de
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass
 from typing import Any
 
@@ -177,6 +178,32 @@ def _quantization(config: Any) -> str:
     return str(getattr(method, "value", method) or "unknown")
 
 
+# Tensores del router que fijan el ruteo: pesos, bias y el bias de corrección de DeepSeek-V3.
+_ROUTER_TENSORS = ("weight", "bias", "e_score_correction_bias")
+
+
+def router_sha256(blocks: list[MoEBlock]) -> str | None:
+    """SHA-256 de los tensores de todos los routers MoE, en orden de capa (fingerprint del detector).
+
+    Cada tensor entra como float32 little-endian, precedido por capa, nombre y forma. Los routers son
+    chicos (N x d por capa), así que el costo es despreciable frente a la carga del modelo. Cargar el
+    mismo checkpoint en otro dtype cambia el hash: también cambia los logits del router. Un tensor en
+    el dispositivo `meta` (pesos descargados a disco) no se puede leer: devuelve None (desconocido).
+    """
+    digest = hashlib.sha256()
+    for block in blocks:
+        for name in _ROUTER_TENSORS:
+            tensor = getattr(block.router, name, None)
+            if not isinstance(tensor, torch.Tensor):
+                continue
+            if tensor.is_meta:
+                return None
+            values = tensor.detach().to(device="cpu", dtype=torch.float32).contiguous().numpy()
+            digest.update(f"{block.layer}:{name}:{tuple(values.shape)}|".encode())
+            digest.update(values.astype("<f4", copy=False).tobytes())
+    return digest.hexdigest()
+
+
 def model_info(model: nn.Module, model_id: str) -> ModelInfo:
     """`ModelInfo` del contrato a partir del modelo cargado."""
     config = _config(model)
@@ -196,4 +223,5 @@ def model_info(model: nn.Module, model_id: str) -> ModelInfo:
         dtype=dtype,
         quantization=_quantization(config),
         revision=str(getattr(config, "_commit_hash", None) or ""),
+        router_sha256=router_sha256(blocks),
     )

@@ -1385,3 +1385,21 @@ def test_internal_error_log_carries_error_type(caplog):
     with caplog.at_level(logging.ERROR, logger="vigia.api"):
         assert chat(make_client(ctx)).status_code == 500
     assert any(getattr(rec, "error_type", None) == "RuntimeError" for rec in caplog.records)
+
+
+class GenericUpstreamDownBackend(RemoteBackend):
+    """Backend remoto cualquiera (no vLLM) que declara su caída con el error del contrato."""
+
+    def stream(self, messages, **kw):
+        from vigia.contracts import BackendUnavailableError
+
+        raise BackendUnavailableError("el servidor de generación no respondió")
+
+
+def test_backend_unavailable_error_from_any_backend_is_502():
+    """La API mapea el error del contrato (BackendUnavailableError), no una clase de vLLM: cualquier
+    backend remoto que lo lance responde 502 upstream_unavailable."""
+    ctx, traces = make_ctx(backend=GenericUpstreamDownBackend(), scorer=None)
+    r = chat(make_client(ctx))
+    assert r.status_code == 502 and r.json()["error"]["code"] == "upstream_unavailable"
+    assert traces == []

@@ -74,10 +74,21 @@ class ModelInfo:
     dtype: str = "float32"
     quantization: str = "none"  # none | mxfp4 | bnb4 | ...
     revision: str = ""  # commit del checkpoint, si se conoce
+    # SHA-256 de los pesos (y bias) de todos los routers MoE en orden de capa. None: no se conoce
+    # (proxy vLLM, pesos fuera de memoria). Detecta un fine-tune que conserva el `model_id`.
+    router_sha256: str | None = None
 
     def fingerprint(self) -> dict[str, Any]:
-        """Campos que invalidan una calibración si cambian."""
-        return {k: getattr(self, k) for k in ("model_id", "model_type", "n_experts", "top_k", "quantization")}
+        """Campos que invalidan una calibración si cambian.
+
+        `router_sha256` entra solo si no es None. Regla de compatibilidad: un detector sin ese campo
+        (calibrado antes de que existiera, o con un backend que no lo conoce) sigue valiendo; si el
+        detector y el modelo lo tienen, deben coincidir (`Detector.check_model`).
+        """
+        out = {k: getattr(self, k) for k in ("model_id", "model_type", "n_experts", "top_k", "quantization")}
+        if self.router_sha256 is not None:
+            out["router_sha256"] = self.router_sha256
+        return out
 
 
 @dataclass(frozen=True)
@@ -174,7 +185,7 @@ class Scorer(Protocol):
         ...
 
     def tau(self, alpha: float) -> float:
-        """Umbral por token que garantiza FNR <= alpha (CRC). Interpola entre los alphas guardados."""
+        """Umbral por token que garantiza FNR <= alpha (CRC): tau del mayor alpha guardado <= alpha."""
         ...
 
     def check_model(self, info: ModelInfo) -> None:
@@ -284,3 +295,10 @@ class InvalidRequestError(VigiaError, ValueError):
     def __init__(self, message: str, *, code: str = "invalid_prompt") -> None:
         super().__init__(message)
         self.code = code
+
+
+class BackendUnavailableError(VigiaError):
+    """El servidor de generación (vLLM) no respondió o falló: 5xx, timeout, auth, respuesta ilegible.
+
+    La API lo responde como 502 `upstream_unavailable` con Retry-After; no es un error del cliente.
+    """

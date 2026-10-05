@@ -40,7 +40,7 @@ navegador ────► │ panel (Jinja)        detector del tenant ◄──
                 │   ▼                     ▼                                                  │
                 │ SQLite (WAL) ◄── trazas, spans, cola de revisión, auditoría, jobs          │
                 │   ▲                                                                       │
-                │ worker de jobs (hilo): calibración, webhooks, purga de retención           │
+                │ workers de jobs (un hilo por carril): calibración y purga; webhooks aparte │
                 └─────────────────────────────────────────────────────────────────────────┘
 modo reducido GPU: cliente ─► vigia-platform (proxy) ─► vLLM --enable-return-routed-experts
 ```
@@ -90,8 +90,8 @@ orquestador.
 | Ruta | Chequea | Uso |
 |---|---|---|
 | `/livez` | Solo que el proceso responde | liveness, nunca dependencias |
-| `/startupz` | Modelo cargado y detectores leídos | startup probe; un MoE carga lento |
-| `/readyz` | Base escribible, worker vivo, profundidad de cola bajo el tope | readiness |
+| `/startupz` | Modelo cargado y arranque de detectores terminado; informa `detector_errors` sin fallar | startup probe; un MoE carga lento y un detector roto de una org no reinicia el pod |
+| `/readyz` | Base escribible, todos los hilos de jobs vivos, cola del carril por defecto bajo el tope y, en modo vLLM, upstream que responde (`ping`) | readiness |
 | `/metrics` | Prometheus, puerto o ruta interna con token | observabilidad |
 
 Ninguna ruta de health devuelve datos de tenants.
@@ -102,3 +102,15 @@ Ninguna ruta de health devuelve datos de tenants.
 diminutos), test de import core→ee, test de CSP, e2e del panel con Playwright y el benchmark de
 overhead sobre el modelo diminuto. El experimento de evidencia con Granite corre aparte con
 `pytest -m slow` porque usa 3 GB de RAM.
+
+## 7. Controles de deriva
+
+- `ModelInfo.router_sha256` hashea los pesos de todos los routers. Si el detector y el modelo lo
+  tienen y difieren, `check_model` rechaza el detector. Un detector viejo sin el campo sigue válido.
+- `vigia/drift.py` calcula PSI entre la referencia guardada en el detector y las últimas trazas.
+  El panel lo muestra en Rendimiento y `/metrics` expone `vigia_drift_psi{feature}`.
+
+## 8. Hardware
+
+`VIGIA_DEVICE` (cpu, cuda, cuda:N, mps) y `VIGIA_DTYPE` (auto, float32, bfloat16, float16) eligen
+dónde corre el backend HF. Los pesos se cargan solo desde safetensors y sin código remoto.

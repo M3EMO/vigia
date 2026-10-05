@@ -99,6 +99,7 @@ CREATE TABLE IF NOT EXISTS traces (
   finish_reason TEXT,
   usage_json TEXT                      -- {"layers":[...], "counts":[[...]]} uso capa x experto
 );
+-- traces.status (VigiaResult.status) y traces.rag_status llegan con la migración 3 de vigia_ee/db.py.
 CREATE INDEX IF NOT EXISTS ix_traces_org_time ON traces(org_id, created_at);
 
 CREATE TABLE IF NOT EXISTS trace_tokens (

@@ -19,6 +19,7 @@ from __future__ import annotations
 import base64
 import bisect
 import math
+import threading
 import time
 from collections.abc import Iterator
 from typing import Any, Literal
@@ -31,22 +32,25 @@ from vigia import features as fx
 from vigia.contracts import (
     AGGREGATES,
     USAGE_LAYER_FEATURES,
+    BackendUnavailableError,
     Capabilities,
     InvalidRequestError,
     ModelInfo,
     Tier,
     TokenEvent,
-    VigiaError,
     agg_feature,
     layer_feature,
 )
 
 NAN = float("nan")
+DEFAULT_MAX_CONCURRENCY = 16  # vLLM hace batching: serializar sus requests multiplica la latencia
+PING_TIMEOUT_S = 2.0
+PING_CACHE_S = 5.0
 ROUTED_DTYPES = {"uint8": np.dtype("<u1"), "uint16": np.dtype("<u2"), "int16": np.dtype("<i2")}
 
 
-class VllmProxyError(VigiaError):
-    """vLLM falló o devolvió una respuesta que Vigía no puede interpretar."""
+class VllmProxyError(BackendUnavailableError):
+    """vLLM falló o devolvió una respuesta que Vigía no puede interpretar (la API responde 502)."""
 
 
 # vLLM responde estos códigos cuando rechaza la entrada del cliente (prompt fuera de contexto,
@@ -244,12 +248,17 @@ class VllmProxyBackend:
         n_layers: int = 0,
         model_type: str = "unknown",
         timeout: float = 120.0,
+        max_concurrency: int = DEFAULT_MAX_CONCURRENCY,
     ) -> None:
         parts = urlsplit(base_url)
         if parts.scheme not in ("http", "https") or not parts.hostname:
             raise ValueError("base_url debe ser una URL http(s) con host")
         if n_experts is not None and n_experts < 2:
             raise ValueError("n_experts debe ser >= 2")
+        if isinstance(max_concurrency, bool) or not isinstance(max_concurrency, int) or max_concurrency < 1:
+            raise ValueError("max_concurrency debe ser un entero >= 1")
+        # Cupo de generaciones simultáneas que `vigia.api.generation_gate` lee por duck typing.
+        self.max_concurrency = max_concurrency
         self.base_url = base_url.rstrip("/")
         if self.base_url.endswith("/v1"):
             self.base_url = self.base_url[:-3]
@@ -262,6 +271,28 @@ class VllmProxyBackend:
         self.top_k = top_k
         self.n_layers = n_layers
         self.model_type = model_type
+        self._ping_lock = threading.Lock()
+        self._ping_at = float("-inf")
+        self._ping_ok = False
+
+    def ping(self) -> bool:
+        """True si vLLM responde `GET /v1/models` con 200 (para `/readyz`). Nunca lanza.
+
+        Timeout de `PING_TIMEOUT_S` y resultado cacheado `PING_CACHE_S`: un scrape frecuente de la
+        sonda no multiplica los requests al upstream.
+        """
+        with self._ping_lock:
+            now = time.monotonic()
+            if now - self._ping_at < PING_CACHE_S:
+                return self._ping_ok
+            headers = {"Authorization": f"Bearer {self._api_key}"} if self._api_key else {}
+            try:
+                resp = self._client.get(f"{self.base_url}/v1/models", headers=headers, timeout=PING_TIMEOUT_S)
+                ok = resp.status_code == 200
+            except httpx.HTTPError:
+                ok = False
+            self._ping_at, self._ping_ok = time.monotonic(), ok
+            return ok
 
     def close(self) -> None:
         if self._owns_client:
@@ -277,6 +308,7 @@ class VllmProxyBackend:
             top_k=self.top_k,
             vocab_size=0,
             gating="softmax_topk",
+            router_sha256=None,  # vLLM no expone los pesos del router: el detector no lo compara
         )
 
     def capabilities(self) -> Capabilities:

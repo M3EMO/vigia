@@ -1,0 +1,44 @@
+# Contexto de build mínimo: el Dockerfile solo copia pyproject.toml, LICENSE, vigia/ y vigia_ee/.
+.git
+.gitignore
+.gitattributes
+.venv
+venv
+.cache
+var
+runs
+logs
+dist
+build
+*.egg-info
+__pycache__
+**/__pycache__
+*.pyc
+.pytest_cache
+.ruff_cache
+.mypy_cache
+.env
+*.env
+*.db
+*.db-*
+*.sqlite3
+*.key
+credentials.json
+token.json
+secrets
+prof
+
+# Tests y artefactos de e2e (Playwright).
+tests
+test-results
+playwright-report
+node_modules
+
+# Documentación y archivos del agente: no hacen falta para correr.
+docs
+CLAUDE.md
+AGENTS.md
+README.md
+compose.yaml
+Dockerfile
+.dockerignore

@@ -229,6 +229,8 @@ def parse_jsonl(source: str | bytes | Iterable[str], *, max_items: int = MAX_ITE
             obj = json.loads(line, parse_constant=_reject_constant)
         except ValueError as exc:
             raise DatasetError(f"línea {n}: JSON inválido") from exc
+        except RecursionError:
+            raise DatasetError(f"línea {n}: JSON inválido (anidamiento excesivo)") from None
         item = validate_item(obj, where=f"línea {n}")
         if item["id"] in seen:
             raise DatasetError(f"línea {n}: id repetido {item['id']!r}")
@@ -341,6 +343,10 @@ def load_mkqa_es(
                 raw = json.loads(line, parse_constant=_reject_constant)
             except ValueError as exc:
                 raise DatasetError(f"{path.name} línea {line_no}: JSON inválido") from exc
+            except RecursionError:
+                raise DatasetError(
+                    f"{path.name} línea {line_no}: JSON inválido (anidamiento excesivo)"
+                ) from None
             if not isinstance(raw, Mapping):
                 raise DatasetError(f"{path.name} línea {line_no}: se esperaba un objeto")
             if wanted is not None and raw.get("type") not in wanted:

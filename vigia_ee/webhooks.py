@@ -235,8 +235,9 @@ def build_body(event_type: str, data: Mapping[str, Any], *, now: datetime) -> by
 
     def dump(body: Mapping[str, Any]) -> bytes:
         try:
-            return json.dumps(body, ensure_ascii=False, sort_keys=True, separators=(",", ":"),
-                              allow_nan=False).encode()
+            return json.dumps(
+                body, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False
+            ).encode()
         except (TypeError, ValueError) as exc:
             raise ValueError("data debe ser JSON serializable") from exc
 
@@ -455,10 +456,17 @@ def make_delivery_handler(
                 "webhook-signature": sign(hook["secret"], payload["msg_id"], timestamp, body),
             }
             try:
-                with _delivery_deadline(timeout), client.stream(
-                    "POST", hook["url"], content=body, headers=headers,
-                    follow_redirects=False, timeout=timeout,
-                ) as response:
+                with (
+                    _delivery_deadline(timeout),
+                    client.stream(
+                        "POST",
+                        hook["url"],
+                        content=body,
+                        headers=headers,
+                        follow_redirects=False,
+                        timeout=timeout,
+                    ) as response,
+                ):
                     status = response.status_code
             except httpx.TimeoutException:
                 raise DeliveryError(f"el destino superó el plazo de {timeout:g} s") from None

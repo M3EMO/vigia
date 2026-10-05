@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import pytest
-from _e2e import OWNER_B_PASSWORD, OWNER_PASSWORD, ConsoleLog, login
+from _e2e import OWNER_PASSWORD, ConsoleLog, create_org, login
 from playwright.sync_api import expect
 
 pytestmark = pytest.mark.e2e
@@ -44,9 +44,14 @@ def test_shell_and_nav_reach_the_bottom_of_the_viewport(platform, new_context):
 
 
 def test_empty_overview_code_block_lines_are_aligned(platform, new_context):
-    """Regresión: 'El bloque de código del estado vacío del Resumen indenta solo la primera línea'."""
+    """Regresión: 'El bloque de código del estado vacío del Resumen indenta solo la primera línea'.
+
+    Usa una org propia: la plataforma es de sesión y otros tests (playground concurrente) generan
+    trazas en la org B, así que su Resumen deja de estar vacío según el orden de los tests."""
+    password = "una frase de prueba para la org vacía 2026"  # noqa: S105 - usuario de prueba
+    create_org(platform, "Org Vacía", "duena@vacia.test", password)
     page = new_context().new_page()
-    login(page, platform, platform.owner_b_email, OWNER_B_PASSWORD)
+    login(page, platform, "duena@vacia.test", password)
     page.goto(platform.url("/"))
     lefts = page.evaluate(
         """() => {

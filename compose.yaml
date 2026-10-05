@@ -1,0 +1,119 @@
+# Plataforma Vigía en un nodo (CPU, backend HF). Guía completa: docs/operacion.md.
+#
+# Antes de levantar:
+#   mkdir -p secrets
+#   python -c "import secrets; print('k1:' + secrets.token_urlsafe(48))" > secrets/peppers.txt
+#   python -c "import secrets; print(secrets.token_urlsafe(32))"         > secrets/metrics_token.txt
+#   printf '%s\n' 'una frase larga para el owner'                        > secrets/owner_password.txt
+#   chmod 0444 secrets/*.txt   # compose sin swarm monta el archivo tal cual: uid 10001 debe leerlo
+#
+# Primer arranque (crea la org y su owner; la contraseña sale del secreto):
+#   docker compose run --rm vigia python -m vigia_ee.app init --org "Mi Org" --email owner@ejemplo.com
+#   docker compose run --rm vigia python -m vigia_ee.app create-key --org-id <ORG_ID> --name app
+#   docker compose up -d
+#
+# Esta configuración no se probó en la máquina de desarrollo (sin Docker).
+
+name: vigia
+
+services:
+  vigia:
+    build:
+      context: .
+      args:
+        # Vacío: el modelo se monta en /opt/vigia/hf. Con un id, queda dentro de la imagen.
+        PREFETCH_MODEL: ""
+    image: vigia-platform:0.1.0
+    restart: unless-stopped
+    environment:
+      # Mismo texto que el --model usado al calibrar: es parte de la huella del detector.
+      VIGIA_MODEL: ibm-granite/granite-3.1-1b-a400m-instruct
+      VIGIA_DATA_DIR: /var/lib/vigia
+      VIGIA_PEPPERS_FILE: /run/secrets/vigia_peppers
+      VIGIA_OWNER_PASSWORD_FILE: /run/secrets/vigia_owner_password
+      VIGIA_METRICS_TOKEN_FILE: /run/secrets/vigia_metrics_token
+      # VIGIA_BASE_DETECTOR: /opt/vigia/detectors/detector.json
+      # VIGIA_WEBHOOK_ALLOWED_HOSTS: hooks.interno.local
+      # VIGIA_RAG_ALLOWED_HOSTS: rag.interno.local
+    secrets:
+      - vigia_peppers
+      - vigia_owner_password
+      - vigia_metrics_token
+    volumes:
+      - vigia-data:/var/lib/vigia
+      # Cache de Hugging Face con el modelo ya descargado (ver docs/operacion.md, "Modelo sin red").
+      - ./models/hf:/opt/vigia/hf:ro
+      # - ./detectors:/opt/vigia/detectors:ro
+    # Solo loopback: el acceso remoto va por un proxy TLS propio (la cookie de sesión es __Host- Secure).
+    ports:
+      - "127.0.0.1:8000:8000"
+    read_only: true
+    tmpfs:
+      - /tmp:size=256m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    user: "10001:10001"
+    pids_limit: 512
+    mem_limit: 6g                 # Granite 1B-A400M en bf16 usa ~3 GB; ver dimensionamiento
+    stop_grace_period: 45s        # mayor que VIGIA_SHUTDOWN_TIMEOUT (30 s por defecto)
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import sys, urllib.request; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/livez', timeout=4).status == 200 else 1)"
+      interval: 30s
+      timeout: 5s
+      start_period: 300s
+      retries: 3
+
+  # --- Modo vLLM reducido (GPU, ADR A-08). Descomentar y quitar el montaje del modelo de arriba. ---
+  # Vigía actúa como proxy. vLLM no se publica: solo Vigía lo alcanza por la red interna.
+  # En el servicio vigia, reemplazar el bloque environment por:
+  #   VIGIA_BACKEND: vllm
+  #   VIGIA_MODEL: openai/gpt-oss-20b
+  #   VIGIA_VLLM_URL: http://vllm:8000
+  #   VIGIA_VLLM_MODEL: openai/gpt-oss-20b
+  #   VIGIA_VLLM_API_KEY_FILE: /run/secrets/vllm_api_key
+  #   VIGIA_VLLM_N_EXPERTS: "32"      # config.json del modelo servido: num_local_experts
+  #   VIGIA_VLLM_TOP_K: "4"           # experts_per_token / num_experts_per_tok
+  #   VIGIA_VLLM_N_LAYERS: "24"       # num_hidden_layers (capas MoE)
+  #   VIGIA_DATA_DIR, VIGIA_PEPPERS_FILE, VIGIA_OWNER_PASSWORD_FILE y VIGIA_METRICS_TOKEN_FILE como arriba
+  # y agregar `vllm_api_key` a sus secrets y `networks: [default, vllm-internal]`.
+  #
+  # vllm:
+  #   image: vllm/vllm-openai:latest   # fijar una versión probada con --enable-return-routed-experts
+  #   command:
+  #     - --model=openai/gpt-oss-20b
+  #     - --enable-return-routed-experts
+  #     - --api-key=${VLLM_API_KEY}   # desde .env; igual a secrets/vllm_api_key.txt; protege solo /v1
+  #   volumes:
+  #     - ./models/hf:/root/.cache/huggingface
+  #   networks:
+  #     - vllm-internal
+  #   deploy:
+  #     resources:
+  #       reservations:
+  #         devices:
+  #           - driver: nvidia
+  #             count: 1
+  #             capabilities: [gpu]
+
+volumes:
+  vigia-data:
+
+secrets:
+  vigia_peppers:
+    file: ./secrets/peppers.txt
+  vigia_owner_password:
+    file: ./secrets/owner_password.txt
+  vigia_metrics_token:
+    file: ./secrets/metrics_token.txt
+  # vllm_api_key:
+  #   file: ./secrets/vllm_api_key.txt
+
+# networks:
+#   vllm-internal:
+#     internal: true   # sin salida a internet ni puertos publicados

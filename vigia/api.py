@@ -12,7 +12,8 @@ dependencia async `(request) -> RequestContext` que resuelve auth, tenant, backe
 - Un request que espera el cupo del backend no genera si el cliente cortó (499 en el log) o si
   empezó el cierre del proceso (`RequestContext.closing`: 503 `shutting_down` con Retry-After). Sin
   streaming, un cliente que corta durante la generación la interrumpe entre tokens y no deja traza.
-- Una falla del servidor vLLM (`VllmProxyError`) responde 502 `upstream_unavailable` con Retry-After.
+- Una falla del servidor de generación (`BackendUnavailableError`, por ejemplo `VllmProxyError`)
+  responde 502 `upstream_unavailable` con Retry-After.
 """
 
 from __future__ import annotations
@@ -47,11 +48,11 @@ from pydantic import (
 from starlette.concurrency import iterate_in_threadpool, run_in_threadpool
 from starlette.types import Receive, Scope, Send
 
-from vigia.backends.vllm_proxy import VllmProxyError
 from vigia.contracts import (
     USAGE_LAYER_FEATURES,
     Action,
     Backend,
+    BackendUnavailableError,
     Capabilities,
     Generation,
     InvalidRequestError,
@@ -1193,7 +1194,7 @@ def create_api_router(
                 APIError(499, "El cliente cerró la conexión.", "invalid_request_error", "client_closed"),
                 request_id,
             )
-        except VllmProxyError as exc:
+        except BackendUnavailableError as exc:
             _log_upstream(exc, request_id)
             return _error_response(_upstream_error(), request_id)
         except Exception as exc:  # noqa: BLE001 - nunca filtrar stack traces al cliente
@@ -1467,7 +1468,7 @@ def _live_events(
         cut_status = "detector_error"
         yield _sse(_error_body(_detector_error(), request_id))
         yield _sse("[DONE]")
-    except VllmProxyError as exc:
+    except BackendUnavailableError as exc:
         _log_upstream(exc, request_id)
         yield _sse(_error_body(_upstream_error(), request_id))
         yield _sse("[DONE]")

@@ -27,7 +27,7 @@ from vigia.calibrate import train_detector
 from vigia.contracts import ModelInfo
 from vigia.evaluate import evaluate_report
 from vigia_ee import audit, webhooks
-from vigia_ee.auth import LoginFailed, verify_api_key
+from vigia_ee.auth import LoginFailed, Principal, verify_api_key
 from vigia_ee.auth import login as auth_login
 from vigia_ee.security import SESSION_COOKIE
 
@@ -295,6 +295,8 @@ def test_policies_viewer_is_read_only_and_admin_saves_with_audit(env):
     viewer = login(app, users["viewer"]).get("/policies").text
     assert "Política vigente" in viewer and 'action="/policies"' not in viewer
     assert "Tasa de marcado esperada" in viewer and "25,0 %" in viewer  # alphas del detector activo
+    # Detector.tau es un escalón (no interpola): el texto de ayuda lo dice así.
+    assert "interpola" not in viewer and "alpha guardado inferior" in viewer
     admin = login(app, users["admin"])
     form = {
         "alpha": "0,3",
@@ -539,6 +541,8 @@ def test_data_delete_forgets_the_tenant_detector_in_runtime_and_metrics(env):
     assert det_a.id != det_b.id
     assert runtime.detector_for(org_a).id == det_a.id and runtime.detector_for(org_b).id == det_b.id
     assert det_b.id in runtime.metrics.render()
+    runtime.save_policy(Principal(org_id=org_b, role="owner"), {"gap_max": 2})
+    assert runtime.policy_for(org_b).gap_max == 2 and org_b in runtime._policies
     owner = login(app, owner_b)
     gone = post(owner, "/data/delete", {"confirm": "yes", "confirm_name": "Org Beta"})
     assert gone.status_code == 303 and runtime.repo(org_b).get_org() is None
@@ -546,6 +550,10 @@ def test_data_delete_forgets_the_tenant_detector_in_runtime_and_metrics(env):
     assert det_b.id not in text, "vigia_calibration_info sigue listando el detector del tenant borrado"
     assert f'vigia_calibration_info{{detector_id="{det_a.id}"}} 1' in text
     assert org_b not in runtime._detectors
+    # forget_org: tampoco quedan su política, sus alertas, su retriever ni la marca del detector base.
+    for state in (runtime._policies, runtime._policy_alerts, runtime._retrievers, runtime._detector_alerts):
+        assert org_b not in state
+    assert org_b not in runtime._base_checked
     assert runtime.detector_for(org_a).id == det_a.id  # la otra org no se toca
 
 

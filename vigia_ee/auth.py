@@ -540,6 +540,7 @@ class AuthState:
     login_ip_limiter: RateLimiter | None = field(default_factory=_default_login_limiter)
     scrypt_n: int = SCRYPT_N
     clock: Callable[[], datetime] = utcnow
+    cookie_name: str = SESSION_COOKIE  # DEV_SESSION_COOKIE solo sin TLS
 
     def __post_init__(self) -> None:
         if self.sessions is None:
@@ -825,7 +826,7 @@ def _resolve_session(state: AuthState, raw: str | None) -> SessionInfo:
 
 async def _session_principal(request: Request, permission: str) -> Principal:
     state = _auth_state(request)
-    raw = request.cookies.get(SESSION_COOKIE)
+    raw = request.cookies.get(state.cookie_name)
     info = _resolve_session(state, raw)
     if await _await_body(request):
         info = _resolve_session(state, raw)

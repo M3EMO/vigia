@@ -319,6 +319,11 @@
             throw new Error((body && body.message) || "Tu organización alcanzó el límite de generaciones por minuto.");
           });
         }
+        if (resp.status === 503) {
+          return resp.json().catch(function () { return null; }).then(function (body) {
+            throw new Error((body && body.message) || "El modelo está ocupado con otras generaciones. Reintentá en unos segundos.");
+          });
+        }
         if (!resp.ok || !resp.body) { throw new Error("El servidor respondió con un error (" + resp.status + ")."); }
         var reader = resp.body.getReader();
         var decoder = new TextDecoder("utf-8");

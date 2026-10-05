@@ -22,6 +22,7 @@ import json
 import logging
 import math
 import os
+import re
 import secrets
 import sqlite3
 import threading
@@ -47,6 +48,7 @@ from vigia.contracts import (
     VigiaResult,
 )
 from vigia.detector import Detector
+from vigia.drift import DRIFT_FEATURES, drift_report, worst_level
 from vigia.policy import (
     HttpRetriever,
     PolicyError,
@@ -62,7 +64,7 @@ from vigia_ee.calibration import CalibrationService
 from vigia_ee.db import Database, TenantScopedRepository, create_org, list_org_ids, utcnow
 from vigia_ee.jobs import DEFAULT_LANE, JobQueue
 from vigia_ee.metrics import Metrics
-from vigia_ee.security import RateLimiter, log_event
+from vigia_ee.security import DEV_SESSION_COOKIE, SESSION_COOKIE, RateLimiter, log_event
 
 _log = logging.getLogger("vigia.runtime")
 
@@ -72,6 +74,9 @@ CHEAP_TIERS = (Tier.F0, Tier.F1, Tier.U)
 MAX_PLAYGROUND_MESSAGES = 64
 MAX_PLAYGROUND_CHARS = 32_000
 SHUTTING_DOWN_MESSAGE = "La plataforma se está cerrando. Reintentá en unos segundos."
+DRIFT_TRACES = 500  # el drift compara las últimas N trazas puntuadas con el detector activo
+DRIFT_MIN_TOKENS = 200  # con menos tokens el PSI es ruido: no se informa
+DRIFT_CACHE_S = 60.0  # /metrics recalcula el drift de cada tenant a lo sumo una vez por minuto
 _TRUE = {"1", "true", "yes", "on", "si", "sí"}
 _FALSE = {"0", "false", "no", "off"}
 
@@ -91,6 +96,7 @@ _RANGES: tuple[tuple[str, str, int, int], ...] = (
     ("max_queue_depth", "VIGIA_MAX_QUEUE_DEPTH", 1, 10_000_000),
     ("review_min_reviewers", "VIGIA_REVIEW_MIN_REVIEWERS", 1, 10),
     ("shutdown_timeout_s", "VIGIA_SHUTDOWN_TIMEOUT", 1, 3600),
+    ("vllm_max_concurrency", "VIGIA_VLLM_MAX_CONCURRENCY", 1, 4096),
 )
 # Forma del modelo servido por vLLM. vLLM no la informa y la normalización de U la necesita fija.
 _VLLM_SHAPE: tuple[tuple[str, str, int, int], ...] = (
@@ -126,6 +132,8 @@ class Settings:
     rag_allowed_hosts: tuple[str, ...] = ()
     webhook_allowed_hosts: tuple[str, ...] = ()
     secure_cookies: bool = True
+    device: str = "cpu"  # VIGIA_DEVICE: cpu | cuda | cuda:N | mps (backend HF)
+    dtype: str = "auto"  # VIGIA_DTYPE: auto | float32 | bfloat16 | float16
     base_detector_path: Path | None = None
     # Extras de operación (no forman parte del contrato mínimo, todos con default seguro).
     vllm_api_key: str | None = field(default=None, repr=False)
@@ -139,6 +147,7 @@ class Settings:
     vllm_n_experts: int | None = None
     vllm_top_k: int | None = None
     vllm_n_layers: int | None = None
+    vllm_max_concurrency: int = 16  # generaciones simultáneas hacia vLLM (cupo de vigia.api)
 
     def __post_init__(self) -> None:
         self.data_dir = Path(self.data_dir)
@@ -155,6 +164,10 @@ class Settings:
             raise SettingsError(
                 f"Modelo diminuto desconocido; opciones: {', '.join(TINY_PREFIX + a for a in TINY_ARCHS)}."
             )
+        if self.dtype not in ("auto", "float32", "bfloat16", "float16"):
+            raise SettingsError("VIGIA_DTYPE debe ser auto, float32, bfloat16 o float16.")
+        if not re.fullmatch(r"cpu|mps|cuda(:\d+)?", self.device):
+            raise SettingsError("VIGIA_DEVICE debe ser cpu, mps, cuda o cuda:N.")
         if self.backend == "vllm":
             self._check_vllm()
         for name, env_name, lo, hi in _RANGES:
@@ -209,6 +222,8 @@ class Settings:
             rag_allowed_hosts=_env_csv(env, "VIGIA_RAG_ALLOWED_HOSTS"),
             webhook_allowed_hosts=_env_csv(env, "VIGIA_WEBHOOK_ALLOWED_HOSTS"),
             secure_cookies=_env_bool(env, "VIGIA_SECURE_COOKIES", True),
+            device=(env.get("VIGIA_DEVICE") or "cpu").strip(),
+            dtype=(env.get("VIGIA_DTYPE") or "auto").strip().lower(),
             base_detector_path=Path(base) if base else None,
             vllm_api_key=_env_secret(env, "VIGIA_VLLM_API_KEY"),
             peppers=peppers,
@@ -220,6 +235,7 @@ class Settings:
             vllm_n_experts=_env_int(env, "VIGIA_VLLM_N_EXPERTS", None),
             vllm_top_k=_env_int(env, "VIGIA_VLLM_TOP_K", None),
             vllm_n_layers=_env_int(env, "VIGIA_VLLM_N_LAYERS", None),
+            vllm_max_concurrency=_env_int(env, "VIGIA_VLLM_MAX_CONCURRENCY", 16),
         )
 
 
@@ -282,13 +298,16 @@ def build_backend(settings: Settings) -> Backend:
             n_experts=settings.vllm_n_experts,
             top_k=settings.vllm_top_k or 0,
             n_layers=settings.vllm_n_layers or 0,
+            max_concurrency=settings.vllm_max_concurrency,
         )
     if settings.model.startswith(TINY_PREFIX):
         return make_tiny_backend(settings.model.removeprefix(TINY_PREFIX))
     from vigia.backends.hf import HFBackend
 
     try:
-        return HFBackend(settings.model)
+        return HFBackend(
+            settings.model, device=settings.device, dtype=None if settings.dtype == "auto" else settings.dtype
+        )
     except (OSError, ValueError) as exc:
         raise SettingsError(
             f"No se puede cargar el modelo (VIGIA_MODEL={settings.model}): {_short_cause(exc)}"
@@ -464,6 +483,7 @@ class Runtime:
             self.auth = AuthState(
                 db=self.db,
                 peppers=peppers,
+                cookie_name=SESSION_COOKIE if settings.secure_cookies else DEV_SESSION_COOKIE,
                 key_limiter=RateLimiter(
                     rate=settings.key_rate_per_minute / 60.0, burst=settings.key_rate_per_minute
                 ),
@@ -475,7 +495,9 @@ class Runtime:
             self.backend: Backend = backend if backend is not None else build_backend(settings)
             self.model_info: ModelInfo = self.backend.model_info()
             self.jobs = JobQueue(self.db, clock=self.clock)
-            self.metrics = Metrics(jobs_depth=self.jobs.depth, review_depth=self._review_depth)
+            self.metrics = Metrics(
+                jobs_depth=self.jobs.depth, review_depth=self._review_depth, drift=self.drift_gauges
+            )
             webhooks.register_delivery(self.jobs, allowed_hosts=settings.webhook_allowed_hosts)
             self._lock = threading.RLock()
             self._detectors: dict[str, tuple[str, Detector | None]] = {}
@@ -484,6 +506,7 @@ class Runtime:
             self._policy_alerts: dict[str, str] = {}
             self._retrievers: dict[str, tuple[str, HttpRetriever | None]] = {}
             self._base_checked: set[str] = set()
+            self._drift: dict[str, tuple[float, str | None, dict[str, Any]]] = {}
             self.base_detector: Detector | None = self._check_base_detector(base_artifact)
             self.calibration = CalibrationService(self)
             self.startup_errors = self._warm_detectors()
@@ -646,6 +669,19 @@ class Runtime:
             active = [d.id for _, d in self._detectors.values() if d is not None]
         self.metrics.set_calibrations(active)
 
+    def forget_org(self, org_id: str) -> None:
+        """Saca de memoria todo el estado de una org borrada: detector, alertas, política y retriever."""
+        with self._lock:
+            self._detectors.pop(org_id, None)
+            self._detector_alerts.pop(org_id, None)
+            self._policies.pop(org_id, None)
+            self._policy_alerts.pop(org_id, None)
+            self._retrievers.pop(org_id, None)
+            self._base_checked.discard(org_id)
+            self._drift.pop(org_id, None)
+            active = [d.id for _, d in self._detectors.values() if d is not None]
+        self.metrics.set_calibrations(active)
+
     def _warm_detectors(self) -> int:
         errors = 0
         for org_id in list_org_ids(self.db):
@@ -780,6 +816,7 @@ class Runtime:
             trace_lookup=lambda trace_id: self.trace_view(org_id, trace_id),
             retriever=self._retriever_for(org_id, policy),
             source=source,
+            closing=lambda: self.shutting_down,
         )
 
     def store_trace(self, org_id: str, record: TraceRecord) -> str:
@@ -827,6 +864,8 @@ class Runtime:
                 latency_ms=record.latency_ms,
                 overhead_ms=record.overhead_ms,
                 degraded=res.degraded,
+                status=res.status,
+                rag_status=res.rag_status or record.rag_status,
                 finish_reason=gen.finish_reason,
                 usage=_usage(record.model, gen.tokens),
                 created_at=created_at,
@@ -893,8 +932,8 @@ class Runtime:
         source, finish_reason, response, vigia, latency_ms, overhead_ms, rag_status}`, con `vigia`
         igual a `VigiaResult.to_dict()`. Así un cliente escrito contra `vigia serve` lee la traza de
         la plataforma. Con `abstain` no viajan el texto, los tokens ni los fragmentos. El panel lee la
-        traza completa con `repo.get_trace`. `rag_status` y `status` salen de la base cuando sus
-        columnas existen; sin ellas valen None y "ok".
+        traza completa con `repo.get_trace`. `rag_status` y `status` salen de la base
+        (migración 3); una traza guardada antes de esa migración vale None y "ok".
         """
         if not isinstance(trace_id, str) or not trace_id:
             return None
@@ -944,13 +983,98 @@ class Runtime:
             "rag_status": result.rag_status,
         }
 
+    # -- drift (P-36) --
+
+    def drift_for(self, org_id: str, *, n_traces: int = DRIFT_TRACES, max_age: float = 0.0) -> dict[str, Any]:
+        """PSI de las últimas `n_traces` trazas del tenant contra la referencia del detector activo.
+
+        Devuelve `{available, reason, detector_id, n_traces, n_tokens, features, level}`, con
+        `features = {feature: {psi, level, n}}` (ver `vigia.drift.drift_report`) y `level` el peor.
+        Solo cuentan las trazas puntuadas con el detector activo: el P(error) de otro detector no es
+        comparable. `flag` se recalcula con el tau de la referencia, no con el alpha de la política.
+        `max_age` > 0 reusa un cálculo previo del mismo detector con esa antigüedad en segundos.
+        """
+        detector = self.detector_for(org_id)
+        det_id = detector.id if detector is not None else None
+        if max_age > 0:
+            with self._lock:
+                cached = self._drift.get(org_id)
+            if cached is not None and cached[1] == det_id and time.monotonic() - cached[0] < max_age:
+                return cached[2]
+        result = self._compute_drift(org_id, detector, n_traces)
+        with self._lock:
+            self._drift[org_id] = (time.monotonic(), det_id, result)
+        return result
+
+    def _compute_drift(self, org_id: str, detector: Detector | None, n_traces: int) -> dict[str, Any]:
+        out: dict[str, Any] = {
+            "available": False,
+            "reason": None,
+            "detector_id": detector.id if detector is not None else None,
+            "n_traces": 0,
+            "n_tokens": 0,
+            "features": {},
+            "level": None,
+        }
+        if detector is None:
+            out["reason"] = "No hay un detector calibrado activo."
+            return out
+        reference = detector.drift_reference
+        if not reference:
+            out["reason"] = (
+                "El detector activo no guarda la referencia de drift (es anterior a esa función): "
+                "recalibrá para medir drift."
+            )
+            return out
+        signals = self.repo(org_id).recent_token_signals(detector.id, limit_traces=n_traces)
+        rows = signals["tokens"]
+        out["n_traces"], out["n_tokens"] = signals["n_traces"], len(rows)
+        if len(rows) < DRIFT_MIN_TOKENS:
+            out["reason"] = (
+                f"Hacen falta al menos {DRIFT_MIN_TOKENS} tokens puntuados con el detector activo "
+                f"para medir drift; hay {len(rows)}."
+            )
+            return out
+        tau = (reference.get("flag") or {}).get("tau")
+        p_error = [float(r["p_error"]) for r in rows]
+        current = {
+            "p_error": p_error,
+            "flag": [
+                float(p >= tau) if tau is not None else float(bool(r["flag"]))
+                for p, r in zip(p_error, rows, strict=True)
+            ],
+            "agg_mean:r_ent_n": [r["r_ent_mean"] for r in rows if _num(r["r_ent_mean"]) is not None],
+            "out_entropy": [r["out_entropy"] for r in rows if _num(r["out_entropy"]) is not None],
+        }
+        features = drift_report(reference, current, DRIFT_FEATURES)
+        out.update(
+            available=True, features=features, level=worst_level([f["level"] for f in features.values()])
+        )
+        return out
+
+    def drift_gauges(self) -> dict[str, float]:
+        """PSI máximo entre tenants por feature, para `vigia_drift_psi{feature}` (sin org en labels)."""
+        worst: dict[str, float] = {}
+        for org_id in list_org_ids(self.db):
+            try:
+                report = self.drift_for(org_id, max_age=DRIFT_CACHE_S)
+            except Exception as exc:  # noqa: BLE001 - un tenant roto no apaga la métrica de los demás
+                log_event(
+                    _log, "drift_error", level=logging.WARNING, org_id=org_id, error_type=type(exc).__name__
+                )
+                continue
+            for name, entry in report["features"].items():
+                worst[name] = max(worst.get(name, 0.0), float(entry["psi"]))
+        return worst
+
     # -- salud --
 
     def readiness(self) -> dict[str, bool]:
-        """Chequeos de `/readyz`: base escribible, worker vivo y cola bajo el tope.
+        """Chequeos de `/readyz`: base escribible, worker vivo, cola bajo el tope y upstream vivo.
 
         La cola mide solo `DEFAULT_LANE` (purga y calibración): el backlog de webhooks de un tenant
         corre en su propio carril y no saca el nodo. La métrica `vigia_jobs_queue_depth` cuenta todo.
+        Un backend con `ping()` (proxy vLLM) suma el chequeo `backend`: un upstream caído saca el nodo.
         """
         checks = {"db": False, "worker": False, "queue": False}
         try:
@@ -964,6 +1088,13 @@ class Runtime:
             checks["queue"] = self.jobs.depth(lane=DEFAULT_LANE) < self.settings.max_queue_depth
         except Exception as exc:  # noqa: BLE001
             log_event(_log, "readyz_queue_error", level=logging.WARNING, error_type=type(exc).__name__)
+        ping = getattr(self.backend, "ping", None)
+        if callable(ping):
+            try:
+                checks["backend"] = bool(ping())
+            except Exception as exc:  # noqa: BLE001 - una sonda nunca lanza
+                log_event(_log, "readyz_backend_error", level=logging.WARNING, error_type=type(exc).__name__)
+                checks["backend"] = False
         return checks
 
     # -- playground --

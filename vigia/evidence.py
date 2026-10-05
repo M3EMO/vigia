@@ -43,6 +43,7 @@ from vigia.contracts import Backend, ModelInfo, Tier, TokenEvent, VigiaError, fe
 from vigia.datasets import DEFAULT_INSTRUCTION, items_sha256
 from vigia.detector import Detector
 from vigia.evaluate import SingleClassError, evaluate_report, render_report_html
+from vigia.harmony import final_view
 from vigia.labels import (
     IGNORE_LABEL,
     JUDGE_PROMPT_SHA256,
@@ -235,10 +236,12 @@ def computable_labels(row: Mapping[str, Any]) -> tuple[list[int], dict[str, Any]
     if mode == "label":
         correct = item["label"] == 0
         return label_tokens_from_answer(toks, None, correct), {"correct": correct}
-    if _final_text(meta) != item["response"]:
+    # Con marcado harmony, los offsets del dataset se refieren a la respuesta con marcado y los de los
+    # tokens al texto final: final_view lleva los spans al marco del texto final (sin marcado, no cambia).
+    response, spans = final_view(item["response"], [tuple(s) for s in item["hallucinated_spans"]])
+    if _final_text(meta) != response:
         # Los offsets del dataset se refieren a la respuesta dada; si el texto final difiere, no valen.
         return [IGNORE_LABEL] * len(meta), {"correct": None, "rejected": "texto_final_distinto"}
-    spans = [tuple(s) for s in item["hallucinated_spans"]]
     return spans_to_token_labels(toks, spans), {"correct": not spans}
 
 
@@ -287,6 +290,17 @@ def model_info_from_dict(data: Mapping[str, Any]) -> ModelInfo:
     return ModelInfo(**values)
 
 
+def _same_model_info(a: Any, b: Any) -> bool:
+    """Igualdad de `model_info` entre manifiestos. `router_sha256` se compara solo si los dos lo tienen:
+    una corrida previa a ese campo se puede reanudar con el mismo modelo."""
+    if not isinstance(a, Mapping) or not isinstance(b, Mapping):
+        return a == b
+    if a.get("router_sha256") is None or b.get("router_sha256") is None:
+        a = {k: v for k, v in a.items() if k != "router_sha256"}
+        b = {k: v for k, v in b.items() if k != "router_sha256"}
+    return dict(a) == dict(b)
+
+
 def _atomic_write_text(path: Path, text: str) -> None:
     tmp = path.with_name(path.name + ".tmp")
     with open(tmp, "w", encoding="utf-8", newline="\n") as fh:
@@ -330,8 +344,10 @@ class RunStore:
                 raise EvidenceError(f"{self.rows_path} existe sin {MANIFEST_FILE}: usá otro directorio")
             _atomic_write_text(self.manifest_path, json.dumps(dict(manifest), ensure_ascii=False, indent=2))
             return
-        keys = ("schema_version", "model_info", "tiers", "max_tokens", "seed", "label_source", "judge")
+        keys = ("schema_version", "tiers", "max_tokens", "seed", "label_source", "judge")
         diff = [k for k in keys if current.get(k) != manifest.get(k)]
+        if not _same_model_info(current.get("model_info"), manifest.get("model_info")):
+            diff.insert(1, "model_info")
         if diff:
             raise EvidenceError(
                 f"la corrida en {self.dir} se hizo con otra configuración ({', '.join(diff)}); "

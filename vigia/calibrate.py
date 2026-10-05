@@ -22,7 +22,8 @@ from typing import Any
 import numpy as np
 
 from vigia.contracts import ModelInfo, feature_tier
-from vigia.detector import Detector, logit, sigmoid
+from vigia.detector import DRIFT_REFERENCE_KEY, Detector, logit, sigmoid
+from vigia.drift import DRIFT_FEATURES, build_reference
 from vigia.labels import IGNORE_LABEL
 
 DEFAULT_ALPHAS = (0.05, 0.1, 0.2, 0.3)
@@ -464,6 +465,14 @@ def train_detector(
         return out
 
     metrics: dict[str, Any] = {"c": c, "cal": summary(cal.y, p_cal)}
+    # Referencia del monitor de drift (vigia.drift): distribución de p_error, flag y features clave en
+    # calibración. flag usa el tau del alpha por defecto (escalón, igual que Detector.tau).
+    tau_default = max((t for t in thresholds if t["alpha"] <= default_alpha), key=lambda t: t["alpha"])["tau"]
+    metrics[DRIFT_REFERENCE_KEY] = build_reference(
+        p_cal,
+        tau_default,
+        {name: cal.X[:, j] for j, name in enumerate(data.names) if name in DRIFT_FEATURES},
+    )
     test = data.subset(masks["test"])
     if len(test.y):
         z_test = _standardize(test.X[:, keep], mean, std) @ coef + bias

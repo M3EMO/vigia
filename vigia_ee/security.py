@@ -43,6 +43,8 @@ ASGIApp = Callable[[Scope, Receive, Send], Awaitable[None]]
 
 SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS", "TRACE"})
 SESSION_COOKIE = "__Host-vigia_session"
+# Solo desarrollo sin TLS (VIGIA_SECURE_COOKIES=false): un navegador rechaza `__Host-` sin Secure.
+DEV_SESSION_COOKIE = "vigia_session_dev"
 DEFAULT_MAX_BODY_BYTES = 1_048_576
 
 # --- logs JSON con allowlist ----------------------------------------------------------------------
@@ -160,7 +162,7 @@ def _is_authenticated(scope: Scope) -> bool:
     for name, value in scope.get("headers") or ():
         if name == b"authorization":
             return True
-        if name == b"cookie" and SESSION_COOKIE.encode() in value:
+        if name == b"cookie" and b"vigia_session" in value:  # cubre SESSION_COOKIE y DEV_SESSION_COOKIE
             return True
     return False
 

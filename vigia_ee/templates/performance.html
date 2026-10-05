@@ -27,4 +27,31 @@
   <p>Cada request registra su latencia total y el overhead de Vigía; los valores aparecen acá cuando llega tráfico.</p>
 </div>
 {% endif %}
+
+<section class="vg-card" aria-labelledby="drift-title" aria-describedby="drift-def">
+  <h2 id="drift-title">Deriva del detector</h2>
+  <p class="vg-hint" id="drift-def">El PSI compara las señales de las últimas {{ drift_max|count }} trazas puntuadas con el detector activo contra las del set de calibración. Menos de 0,1 es estable; de 0,1 a 0,25 conviene revisar; desde 0,25 la calibración ya no describe el tráfico y hay que recalibrar.</p>
+  {% if drift.available %}
+  {% set lvl = {"ok": "Estable: el tráfico se parece al de calibración.", "warn": "Atención: alguna señal se alejó de la calibración. Revisá si cambió el modelo o el tipo de consultas.", "alert": "Alerta: el tráfico ya no se parece al de calibración. Recalibrá el detector."} %}
+  <p class="vg-alert {% if drift.level == 'alert' %}vg-alert-error{% elif drift.level == 'warn' %}vg-alert-warn{% else %}vg-alert-ok{% endif %}" id="drift-status">Estado de deriva: {{ lvl.get(drift.level, "sin datos") }}</p>
+  <div class="vg-table-wrap">
+    <table class="vg-table vg-table-cards" aria-describedby="drift-status">
+      <caption class="sr-only">PSI por señal del detector {{ drift.detector_id }} sobre {{ drift.n_tokens|count }} tokens</caption>
+      <thead><tr><th scope="col">Señal</th><th scope="col" class="vg-num">PSI</th><th scope="col">Estado</th><th scope="col" class="vg-num">Tokens</th></tr></thead>
+      <tbody>
+        {% for r in drift_rows %}
+        <tr>
+          <th scope="row" data-label="Señal">{{ r.label }}</th>
+          <td data-label="PSI" class="vg-num">{{ r.psi|num(3) }}</td>
+          <td data-label="Estado"><span class="vg-badge {{ r.badge }}">{{ r.state }}</span></td>
+          <td data-label="Tokens" class="vg-num">{{ r.n|count }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="vg-empty" id="drift-status">{{ drift.reason }}</p>
+  {% endif %}
+</section>
 {% endblock %}

@@ -492,3 +492,43 @@ def test_answers_items_use_gold_correct_for_numbers_and_dates():
     _, labels, _, ids, skipped, _ = svc._collect(parse_dataset(content))
     assert not skipped and ids == [f"i{n}" for n in range(len(cases))]
     assert labels == [expected for _, _, _, expected in cases]
+
+
+def test_collect_maps_harmony_spans_to_the_final_text():
+    """Regresión (gpt-oss): con marcado harmony en la respuesta, los spans del dataset se aplicaban en
+    el marco del texto con marcado y marcaban el token equivocado ('.' en vez de 'Quito')."""
+    from types import SimpleNamespace
+
+    from vigia.contracts import Capabilities, Tier, TokenEvent
+
+    marked = (
+        "<|channel|>analysis<|message|>Quito, creo.<|end|><|start|>assistant<|channel|>final"
+        "<|message|>Es Quito.<|return|>"
+    )
+    finals = {marked: ["Es", " Quito", "."], "Otra respuesta": ["Distinto"]}
+
+    class FakeBackend:
+        def capabilities(self):
+            return Capabilities(tiers=(Tier.F0, Tier.F1), streaming=True, disabled=())
+
+        def teacher_force(self, messages, response, tiers=()):
+            out, pos = [], 0
+            for i, piece in enumerate(finals[response]):
+                out.append(TokenEvent(i, i, piece, pos, pos + len(piece), {"out_nll": 1.0}))
+                pos += len(piece)
+            return out
+
+    content = jsonl(
+        {
+            "id": "h",
+            "question": "¿Capital de Perú?",
+            "response": marked,
+            "hallucinated_spans": [{"text": "Quito", "occurrence": 2}],
+        },
+        {"id": "x", "question": "¿Algo?", "response": "Otra respuesta", "hallucinated_spans": ["respuesta"]},
+    )
+    svc = cal.CalibrationService.__new__(cal.CalibrationService)
+    svc.runtime = SimpleNamespace(backend=FakeBackend())
+    _, labels, _, ids, skipped, _ = svc._collect(parse_dataset(content))
+    assert ids == ["h", "h", "h"] and labels == [0, 1, 0]
+    assert skipped == {"texto_final_distinto": 1}

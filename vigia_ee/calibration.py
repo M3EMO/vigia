@@ -47,6 +47,7 @@ from vigia.contracts import DetectorMismatchError, Tier, TokenEvent, feature_tie
 from vigia.detector import Detector
 from vigia.evaluate import SingleClassError, evaluate_report
 from vigia.evidence import gold_correct
+from vigia.harmony import final_view
 from vigia.labels import (
     IGNORE_LABEL,
     InvalidJudgment,
@@ -682,7 +683,13 @@ class CalibrationService:
                     if item.kind == "label":
                         token_labels = label_tokens_from_answer(tokens, None, item.label == 0)
                     else:
-                        token_labels = spans_to_token_labels(tokens, item.spans)
+                        # Con marcado harmony, los spans del dataset se refieren a la respuesta con
+                        # marcado y los tokens al texto final: final_view los lleva al mismo marco.
+                        final_text, spans = final_view(item.response, item.spans)
+                        if "".join(t.text for t in tokens if _visible(t)) != final_text:
+                            skipped["texto_final_distinto"] += 1
+                            continue
+                        token_labels = spans_to_token_labels(tokens, spans)
             except ValueError:
                 skipped["contexto_o_entrada_invalida"] += 1
                 continue

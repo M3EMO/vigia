@@ -434,7 +434,7 @@ def test_trace_view_hides_text_tokens_and_spans_on_abstain(rt, org, owner):
 def test_trace_view_has_the_core_shape(rt, org, owner):
     """Regresión: 'GET /v1/vigia/traces/{id} de la plataforma pierde rag_status y no tiene la forma
     del núcleo'. La traza por ID tiene la forma de `vigia.serve.trace_view` y el campo `vigia`
-    coincide con el de la respuesta (salvo rag_status, que la base todavía no guarda)."""
+    coincide con el de la respuesta, status y rag_status incluidos (migración 3)."""
     from vigia.serve import trace_view as core_trace_view
 
     install_detector(rt, org, constant_detector(rt.model_info, 0.9))
@@ -460,7 +460,8 @@ def test_trace_view_has_the_core_shape(rt, org, owner):
     assert body["response"] == choice["message"]["content"] and body["model"] == "tiny:mixtral"
     assert body["vigia"]["spans"] and body["vigia"]["spans"] == choice["vigia"]["spans"]
     assert body["vigia"]["tokens"] == choice["vigia"]["tokens"]
-    for key in ("action", "response_p_error", "calibration_id", "calibrated", "mode", "alpha", "tau"):
+    keys = ("action", "response_p_error", "calibration_id", "calibrated", "mode", "alpha", "tau", "status")
+    for key in (*keys, "rag_status"):
         assert body["vigia"][key] == choice["vigia"][key], key
 
 
@@ -537,6 +538,7 @@ def test_playground_rag_retry_uses_policy_fallback(tmp_path, fallback):
         done = list(rt.playground_stream(owner, MESSAGES, max_tokens=4))[-1]
         assert done["type"] == "done" and done["action"] == fallback
         assert rt.repo(org).get_trace(done["trace_id"])["action"] == fallback
+        assert rt.trace_view(org, done["trace_id"])["rag_status"] == "unavailable"
     finally:
         rt.close()
 
@@ -642,3 +644,252 @@ def test_render_prompt_is_readable_transcript():
 
 def test_make_settings_uses_isolated_peppers(tmp_path):
     assert make_settings(tmp_path).peppers is PEPPERS
+
+
+# --- Integración de la ronda de verificación -------------------------------------------------------
+
+
+class _FakeRetriever:
+    def __init__(self) -> None:
+        self.queries: list[str] = []
+
+    def retrieve(self, query: str) -> list[str]:
+        self.queries.append(query)
+        return ["Documento de apoyo."]
+
+
+def test_api_trace_persists_rag_status_and_status(tmp_path):
+    """Regresión: 'GET /v1/vigia/traces/{id} de la plataforma devuelve rag_status null'. La base
+    guarda rag_status y status (migración 3) y la traza por ID coincide con la respuesta."""
+    from dataclasses import replace
+
+    rt = make_runtime(tmp_path, rag_allowed_hosts=("rag.interno",))
+    try:
+        org = rt.create_org("Acme")
+        owner = add_user(rt, org, "o@acme.com.ar", "owner")
+        install_detector(rt, org, constant_detector(rt.model_info, 0.9))
+        rt.save_policy(owner, {"rag_retry_at": 0.8, "rag_url": "http://rag.interno/ok"})
+        retriever = _FakeRetriever()
+
+        async def get_context(request: Request):
+            return replace(rt.context_for(owner), retriever=retriever)
+
+        app = FastAPI()
+        app.include_router(create_api_router(get_context, max_tokens_limit=64, default_max_tokens=8))
+        client = TestClient(app)
+        resp = chat(client, vigia={})
+        vigia = resp.json()["choices"][0]["vigia"]
+        assert retriever.queries and vigia["rag_status"] is not None
+        trace_id = resp.headers["X-Vigia-Trace-Id"]
+        stored = rt.repo(org).get_trace(trace_id)
+        assert stored["rag_status"] == vigia["rag_status"] and stored["status"] == vigia["status"]
+        body = client.get(f"/v1/vigia/traces/{trace_id}").json()
+        assert body["rag_status"] == vigia["rag_status"] == body["vigia"]["rag_status"]
+    finally:
+        rt.close()
+
+
+def test_store_trace_persists_a_non_ok_status(rt, org):
+    record = TraceRecord(
+        trace_id="estado" + "0" * 10,
+        org_id=org,
+        key_id=None,
+        created_at="2026-10-04T12:00:00+00:00",
+        model=rt.model_info,
+        prompt_messages=MESSAGES,
+        generation=Generation(
+            text="", tokens=[], finish_reason="length", prompt_tokens=3, model=rt.model_info
+        ),
+        result=VigiaResult(
+            trace_id="estado" + "0" * 10,
+            tokens=[],
+            spans=[],
+            response_p_error=None,
+            action="pass",
+            calibration_id=None,
+            calibrated=False,
+            mode="full",
+            status="truncated_before_final",
+        ),
+        latency_ms=1.0,
+        overhead_ms=0.0,
+    )
+    rt.store_trace(org, record)
+    assert rt.trace_view(org, record.trace_id)["vigia"]["status"] == "truncated_before_final"
+
+
+def test_context_for_wires_closing_to_shutdown(rt, org, owner):
+    """Regresión: 'el 503 en cola no se activa en vigia_ee.app serve': context_for no pasaba closing."""
+    assert rt.context_for(owner).closing() is False
+    rt.begin_shutdown()
+    assert rt.context_for(owner).closing() is True
+
+
+def test_forget_org_drops_every_cached_state(rt, org, owner):
+    install_detector(rt, org, constant_detector(rt.model_info, 0.9))
+    rt.save_policy(owner, {"gap_max": 2})
+    assert rt.detector_for(org) is not None and rt.policy_for(org).gap_max == 2
+    rt.drift_for(org)
+    assert rt.repo(org).delete_org()  # forget_org acompaña al borrado de la org (panel /data/delete)
+    rt.forget_org(org)
+    for state in (rt._detectors, rt._policies, rt._policy_alerts, rt._retrievers, rt._drift):
+        assert org not in state
+    assert "vigia_calibration_info{" not in rt.metrics.render()
+
+
+def test_vllm_max_concurrency_is_configurable(tmp_path):
+    """Regresión: 'El proxy vLLM serializa todas las generaciones': VIGIA_VLLM_MAX_CONCURRENCY llega al
+    backend y el cupo de vigia.api lo usa."""
+    from vigia.api import generation_gate
+    from vigia_ee.runtime import build_backend
+
+    assert Settings.from_env(VLLM_ENV).vllm_max_concurrency == 16
+    settings = Settings.from_env({**VLLM_ENV, "VIGIA_VLLM_MAX_CONCURRENCY": "5"})
+    backend = build_backend(settings)
+    try:
+        assert backend.max_concurrency == 5
+        assert generation_gate(backend).slots == 5
+    finally:
+        backend.close()
+    with pytest.raises(SettingsError, match="VIGIA_VLLM_MAX_CONCURRENCY"):
+        Settings.from_env({**VLLM_ENV, "VIGIA_VLLM_MAX_CONCURRENCY": "0"})
+
+
+class _PingBackend:
+    """Backend diminuto compartido con un `ping` controlable (como el proxy vLLM)."""
+
+    def __init__(self, ok) -> None:
+        self._inner = shared_backend()
+        self.ok = ok
+
+    def __getattr__(self, name):
+        return getattr(self._inner, name)
+
+    def ping(self) -> bool:
+        if isinstance(self.ok, Exception):
+            raise self.ok
+        return self.ok
+
+
+@pytest.mark.parametrize(("ok", "expected"), [(True, True), (False, False), (RuntimeError("x"), False)])
+def test_readiness_checks_the_upstream_when_the_backend_pings(tmp_path, ok, expected):
+    """Regresión: '/readyz no ve un vLLM caído': con ping() en el backend, readiness suma `backend`."""
+    from vigia_ee.app import create_app
+
+    rt = make_runtime(tmp_path, backend=_PingBackend(ok))
+    try:
+        assert rt.readiness()["backend"] is expected
+        resp = TestClient(create_app(runtime=rt)).get("/readyz")
+        assert resp.json()["checks"]["backend"] is expected and resp.status_code == 503  # sin worker
+    finally:
+        rt.close()
+    plain = make_runtime(tmp_path / "plain")
+    try:
+        assert "backend" not in plain.readiness()  # el backend HF no tiene upstream
+    finally:
+        plain.close()
+
+
+def _drift_detector(info):
+    """Detector constante (p = 0,9) con una referencia de drift uniforme en [0,05, 0,95]."""
+    from vigia.detector import Detector, artifact_sha256
+    from vigia.drift import build_reference
+
+    art = constant_detector(info, 0.9).artifact
+    reference = build_reference(np.linspace(0.05, 0.95, 400), 0.5, {"out_entropy": np.linspace(0, 4, 400)})
+    art["metrics"] = {"drift_reference": reference}
+    art["sha256"] = artifact_sha256(art)
+    return Detector(art)
+
+
+def _store_scored(rt, org, det, n_traces, per_trace, *, prefix="drift", p=0.9):
+    from vigia.contracts import ScoredToken
+
+    for i in range(n_traces):
+        trace_id = f"{prefix}{i:011d}"
+        tokens = [ScoredToken(k, "x", k, k + 1, p, p >= 0.5) for k in range(per_trace)]
+        rt.store_trace(
+            org,
+            TraceRecord(
+                trace_id=trace_id,
+                org_id=org,
+                key_id=None,
+                created_at=f"2026-10-04T12:{i // 60:02d}:{i % 60:02d}+00:00",
+                model=rt.model_info,
+                prompt_messages=MESSAGES,
+                generation=Generation(
+                    text="x" * per_trace,
+                    tokens=[],
+                    finish_reason="stop",
+                    prompt_tokens=3,
+                    model=rt.model_info,
+                ),
+                result=VigiaResult(
+                    trace_id=trace_id,
+                    tokens=tokens,
+                    spans=[],
+                    response_p_error=p,
+                    action="pass",
+                    calibration_id=det.id,
+                    calibrated=True,
+                    mode="full",
+                    alpha=0.1,
+                    tau=0.5,
+                ),
+                latency_ms=1.0,
+                overhead_ms=0.1,
+            ),
+        )
+
+
+def test_drift_for_reports_psi_against_the_active_detector_reference(rt, org):
+    """P-36: PSI de las últimas trazas puntuadas con el detector activo contra su referencia."""
+    old = constant_detector(rt.model_info, 0.9)
+    install_detector(rt, org, old)
+    report = rt.drift_for(org)
+    assert report["available"] is False and "recalibrá" in report["reason"]
+    det = _drift_detector(rt.model_info)
+    install_detector(rt, org, det)
+    _store_scored(rt, org, det, 3, 10, prefix="pocas")
+    report = rt.drift_for(org)
+    assert report["available"] is False and "al menos" in report["reason"] and report["n_tokens"] == 30
+    _store_scored(rt, org, det, 30, 10)  # 300 tokens con p = 0,9; la referencia es uniforme
+    _store_scored(rt, org, old, 5, 10, prefix="viejo")  # otro detector: no cuenta
+    report = rt.drift_for(org)
+    assert report["available"] and report["detector_id"] == det.id
+    assert report["n_traces"] == 33 and report["n_tokens"] == 330
+    assert set(report["features"]) == {"p_error", "flag"}  # estas trazas no guardan entropías
+    assert report["features"]["p_error"]["level"] == "alert" and report["level"] == "alert"
+    assert report["features"]["flag"]["psi"] > 0.25  # todo marcado contra 50 % en calibración
+    gauges = rt.drift_gauges()
+    assert gauges["p_error"] == pytest.approx(report["features"]["p_error"]["psi"])
+    rt.metrics.set_drift(gauges)
+    text = rt.metrics.render()
+    assert 'vigia_drift_psi{feature="p_error"}' in text and org not in text
+
+
+def test_settings_device_and_dtype_validation():
+    """VIGIA_DEVICE y VIGIA_DTYPE se validan y nombran la variable al fallar."""
+    import pytest
+
+    from vigia_ee.runtime import Settings, SettingsError
+
+    env = {"VIGIA_MODEL": "tiny:mixtral", "VIGIA_DEVICE": "cuda:1", "VIGIA_DTYPE": "bfloat16"}
+    s = Settings.from_env(env)
+    assert (s.device, s.dtype) == ("cuda:1", "bfloat16")
+    for bad in ({"VIGIA_DEVICE": "gpu0"}, {"VIGIA_DTYPE": "int4"}):
+        with pytest.raises(SettingsError, match=next(iter(bad))):
+            Settings.from_env({"VIGIA_MODEL": "tiny:mixtral", **bad})
+
+
+def test_insecure_cookies_use_a_dev_cookie_name(tmp_path):
+    """Sin TLS la cookie no puede llamarse __Host- (el navegador la rechaza sin Secure)."""
+    from tests.vigia_platform_support import PEPPERS
+    from vigia_ee.runtime import Runtime, Settings
+    from vigia_ee.security import DEV_SESSION_COOKIE, SESSION_COOKIE
+
+    rt = Runtime(Settings(data_dir=tmp_path, model="tiny:mixtral", secure_cookies=False, peppers=PEPPERS))
+    try:
+        assert rt.auth.cookie_name == DEV_SESSION_COOKIE != SESSION_COOKIE
+    finally:
+        rt.close()
