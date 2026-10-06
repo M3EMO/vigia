@@ -46,8 +46,8 @@ Límites de este resultado, sin suavizar:
 - La sonda lineal sobre el estado oculto iguala al detector. El router no aporta información
   nueva; la aporta con features más baratas.
 - El test tiene 120 respuestas. Los intervalos son anchos.
-- La latencia agregada en Granite todavía no tiene una medición limpia. En el modelo diminuto,
-  F0+F1 agregó entre +7,5 % y +16 %. La meta del plan es < 5 %.
+- La latencia agregada en Granite (CPU) quedó entre +3,6 % y +8,5 %, con un intervalo ancho por
+  el ruido de la laptop. La meta del plan es < 5 % y todavía no está demostrada.
 - gpt-oss-20b no se midió: falta GPU.
 
 ## Instalación

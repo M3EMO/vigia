@@ -1,0 +1,100 @@
+{
+  "schema_version": "1",
+  "config": {
+    "model_id": "ibm-granite/granite-3.1-1b-a400m-instruct",
+    "model_type": "granitemoe",
+    "tiers_list": [
+      "sin_hooks",
+      "F0+F1"
+    ],
+    "n_prompts": 3,
+    "max_tokens": 24,
+    "warmup": 1,
+    "runs": 4,
+    "seed": 0,
+    "threads": 4,
+    "temperature": 0.0,
+    "ignore_eos": {
+      "requested": true,
+      "supported": true,
+      "applied": true,
+      "note": "longitud fija por ignore_eos"
+    },
+    "order": "intercalado; el orden de las configuraciones rota por prompt y corrida",
+    "metric": "ms por token: intervalo entre eventos, reloj de pared, con hooks y end_step",
+    "overhead": "mediana por unidad de p50(ms por token del nivel) / p50(ms por token sin hooks) - 1",
+    "bootstrap": {
+      "n_boot": 1000,
+      "level": 0.95,
+      "seed": 0,
+      "unit": "(corrida, prompt)"
+    },
+    "n_units": 12,
+    "n_units_dropped": 0,
+    "baseline_hooks": 0
+  },
+  "baseline": {
+    "p50": 280.62814997974783,
+    "p95": 1504.6241999370977,
+    "p99": 3482.794700015802,
+    "tpot_ms": 331.636332608152,
+    "ttft_ms": 7397.641799994744,
+    "tok_s": 1.367950500069484,
+    "n_requests": 12,
+    "n_token_latencies": 276
+  },
+  "tiers": {
+    "F0+F1": {
+      "p50": 303.20135003421456,
+      "p95": 1086.7695999331772,
+      "p99": 2466.276550083421,
+      "tpot_ms": 359.841558697593,
+      "ttft_ms": 6704.030150081962,
+      "tok_s": 1.2144034639023737,
+      "n_requests": 12,
+      "n_token_latencies": 276,
+      "overhead_ratio": 0.03645585617008673,
+      "ci": [
+        -0.12288918977021479,
+        0.3638097706601793
+      ],
+      "ttft_overhead_ratio": 0.18547673563945843,
+      "ttft_ci": [
+        -0.3468185681489846,
+        0.3990589389635475
+      ],
+      "meets_target": true
+    }
+  },
+  "vigia": {
+    "p50": 303.20135003421456,
+    "p95": 1086.7695999331772,
+    "p99": 2466.276550083421,
+    "tpot_ms": 359.841558697593,
+    "ttft_ms": 6704.030150081962,
+    "tok_s": 1.2144034639023737,
+    "n_requests": 12,
+    "n_token_latencies": 276,
+    "overhead_ratio": 0.03645585617008673,
+    "ci": [
+      -0.12288918977021479,
+      0.3638097706601793
+    ],
+    "ttft_overhead_ratio": 0.18547673563945843,
+    "ttft_ci": [
+      -0.3468185681489846,
+      0.3990589389635475
+    ],
+    "meets_target": true,
+    "label": "F0+F1"
+  },
+  "target": 0.05,
+  "hardware": {
+    "cpu": "Intel64 Family 6 Model 126 Stepping 5, GenuineIntel",
+    "machine": "AMD64",
+    "threads": 4,
+    "torch": "2.14.1+cpu",
+    "python": "3.12.10",
+    "platform": "Windows-11-10.0.26200-SP0"
+  }
+}

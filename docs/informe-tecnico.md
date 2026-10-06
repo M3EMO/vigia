@@ -19,7 +19,7 @@ distinguir el tema. Una sonda lineal sobre el residual stream iguala al detector
 resultado acota la tesis: el router no aporta información que el estado oculto no tenga, pero la
 aporta con 1.271 features baratas en lugar de un vector denso por capa.
 
-La latencia agregada todavía no está medida en condiciones limpias (§5).
+La latencia agregada en CPU queda entre +3,6 % y +8,5 % con un intervalo ancho (§5).
 
 ## 2. Datos
 
@@ -91,13 +91,23 @@ que las señales del router superan a la entropía de salida.
 
 ## 5. Latencia
 
-La meta del plan es < 5 % de latencia agregada. La medición de esta corrida no es válida: corrió
-en paralelo con otros procesos que saturaban la CPU, y su intervalo va de −15 % a +36 %. La
-medición limpia se agrega en la próxima versión de este informe.
+La meta del plan es < 5 % de latencia agregada. La medición limpia corrió en la misma laptop
+(i5-1035G1, 4 hilos, bf16, CPU sin otros procesos pesados), con 3 prompts, 4 corridas
+intercaladas, 24 tokens fijos (`ignore_eos`) y comparación A/B en el mismo proceso.
 
-En un MoE diminuto con la CPU libre, el benchmark A/B (`vigia bench`) midió entre +7,5 % y +16 %
-para F0+F1. El costo fijo por token de la reducción en Python pesa más en modelos chicos que en
-modelos grandes.
+| Métrica | Sin hooks | F0+F1 | Diferencia |
+|---|---|---|---|
+| Latencia por token p50 (ms) | 280,6 | 303,2 | +8,0 % |
+| TPOT medio (ms) | 331,6 | 359,8 | +8,5 % |
+| Overhead pareado (mediana de cocientes) | — | — | +3,6 % [IC 95 %: −12,3 %; +36,4 %] |
+
+El resultado no alcanza para afirmar ni rechazar la meta de 5 %. La estimación puntual cae entre
++3,6 % y +8,5 % según el estimador, y el intervalo es ancho porque la CPU de una laptop tiene
+mucho ruido de latencia (p95 de 1,5 s por token). La medición que decide la puerta 1 corre en GPU,
+donde el costo fijo de la reducción en Python pesa menos frente a un modelo más grande.
+
+Una primera corrida del mismo benchmark se descartó: corrió en paralelo con otros procesos que
+saturaban la CPU.
 
 ## 6. Reproducir
 
@@ -113,4 +123,4 @@ La corrida es reanudable. En una laptop con CPU i5-1035G1 y 8 GB de RAM tarda un
 1. La etiqueta es por respuesta; falta medir con etiquetas por span (juez validado o humanos).
 2. El modelo es chico y se equivoca en el 84 % de los casos; falta repetir en gpt-oss-20b con GPU.
 3. La sonda sobre H iguala a F1; falta medir si F1 transfiere mejor entre dominios o modelos.
-4. La latencia necesita una medición limpia y una medición en GPU con vLLM.
+4. La latencia necesita una medición en GPU con más corridas; en CPU el ruido domina.

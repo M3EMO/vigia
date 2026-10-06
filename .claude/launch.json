@@ -1,0 +1,20 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "vigia-demo",
+      "runtimeExecutable": ".venv/Scripts/python.exe",
+      "runtimeArgs": ["-m", "vigia_ee.app", "serve", "--port", "8769"],
+      "port": 8769,
+      "env": {
+        "VIGIA_DATA_DIR": ".cache/demo/data",
+        "VIGIA_MODEL": "ibm-granite/granite-3.1-1b-a400m-instruct",
+        "VIGIA_DTYPE": "bfloat16",
+        "VIGIA_PEPPERS_FILE": ".cache/demo/peppers.txt",
+        "VIGIA_METRICS_TOKEN_FILE": ".cache/demo/metrics-token.txt",
+        "VIGIA_BASE_DETECTOR": "detectors/granite-3.1-1b-a400m-instruct.json",
+        "HF_HUB_OFFLINE": "1"
+      }
+    }
+  ]
+}
