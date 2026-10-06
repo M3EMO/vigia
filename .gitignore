@@ -21,3 +21,4 @@ build/
 node_modules/
 test-results/
 playwright-report/
+colab/vigia-colab.zip
