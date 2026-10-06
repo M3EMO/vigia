@@ -138,6 +138,8 @@ code { background: var(--vg-code-bg); padding: 0 .25em; border-radius: 3px; }
 /* Dentro de <pre> el code es inline: su padding izquierdo correría solo la primera línea. */
 pre code { padding: 0; background: none; border-radius: 0; }
 .vg-break, .vg-break code { overflow-wrap: anywhere; }
+/* Auditoría: en anchos medios el id se parte para no desbordar la tabla; en pantallas anchas entra en una línea. */
+@media (max-width: 1080px) { .vg-table td[data-label="Objeto"] code { overflow-wrap: anywhere; } }
 pre { background: var(--vg-code-bg); padding: .75rem; border-radius: var(--vg-radius); overflow-x: auto; white-space: pre-wrap; }
 
 :focus-visible {
