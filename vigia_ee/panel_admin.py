@@ -12,7 +12,7 @@ from __future__ import annotations
 import json
 import re
 import secrets
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from datetime import timedelta
 from typing import Annotated, Any
 
@@ -23,6 +23,7 @@ from markupsafe import Markup
 from starlette.datastructures import UploadFile
 
 from vigia import charts
+from vigia.evaluate import saturation_warning
 from vigia.policy import PolicyError, UnsafeURLError
 from vigia_ee import audit, retention, webhooks
 from vigia_ee.auth import (
@@ -35,6 +36,7 @@ from vigia_ee.auth import (
     check_password_policy,
     create_api_key,
     register_user,
+    require_current,
     require_session,
     revoke_api_key,
 )
@@ -135,6 +137,24 @@ def _detector_auroc(report: Mapping[str, Any]) -> float | None:
     except (KeyError, TypeError):
         return None
     return value if isinstance(value, int | float) else None
+
+
+def _n_cal_responses(report: Mapping[str, Any]) -> int | None:
+    """Respuestas del split de calibración (CRC) según el reporte del job; None si falta."""
+    try:
+        n = report["calibration"]["split"]["counts"]["cal"]["n_responses"]
+    except (KeyError, TypeError):
+        return None
+    return n if isinstance(n, int) and not isinstance(n, bool) else None
+
+
+def saturation_notice(thresholds: Sequence[Mapping[str, Any]], alpha: float, n_cal: int | None) -> str | None:
+    """Aviso si el umbral que usa `alpha` (escalón de `Detector.tau`) marca casi todo; None si no."""
+    eligible = [t for t in thresholds if t.get("alpha") is not None and t["alpha"] <= alpha]
+    if not eligible:
+        return None
+    t = max(eligible, key=lambda t: t["alpha"])
+    return saturation_warning(t["alpha"], t.get("expected_flag_rate"), n_cal)
 
 
 def _load_json(raw: str | None) -> dict[str, Any]:
@@ -441,7 +461,10 @@ def register(router: APIRouter, runtime: Any) -> None:  # noqa: C901 - registro 
         if repo.get_review_item(item_id) is None:
             raise not_found("El item de revisión no existe.")
         now, until = _now_until()
-        if not repo.reserve_review_item(item_id, p.user_id, until=until, now=now):
+        with runtime.db.transaction():
+            require_current(runtime.auth, p, "review:write")
+            reserved = repo.reserve_review_item(item_id, p.user_id, until=until, now=now)
+        if not reserved:
             return review_item_page(
                 request,
                 item_id,
@@ -469,7 +492,11 @@ def register(router: APIRouter, runtime: Any) -> None:  # noqa: C901 - registro 
             return review_item_page(
                 request, item_id, p, status=422, error=f"La nota admite hasta {MAX_NOTE_CHARS} caracteres."
             )
-        decision = repo.add_review_decision(item_id, p.user_id, label, note=note or None)
+        with runtime.db.transaction():
+            cur = require_current(runtime.auth, p, "review:write")
+            decision = repo.add_review_decision(item_id, p.user_id, label, note=note or None)
+            if decision is not None:
+                audit.append(runtime.db, p.org_id, cur, "review_decision", item_id, {"label": label})
         if decision is None:
             return review_item_page(
                 request,
@@ -481,7 +508,6 @@ def register(router: APIRouter, runtime: Any) -> None:  # noqa: C901 - registro 
                     "u otro revisor lo tiene reservado."
                 ),
             )
-        audit.append(runtime.db, p.org_id, p, "review_decision", item_id, {"label": label})
         updated = repo.get_review_item(item_id)
         if updated is not None and updated["state"] == "completed":
             labels = [d["label"] for d in repo.list_review_decisions(item_id) or []]
@@ -513,10 +539,16 @@ def register(router: APIRouter, runtime: Any) -> None:  # noqa: C901 - registro 
         repo = runtime.repo(p.org_id)
         org = repo.get_org() or {}
         detectors = []
+        saturation = None
+        active_id = org.get("active_detector_id")
         for row in repo.list_detectors():
             full = repo.get_detector(row["id"]) or {}
             report = _load_json(full.get("report_json"))
             detectors.append(dict(row, auroc=_detector_auroc(report)))
+            if row["id"] == active_id:
+                thresholds = _load_json(full.get("artifact_json")).get("thresholds") or []
+                alpha = runtime.policy_for(p.org_id).alpha
+                saturation = saturation_notice(thresholds, alpha, _n_cal_responses(report))
         detectors.reverse()
         return render(
             request,
@@ -525,7 +557,8 @@ def register(router: APIRouter, runtime: Any) -> None:  # noqa: C901 - registro 
             datasets=list(reversed(repo.list_datasets())),
             jobs=runtime.calibration.list_jobs(p.org_id),
             detectors=detectors,
-            active_id=org.get("active_detector_id"),
+            active_id=active_id,
+            saturation=saturation,
             error=error,
             error_field=field,
             max_mb=settings.max_upload_bytes / (1024 * 1024),
@@ -631,6 +664,12 @@ def register(router: APIRouter, runtime: Any) -> None:  # noqa: C901 - registro 
             raise not_found("El detector no existe.")
         report = _load_json(row["report_json"])
         artifact = _load_json(row["artifact_json"])
+        thresholds = artifact.get("thresholds") or []
+        n_cal = _n_cal_responses(report)
+        saturated = [
+            w for t in thresholds if (w := saturation_warning(t["alpha"], t.get("expected_flag_rate"), n_cal))
+        ]
+        policy_alpha = runtime.policy_for(p.org_id).alpha
         return render(
             request,
             "detector.html",
@@ -639,7 +678,10 @@ def register(router: APIRouter, runtime: Any) -> None:  # noqa: C901 - registro 
             report=report,
             figures=_report_figures(report),
             metrics=_report_metrics(report),
-            thresholds=artifact.get("thresholds") or [],
+            thresholds=thresholds,
+            saturated=saturated,
+            activation_saturation=saturation_notice(thresholds, policy_alpha, n_cal),
+            policy_alpha=policy_alpha,
             model=artifact.get("model") or {},
             training=artifact.get("training") or {},
             summary=report.get("calibration") or {},
@@ -680,6 +722,11 @@ def register(router: APIRouter, runtime: Any) -> None:  # noqa: C901 - registro 
         policy = runtime.policy_for(p.org_id)
         detector = runtime.detector_for(p.org_id)
         thresholds = list(detector.thresholds) if detector is not None else []
+        saturation = None
+        if detector is not None:
+            row = runtime.repo(p.org_id).get_detector(detector.id) or {}
+            n_cal = _n_cal_responses(_load_json(row.get("report_json")))
+            saturation = saturation_notice(thresholds, policy.alpha, n_cal)
         current = policy.to_dict()
         shown = dict(current)
         if values:
@@ -692,6 +739,7 @@ def register(router: APIRouter, runtime: Any) -> None:  # noqa: C901 - registro 
             values=shown,
             errors=dict(errors or {}),
             thresholds=thresholds,
+            saturation=saturation,
             detector_id=getattr(detector, "id", None),
         )
 
@@ -823,8 +871,9 @@ def register(router: APIRouter, runtime: Any) -> None:  # noqa: C901 - registro 
         }
         if changes:
             with runtime.db.transaction():
+                cur = require_current(runtime.auth, p, "settings:write")
                 repo.update_org(**changes)
-                audit.append(runtime.db, p.org_id, p, "settings_change", p.org_id, {"changes": changes})
+                audit.append(runtime.db, p.org_id, cur, "settings_change", p.org_id, {"changes": changes})
         return redirect("/settings", "org_saved")
 
     @router.post("/settings/users", response_class=HTMLResponse)
@@ -893,15 +942,21 @@ def register(router: APIRouter, runtime: Any) -> None:  # noqa: C901 - registro 
             raise not_found("La cuenta no existe.")
         if user_id == p.user_id:
             raise PanelHTTPError(422, "No podés deshabilitar tu propia cuenta.")
-        if target["role"] == "owner" and p.role != "owner":
-            raise PanelHTTPError(403, "Solo un owner puede deshabilitar a otro owner.")
-        if disable and target["role"] == "owner" and _owners(repo, exclude=user_id) == 0:
-            raise PanelHTTPError(422, "La organización necesita al menos un owner habilitado.")
+        # Rol del actor, rol del objetivo y conteo de owners se releen en la transacción de la escritura:
+        # un admin degradado entre la dependencia y el handler no confirma la acción vieja.
         with runtime.db.transaction():
+            cur = require_current(runtime.auth, p, "users:write")
+            target = repo.get_user(user_id)
+            if target is None:
+                raise not_found("La cuenta no existe.")
+            if target["role"] == "owner" and cur.role != "owner":
+                raise PanelHTTPError(403, "Solo un owner puede deshabilitar a otro owner.")
+            if disable and target["role"] == "owner" and _owners(repo, exclude=user_id) == 0:
+                raise PanelHTTPError(422, "La organización necesita al menos un owner habilitado.")
             repo.update_user(user_id, disabled=disable)
             if disable:
                 repo.delete_user_sessions(user_id)
-            audit.append(runtime.db, p.org_id, p, "user_disable" if disable else "user_enable", user_id)
+            audit.append(runtime.db, p.org_id, cur, "user_disable" if disable else "user_enable", user_id)
         return redirect("/settings", "user_disabled" if disable else "user_enabled")
 
     @router.post("/settings/keys", response_class=HTMLResponse)
@@ -968,6 +1023,7 @@ def register(router: APIRouter, runtime: Any) -> None:  # noqa: C901 - registro 
                 events,
                 p,
                 allowed_hosts=tuple(getattr(settings, "webhook_allowed_hosts", ()) or ()),
+                authorize=lambda: require_current(runtime.auth, p, "settings:write"),
             )
         except UnsafeURLError as exc:
             return settings_page(request, p, status=422, errors={"hook_url": f"Destino no permitido: {exc}."})
@@ -987,7 +1043,8 @@ def register(router: APIRouter, runtime: Any) -> None:  # noqa: C901 - registro 
 
     @router.post("/settings/webhooks/{webhook_id}/delete")
     def settings_webhook_delete(request: Request, webhook_id: str, p: SettingsWriteP) -> Response:
-        if not webhooks.delete_webhook(runtime.db, p.org_id, webhook_id, p):
+        current = lambda: require_current(runtime.auth, p, "settings:write")  # noqa: E731
+        if not webhooks.delete_webhook(runtime.db, p.org_id, webhook_id, p, authorize=current):
             raise not_found("El webhook no existe.")
         return redirect("/settings", "webhook_deleted")
 
@@ -1002,18 +1059,20 @@ def register(router: APIRouter, runtime: Any) -> None:  # noqa: C901 - registro 
         body = webhooks.build_body(
             "webhook.test", {"webhook_id": webhook_id, "test": True}, now=runtime.jobs.now()
         )
-        runtime.jobs.enqueue(
-            webhooks.JOB_KIND,
-            {
-                "webhook_id": webhook_id,
-                "msg_id": f"msg_{new_id()}",
-                "event_type": "webhook.test",
-                "body": body.decode(),
-            },
-            org_id=p.org_id,
-            max_attempts=1,
-        )
-        audit.append(runtime.db, p.org_id, p, "webhook_test", webhook_id)
+        with runtime.db.transaction():
+            cur = require_current(runtime.auth, p, "settings:write")
+            runtime.jobs.enqueue(
+                webhooks.JOB_KIND,
+                {
+                    "webhook_id": webhook_id,
+                    "msg_id": f"msg_{new_id()}",
+                    "event_type": "webhook.test",
+                    "body": body.decode(),
+                },
+                org_id=p.org_id,
+                max_attempts=1,
+            )
+            audit.append(runtime.db, p.org_id, cur, "webhook_test", webhook_id)
         return redirect("/settings", "webhook_tested")
 
     # ==== auditoría ===============================================================================
@@ -1139,8 +1198,10 @@ def register(router: APIRouter, runtime: Any) -> None:  # noqa: C901 - registro 
                 counts=data_counts(repo),
                 error="Para borrar, marcá la casilla y escribí el nombre exacto de la organización.",
             )
-        audit.append(runtime.db, p.org_id, p, "org_delete", p.org_id)
-        repo.delete_org()
+        with runtime.db.transaction():
+            cur = require_current(runtime.auth, p, "data:delete")
+            audit.append(runtime.db, p.org_id, cur, "org_delete", p.org_id)
+            repo.delete_org()
         runtime.forget_org(p.org_id)  # saca su detector, política y retriever de memoria y de /metrics
         response = redirect("/login", "org_deleted")
         clear_cookie(response, secure=secure)

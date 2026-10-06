@@ -31,6 +31,7 @@
   <section class="vg-card" aria-labelledby="act-title">
     <h2 id="act-title">Activar</h2>
     <p>El detector activo puntúa todos los requests siguientes del tenant. El anterior queda retirado y se puede volver a activar.</p>
+    {% if activation_saturation %}<div class="vg-alert vg-alert-warn" role="status" data-saturation><p><strong>Con la política actual (alpha {{ policy_alpha|num(2) }}) marcaría casi todo.</strong> {{ activation_saturation }}</p></div>{% endif %}
     <form method="post" action="/calibration/detectors/{{ detector.id }}/activate" class="vg-form">
       {{ csrf() }}
       <label class="vg-check"><input type="checkbox" name="confirm" value="yes" required> Revisé el reporte y quiero activar este detector</label>
@@ -62,6 +63,7 @@
 {% if thresholds %}
 <section aria-labelledby="th-title">
   <h2 id="th-title">Umbrales por alpha (CRC)</h2>
+  {% if saturated %}<div class="vg-alert vg-alert-warn" role="status" data-saturation><ul>{% for w in saturated %}<li>{{ w }}</li>{% endfor %}</ul></div>{% endif %}
   <div class="vg-table-wrap">
     <table class="vg-table vg-table-cards">
       <caption class="sr-only">Umbral por FNR objetivo</caption>

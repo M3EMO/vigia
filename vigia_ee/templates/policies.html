@@ -25,6 +25,7 @@
     </table>
   </div>
   <p class="vg-hint">Un alpha entre dos valores guardados usa el τ del alpha guardado inferior: así la FNR sigue garantizada.</p>
+  {% if saturation %}<div class="vg-alert vg-alert-warn" role="status" data-saturation><p><strong>Con el alpha actual el detector marca casi todo.</strong> {{ saturation }}</p></div>{% endif %}
   {% else %}
   <p>No hay un detector activo: el alpha se guarda, pero no marca nada hasta <a href="/calibration">activar un detector</a>.</p>
   {% endif %}

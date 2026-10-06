@@ -29,6 +29,7 @@ from vigia.evaluate import evaluate_report
 from vigia_ee import audit, webhooks
 from vigia_ee.auth import LoginFailed, Principal, verify_api_key
 from vigia_ee.auth import login as auth_login
+from vigia_ee.db import lookup_user_by_email
 from vigia_ee.security import SESSION_COOKIE
 
 SECRET_RE = re.compile(r'<code id="secret-value">([^<]+)</code>')
@@ -608,3 +609,198 @@ def test_detector_report_regions_have_unique_names(env):
     assert "Gráfico: Curva ROC" in names and "Curva ROC" in names, names
     assert 'role="region" aria-labelledby=' not in page
     assert len(names) == len(set(names)), names
+
+
+# --- admin degradado entre la dependencia y la escritura (TOCTOU, R5) ----------------------------
+
+
+def _demote_on_first_repo(monkeypatch, runtime, org, user_id):
+    """El primer `runtime.repo()` del handler degrada al actor a viewer: simula al owner que lo degrada
+    mientras el POST ya pasó la dependencia de sesión (hay `await request.form()` en el medio)."""
+    real = runtime.repo
+    fired = []
+
+    def repo(org_id):
+        if not fired:
+            fired.append(True)
+            real(org).update_user(user_id, role="viewer")
+        return real(org_id)
+
+    monkeypatch.setattr(runtime, "repo", repo)
+    return fired
+
+
+POLICY_FORM = {
+    "alpha": "0,3",
+    "gap_max": "2",
+    "min_tokens": "1",
+    "human_review_at": "0,6",
+    "rag_retry_at": "",
+    "abstain_at": "0.95",
+    "abstain_message": "Prefiero no responder.",
+    "rag_url": "",
+    "rag_max_retries": "1",
+    "rag_fallback_action": "abstain",
+    "on_detector_error": "fail_open",
+    "stream_policy": "buffer",
+}
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        "settings_disable",
+        "settings_org",
+        "policies",
+        "calibration_start",
+        "calibration_upload",
+        "detector_activate",
+        "webhook_test",
+        "data_delete",
+    ],
+)
+def test_a_demoted_actor_cannot_finish_a_panel_mutation_resolved_before(env, monkeypatch, case):
+    """Regresión de «admin degradado» (R5): cada POST que muta sin pasar por una función de auth relee al
+    actor con `require_current` dentro de la transacción de la escritura. Un actor degradado después de
+    resolver la sesión recibe 401 y no deja ni el cambio ni la fila de auditoría."""
+    runtime, org, users, app = env
+    repo = runtime.repo(org)
+    actor_email = (
+        users["owner"] if case in ("settings_org", "data_delete", "webhook_test") else users["admin"]
+    )
+    actor_id = lookup_user_by_email(runtime.db, actor_email)["id"]
+    viewer_id = lookup_user_by_email(runtime.db, users["viewer"])["id"]
+    hook_id = None
+    det = make_detector()
+    repo.insert_detector(det.id, det.to_json())
+    line = b'{"id": "q9", "question": "a", "response": "b", "label": 0}\n'
+    upload = {"file": ("datos.jsonl", line, "application/jsonl")}
+    if case == "webhook_test":
+        hook_id = webhooks.create_webhook(
+            runtime.db,
+            org,
+            "http://hooks.example/x",
+            ["trace.flagged"],
+            None,
+            allowed_hosts=("hooks.example",),
+        )[0]
+    dataset_id = repo.insert_dataset(
+        "chico", b'{"id": "q1", "question": "a", "response": "b", "label": 0}\n', n_items=1
+    )
+    client = login(app, actor_email)
+    token = csrf_of(client)
+    path, data = {
+        "settings_disable": (f"/settings/users/{viewer_id}/disable", {"disabled": "1"}),
+        "settings_org": ("/settings/org", {"store_text": "none", "retention_days": "7"}),
+        "policies": ("/policies", POLICY_FORM),
+        "calibration_start": ("/calibration/start", {"dataset_id": dataset_id}),
+        "webhook_test": (f"/settings/webhooks/{hook_id}/test", {}),
+        "calibration_upload": ("/calibration/datasets", {"name": "subida"}),
+        "detector_activate": (f"/calibration/detectors/{det.id}/activate", {"confirm": "yes"}),
+        "data_delete": ("/data/delete", {"confirm": "yes", "confirm_name": "Acme"}),
+    }[case]
+    audit_before = len(audit.export_range(runtime.db, org))
+    policy_before = runtime.policy_for(org).version
+    fired = _demote_on_first_repo(monkeypatch, runtime, org, actor_id)
+    files = upload if case == "calibration_upload" else None
+    resp = client.post(path, data={"csrf_token": token, **data}, files=files, follow_redirects=False)
+    monkeypatch.undo()
+    assert fired and resp.status_code == 401, (resp.status_code, resp.text[:200])
+    assert len(audit.export_range(runtime.db, org)) == audit_before
+    assert not repo.get_user(viewer_id)["disabled"]
+    assert repo.get_org() is not None and repo.get_org()["store_text"] != "none"
+    assert runtime.policy_for(org).version == policy_before
+    assert runtime.jobs.list(org, "calibrate") == [] and runtime.jobs.list(org, webhooks.JOB_KIND) == []
+    assert [d["name"] for d in repo.list_datasets()] == ["chico"] and runtime.detector_for(org) is None
+
+
+def test_a_demoted_actor_cannot_create_or_delete_webhooks_with_a_stale_principal(env):
+    """Mismo defecto en webhooks: `authorize` corre dentro de la transacción, después de validar la URL."""
+    from vigia_ee.auth import StaleActor, require_current
+
+    runtime, org, users, app = env
+    owner_id = lookup_user_by_email(runtime.db, users["owner"])["id"]
+    stale = Principal(org_id=org, role="owner", user_id=owner_id)
+    hook_id, _ = webhooks.create_webhook(
+        runtime.db, org, "http://hooks.example/x", ["trace.flagged"], stale, allowed_hosts=("hooks.example",)
+    )
+    runtime.repo(org).update_user(owner_id, role="viewer")
+    check = lambda: require_current(runtime.auth, stale, "settings:write")  # noqa: E731
+    with pytest.raises(StaleActor):
+        webhooks.create_webhook(
+            runtime.db,
+            org,
+            "http://hooks.example/y",
+            ["trace.flagged"],
+            stale,
+            allowed_hosts=("hooks.example",),
+            authorize=check,
+        )
+    with pytest.raises(StaleActor):
+        webhooks.delete_webhook(runtime.db, org, hook_id, stale, authorize=check)
+    assert [h["id"] for h in runtime.repo(org).list_webhooks()] == [hook_id]
+
+
+# --- garantía CRC saturada con pocos datos (hallazgo R4) ------------------------------------------
+
+
+def _saturated_detector():
+    from vigia.detector import Detector
+
+    base = make_detector().artifact
+    return Detector.build(
+        model=base["model"],
+        feature_names=base["feature_names"],
+        mean=base["mean"],
+        std=base["std"],
+        weights=base["weights"],
+        bias=base["bias"],
+        platt=base["platt"],
+        response_calibrator=base["response_calibrator"],
+        thresholds=[
+            {"alpha": 0.05, "tau": 0.0, "expected_flag_rate": 1.0, "expected_precision": 0.1},
+            {"alpha": 0.1, "tau": 0.0, "expected_flag_rate": 0.97, "expected_precision": 0.1},
+            {"alpha": 0.2, "tau": 0.4, "expected_flag_rate": 0.3, "expected_precision": 0.5},
+        ],
+        default_alpha=0.1,
+        metrics={},
+        training=base["training"],
+    )
+
+
+def test_saturation_warning_threshold_and_text():
+    from vigia.evaluate import saturation_warning
+
+    assert saturation_warning(0.1, 0.9499, 48) is None and saturation_warning(0.1, None, 48) is None
+    msg = saturation_warning(0.05, 1.0, 48)
+    assert msg.startswith(
+        "Con 48 respuestas de calibración, la garantía de alpha 0,05 obliga a marcar casi todo"
+    )
+    assert "100,0 %" in msg and "Sumá datos de calibración o subí alpha." in msg
+    assert saturation_warning(0.1, 0.95).startswith("Con estos datos de calibración")
+
+
+def test_detector_report_policies_and_activation_warn_when_crc_marks_almost_everything(env):
+    """Hallazgo R4: con 48 respuestas de calibración el CRC da tau = 0 para alpha 0,05 y 0,10 y marca el
+    100 % aunque el AUROC sea alto. Es correcto, pero el producto lo avisa: reporte, activación y
+    Políticas."""
+    runtime, org, users, app = env
+    det = _saturated_detector()
+    report = {"calibration": {"split": {"counts": {"cal": {"n_responses": 48}}}}}
+    runtime.repo(org).insert_detector(det.id, det.to_json(), report_json=json.dumps(report))
+    admin = login(app, users["admin"])
+    page = admin.get(f"/calibration/detectors/{det.id}").text
+    assert "Con 48 respuestas de calibración, la garantía de alpha 0,05 obliga a marcar casi todo" in page
+    assert "la garantía de alpha 0,10 obliga" in page and "la garantía de alpha 0,20" not in page
+    assert runtime.policy_for(org).alpha == 0.1
+    assert "Con la política actual (alpha 0,10) marcaría casi todo." in page  # antes de activar
+    resp = post(admin, f"/calibration/detectors/{det.id}/activate", {"confirm": "yes"})
+    assert resp.status_code == 303
+    calibration = admin.get(resp.headers["location"]).text
+    assert "El detector activo marca casi todo." in calibration and "subí alpha" in calibration
+    policies = admin.get("/policies").text
+    assert "Con el alpha actual el detector marca casi todo." in policies and "Con 48 respuestas" in policies
+    form = {**POLICY_FORM, "alpha": "0,2"}
+    assert post(admin, "/policies", form).status_code == 303
+    assert "data-saturation" not in admin.get("/policies").text
+    assert "data-saturation" not in admin.get("/calibration").text

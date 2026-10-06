@@ -59,7 +59,7 @@ from vigia.policy import (
 )
 from vigia.spans import build_spans
 from vigia_ee import audit, webhooks
-from vigia_ee.auth import AuthState, PepperRing, Principal
+from vigia_ee.auth import AuthState, PepperRing, Principal, require_current
 from vigia_ee.calibration import CalibrationService
 from vigia_ee.db import Database, TenantScopedRepository, create_org, list_org_ids, utcnow
 from vigia_ee.jobs import DEFAULT_LANE, JobQueue
@@ -760,12 +760,15 @@ class Runtime:
         changed = sorted(k for k in after if k != "version" and before.get(k) != after[k])
         repo = self.repo(org_id)
         with self.db.transaction():
+            # El actor se relee en la transacción: un rol degradado después de resolver el request no
+            # confirma el cambio de política.
+            actor = require_current(self.auth, principal, "policy:write") or principal
             if not repo.set_policy(after):
                 raise LookupError("organización inexistente")
             audit.append(
                 self.db,
                 org_id,
-                principal,
+                actor,
                 "policy_change",
                 None,
                 {"changed": changed, "version": policy.version},

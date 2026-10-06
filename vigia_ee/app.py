@@ -62,7 +62,12 @@ from vigia_ee.auth import (
 from vigia_ee.db import STORE_TEXT_MODES, create_org, utcnow
 from vigia_ee.metrics import CONTENT_TYPE, Metrics, MetricsMiddleware
 from vigia_ee.runtime import Runtime, Settings, SettingsError, open_database
-from vigia_ee.security import BodySizeLimitMiddleware, configure_json_logging, install_security
+from vigia_ee.security import (
+    BodySizeLimitMiddleware,
+    configure_json_logging,
+    install_security,
+    set_html_error_page,
+)
 
 _log = logging.getLogger("vigia.app")
 
@@ -208,7 +213,7 @@ def _health_router() -> APIRouter:
 def _panel_router(app: FastAPI, runtime: Runtime) -> APIRouter:
     """Router del panel con su página HTML de errores registrada en la app."""
     try:
-        from vigia_ee.panel import PanelHTTPError, create_panel_router, panel_error_handler
+        from vigia_ee.panel import PanelHTTPError, create_panel_router, panel_error_handler, panel_error_page
     except ModuleNotFoundError as exc:
         if exc.name in ("vigia_ee.panel", "vigia_ee.panel_admin"):
             raise RuntimeError(
@@ -216,6 +221,7 @@ def _panel_router(app: FastAPI, runtime: Runtime) -> APIRouter:
             ) from exc
         raise
     app.add_exception_handler(PanelHTTPError, panel_error_handler)  # type: ignore[arg-type]
+    set_html_error_page(app, panel_error_page)  # 404/405 del ruteo y 413 del middleware, en HTML
     return create_panel_router(runtime)
 
 

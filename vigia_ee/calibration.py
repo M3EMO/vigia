@@ -56,6 +56,7 @@ from vigia.labels import (
     validate_judgment,
 )
 from vigia_ee import audit
+from vigia_ee.auth import require_current
 from vigia_ee.db import MAX_PAGE, to_iso
 from vigia_ee.jobs import PermanentJobError
 
@@ -337,16 +338,23 @@ class CalibrationService:
             raise DatasetError(f"El archivo supera el máximo de {limit // (1024 * 1024)} MB.")
         items = parse_dataset(content)
         repo = self.runtime.repo(principal.org_id)
-        dataset_id = repo.insert_dataset(clean_name, content, n_items=len(items))
-        audit.append(
-            self.runtime.db,
-            principal.org_id,
-            principal,
-            "dataset_upload",
-            dataset_id,
-            {"n_items": len(items), "bytes": len(content)},
-        )
+        with self.runtime.db.transaction():
+            actor = self._current(principal)
+            dataset_id = repo.insert_dataset(clean_name, content, n_items=len(items))
+            audit.append(
+                self.runtime.db,
+                principal.org_id,
+                actor,
+                "dataset_upload",
+                dataset_id,
+                {"n_items": len(items), "bytes": len(content)},
+            )
         return dataset_id
+
+    def _current(self, principal: Principal) -> Principal:
+        """Actor vigente releído en la base. Se llama DENTRO de la transacción de la escritura: un rol
+        degradado o una sesión cerrada después de resolver el request no confirman la acción vieja."""
+        return require_current(self.runtime.auth, principal, "calibration:write") or principal
 
     def dataset_from_reviews(self, principal: Principal, name: str) -> str:
         """Exporta las decisiones completadas de la cola de revisión como dataset JSONL etiquetado.
@@ -403,10 +411,12 @@ class CalibrationService:
         if len(content) > self.runtime.settings.max_upload_bytes:
             raise DatasetError("Las revisiones exportadas superan el tamaño máximo de un dataset.")
         items = parse_dataset(content)
-        dataset_id = repo.insert_dataset(clean_name, content, n_items=len(items))
-        audit.append(
-            self.runtime.db, org_id, principal, "dataset_from_reviews", dataset_id, {"n_items": len(items)}
-        )
+        with self.runtime.db.transaction():
+            actor = self._current(principal)
+            dataset_id = repo.insert_dataset(clean_name, content, n_items=len(items))
+            audit.append(
+                self.runtime.db, org_id, actor, "dataset_from_reviews", dataset_id, {"n_items": len(items)}
+            )
         return dataset_id
 
     def _completed_review_items(self, org_id: str) -> list[dict[str, Any]]:
@@ -433,7 +443,8 @@ class CalibrationService:
         clean_alphas = _check_alphas(alphas)
         if isinstance(seed, bool) or not isinstance(seed, int) or not 0 <= seed < 2**31:
             raise DatasetError("La semilla debe ser un entero entre 0 y 2147483647.")
-        with self._start_lock:
+        with self._start_lock, self.runtime.db.transaction():
+            actor = self._current(principal)
             if self._pending_jobs(principal.org_id) >= MAX_PENDING_JOBS:
                 raise CalibrationBusy(
                     "Ya hay una calibración en cola o en curso en esta organización. "
@@ -450,14 +461,14 @@ class CalibrationService:
                 org_id=principal.org_id,
                 max_attempts=1,  # entrenar es determinista: reintentar no cambia el resultado
             )
-        audit.append(
-            self.runtime.db,
-            principal.org_id,
-            principal,
-            "calibration_start",
-            job_id,
-            {"dataset_id": dataset_id, "alphas": clean_alphas, "seed": seed},
-        )
+            audit.append(
+                self.runtime.db,
+                principal.org_id,
+                actor,
+                "calibration_start",
+                job_id,
+                {"dataset_id": dataset_id, "alphas": clean_alphas, "seed": seed},
+            )
         return job_id
 
     def _pending_jobs(self, org_id: str) -> int:
@@ -525,8 +536,9 @@ class CalibrationService:
                 f"{min_alpha:g}. Subí el alpha de la política o recalibrá con un alpha menor."
             )
         with self.runtime.db.transaction():
+            actor = self._current(principal)
             repo.activate_detector(detector_id)
-            audit.append(self.runtime.db, org_id, principal, "detector_activate", detector_id)
+            audit.append(self.runtime.db, org_id, actor, "detector_activate", detector_id)
         self.runtime.invalidate_detector(org_id)
         self.runtime.emit_event(org_id, "calibration.activated", {"detector_id": detector_id})
 

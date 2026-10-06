@@ -1209,6 +1209,45 @@ def test_playground_shares_the_generation_gate_and_answers_503_when_busy(env, mo
     assert gate._free == free == gate.slots  # los dos caminos devuelven el cupo
 
 
+def test_playground_generates_in_the_gate_persistent_threads_not_anyio_workers(env, monkeypatch):
+    """Regresión (R5, ALTO): el playground generaba en el threadpool de anyio. torch deja un equipo
+    OpenMP por cada hilo que lo llama y anyio retira sus workers tras 10 s: cada ráfaga dejaba hilos
+    nativos y memoria huérfanos. Ahora genera (form y SSE, incluido el close) en los hilos del cupo."""
+    import threading
+
+    from vigia.api import generation_gate
+
+    runtime, org, users, app = env
+    activate_detector(runtime, org)
+    client = login(app, users["reviewer"])
+    token = csrf_of(client, "/playground")
+    seen: list[str] = []
+    real_run, real_sse = panel.run_playground, panel.sse_events
+
+    def run_spy(*args, **kwargs):
+        seen.append(threading.current_thread().name)
+        return real_run(*args, **kwargs)
+
+    def sse_spy(*args, **kwargs):
+        try:
+            for item in real_sse(*args, **kwargs):
+                seen.append(threading.current_thread().name)
+                yield item
+        finally:
+            seen.append(threading.current_thread().name)  # close() también en el cupo
+
+    monkeypatch.setattr(panel, "run_playground", run_spy)
+    monkeypatch.setattr(panel, "sse_events", sse_spy)
+    form = {"csrf_token": token, "prompt": "hola", "max_tokens": "4", "temperature": "0"}
+    assert client.post("/playground", data=form).status_code == 200
+    body = {"prompt": "hola", "max_tokens": 4, "temperature": 0}
+    resp = client.post("/playground/stream", json=body, headers={"X-CSRF-Token": token})
+    assert resp.status_code == 200 and '"type": "done"' in resp.text
+    assert len(seen) >= 3 and set(seen) == {"vigia-gen"}, seen
+    gate = generation_gate(runtime.backend)
+    assert gate.worker_threads <= gate.slots and gate._free == gate.slots
+
+
 def _drift_detector():
     import numpy as np
     from _panel_support import make_detector

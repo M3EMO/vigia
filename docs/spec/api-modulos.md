@@ -33,7 +33,8 @@ vigia.api:
     usage.prompt_tokens = stream.prompt_tokens (TokenStream) si es > 0; si no, backend.count_prompt_tokens(messages) (duck typing); si no, 0.
   REMOTE_MAX_CONCURRENCY = 16; RETRY_AFTER_S = 5
   class GenerationBusy(Exception)   # cola llena o espera vencida
-  class GenerationGate(slots, *, max_waiting, timeout_s): async .acquire() (FIFO en el event loop; GenerationBusy) ; .release() (seguro desde cualquier hilo) ; .waiting ; .slots
+  class GenerationGate(slots, *, max_waiting, timeout_s): async .acquire() (FIFO en el event loop; GenerationBusy) ; .release() (seguro desde cualquier hilo) ; async .run_sync(fn, *args, **kwargs) (corre fn en uno de `slots` hilos daemon persistentes del cupo; una cancelación pendiente sale antes de empezar y una que llega después espera al hilo) ; .iterate(iterator) -> AsyncIterator (cada next() en esos hilos) ; .worker_threads ; .waiting ; .slots
+    toda generación (API y playground) corre en run_sync / iterate, nunca en el threadpool de anyio: torch deja un equipo OpenMP por cada hilo que lo llama y anyio retira sus workers tras 10 s inactivos
   generation_gate(backend, *, max_waiting=64, timeout_s=120.0) -> GenerationGate   # uno por backend, compartido por la API y el playground del panel; max_waiting/timeout_s los fija el primer llamador
     cupo: backend.max_concurrency (duck typing, entero >= 1), o REMOTE_MAX_CONCURRENCY si backend.mode == "reduced", o 1
   Errores ({"error": {message, type, code, param, request_id}}, sin stack):
@@ -72,8 +73,9 @@ Scorer.tau: escalón (tau del mayor alpha guardado <= alpha), no interpola.
 utcnow() -> datetime ; to_iso(dt) -> str (UTC 'YYYY-MM-DDTHH:MM:SS.ffffffZ', se ordena como texto) ; parse_iso(s) -> datetime ; new_id(nbytes=16) -> str (hex de secrets)
 STORE_TEXT_MODES, ROLES, REVIEW_LABELS, REVIEW_STATES, MIGRATIONS: tuple[tuple[int,str],...] (1 = schema.sql; 2 = audit_log.org_seq; 3 = traces.status TEXT NOT NULL DEFAULT 'ok' y traces.rag_status TEXT)
 class Database(path: str|Path, *, busy_timeout_ms=5000)  # ':memory:' sirve en tests; si un PRAGMA o una migración fallan, cierra la conexión y relanza
+  busy_timeout_ms es la espera TOTAL ante otro proceso que retiene el lock de SQLite. Cada intento usa BUSY_ATTEMPT_MS=10; entre intentos fuera de una transacción, el RLock se suelta con backoff de 20 a 250 ms. Atributo .busy_timeout_s (segundos).
   .migrate()->int ; .schema_version()->int ; .transaction() (context manager, BEGIN IMMEDIATE; una anidada se une a la exterior)
-  .execute(sql, params=())->int (filas afectadas) ; .insert(sql, params)->int (rowid) ; .executemany(sql, rows) ; .query(sql, params)->list[dict] ; .query_one(sql, params)->dict|None ; .close()
+  .execute(sql, params=())->int (filas afectadas) ; .insert(sql, params)->int (rowid) ; .executemany(sql, rows) (corre en una transacción) ; .query(sql, params)->list[dict] ; .query_one(sql, params)->dict|None ; .close()
 create_org(db, name, *, store_text='redacted', retention_days=30, policy=None) -> str
 list_org_ids(db) -> list[str]   # para jobs de sistema (purga)
 lookup_user_by_email(db, email) / lookup_api_key(db, key_id) / lookup_session(db, id_hash) -> dict|None   # SIN tenant, solo para resolver el principal
@@ -98,7 +100,15 @@ SCRYPT_N=2**17 ; MIN_PASSWORD_LEN=15 ; MAX_PASSWORD_LEN=128 ; SCOPES=('ingest','
 hash_password(pw, *, n=SCRYPT_N)->'scrypt$N$r$p$salt$hash' ; verify_password(pw, stored)->bool ; needs_rehash(stored, *, n=SCRYPT_N)->bool ; check_password_policy(pw, *, email=None) (PasswordPolicyError)
 class PepperRing(peppers, current_kid): .parse('kid1:secret,kid2:secret') (ultimo = vigente, secreto >= 32 chars) ; .from_env(environ=None) (VIGIA_PEPPERS_FILE preferido, luego VIGIA_PEPPERS; PepperConfigError)
 generate_api_key()->(token, key_id, secret) ; parse_api_key(token)->(key_id, secret) (InvalidApiKey, valida checksum sin base) ; key_hmac(pepper, key_id, secret)->hex
-@dataclass(frozen) Principal(org_id, role=None, user_id=None, key_id=None, scopes=frozenset()) ; .can(perm) ; .has_scope(scope) ('admin' incluye todo)
+@dataclass(frozen) Principal(org_id, role=None, user_id=None, key_id=None, scopes=frozenset(), session_id_hash=None) ; .can(perm) ; .has_scope(scope) ('admin' incluye todo)
+  session_id_hash: hash de la sesión que resolvió el principal (None fuera del panel); compare=False, repr=False
+class StaleActor(HTTPException 401, PermissionError)   # el actor ya no puede actuar: sesión cerrada, cuenta deshabilitada, rol degradado o key revocada después de resolverse
+require_current(state, actor, permission=None) -> Principal|None
+  relee al actor en la base y devuelve el principal con el rol vigente; lanza StaleActor si ya no puede actuar. actor=None (bootstrap o sistema) se devuelve tal cual.
+  Se llama DENTRO de la transacción de la escritura (with state.db.transaction():), sin await entre el chequeo y la escritura; las decisiones de RBAC que siguen usan el principal devuelto.
+  Lo usan create_api_key, revoke_api_key, register_user, change_role y set_password; el panel (cada POST que muta sin pasar por una de esas funciones), CalibrationService y Runtime.save_policy.
+async peek_session(request) -> Principal|None   # solo para MOSTRAR una página fuera de una ruta (menú del rol en la página de error de un 404/405/413); nunca lanza ni autoriza
+AUTH_RETRY_HEADERS = {"Retry-After": "5"}   # el 503 'Autenticación no disponible.' (base caída) los lleva
 has_permission(role, perm)->bool (deny-by-default) ; can_assign_role(actor_role, target_role)->bool
 class SessionManager(db, *, idle=30min, absolute=8h, clock=utcnow, touch_every=60s): create(user_id, org_id, *, previous_id=None)->raw_id ; resolve(raw)->SessionInfo|None ; destroy(raw)->bool ; purge_expired()->int
 SessionInfo(id_hash, user_id, org_id, role, email, csrf_secret).csrf_token
@@ -123,7 +133,10 @@ INTROSPECCION (AT-P02, para el test de app): route_permission(route)->Permission
 
 ## vigia_ee.security
 SESSION_COOKIE='__Host-vigia_session' ; SAFE_METHODS
-install_security(app, *, max_body_bytes=1_048_576, trust_incoming_request_id=False)  # orden: SecurityHeaders -> RequestContext (request_id, log acceso sin query, 500 generico) -> BodySizeLimit; + handlers JSON sin eco de input: bajo /v1 el sobre de OpenAI {error:{message,type,code,param,request_id}} (error_payload/is_openai_path); en el panel {error, message, request_id} (+fields en 422). CodedHTTPException(status, detail, code) fija error.code
+install_security(app, *, max_body_bytes=1_048_576, trust_incoming_request_id=False, html_error_page=None)  # orden: SecurityHeaders -> RequestContext (request_id, log acceso sin query, 500 generico) -> BodySizeLimit; + handlers JSON sin eco de input: bajo /v1 el sobre de OpenAI {error:{message,type,code,param,request_id}} (error_payload/is_openai_path); en el panel {error, message, request_id} (+fields en 422). CodedHTTPException(status, detail, code) fija error.code
+HtmlErrorPage = async (request, status, message) -> Response ; set_html_error_page(app, page | None) (equivale a install_security(..., html_error_page=page))
+  wants_html_page(scope) -> bool: True si Accept incluye text/html y la ruta no es /v1 ni MACHINE_PATHS (/livez, /readyz, /startupz, /healthz, /metrics)
+  Con una página registrada, una navegación del navegador a una ruta del panel recibe HTML para HTTPException, 404 y 405 del ruteo y 413 de BodySizeLimitMiddleware. /v1 sigue con el sobre de OpenAI; health, /metrics y el fetch del JS propio siguen en JSON. Si la página falla, la respuesta vuelve a JSON. Los mensajes por defecto de Starlette salen en español ('No encontrado.', ...).
 SecurityHeadersMiddleware (nonce en request.state.csp_nonce; Cache-Control no-store si hay sesion, Authorization o request.state.authenticated) ; build_csp(nonce)->str ; STATIC_SECURITY_HEADERS
 RequestContextMiddleware (request.state.request_id, header X-Request-ID) ; BodySizeLimitMiddleware(max_bytes) ; install_error_handlers(app) ; request_id_of(request)
 error_payload(path, status, code, message, request_id, *, param=None) -> dict ; is_openai_path(path) -> bool ; class CodedHTTPException(HTTPException)(status_code, detail, code, *, headers=None)
@@ -214,7 +227,10 @@ evaluate_report(features, labels, groups, response_ids, model_info, *, detector:
   report = {schema_version, created_at, model, detector_id, alpha, tau, bootstrap{n_boot,level,seed,cluster}, dataset{n_tokens_test,n_responses_test,n_groups_test,prevalence_token,prevalence_response,n_groups,response_note?}, detector, tiers{F0,F1,'F0+F1',todos}, baselines{out_entropy,out_nll,h_probe}, crc[...], curves{roc[{name,fpr,tpr,auc}], pr{recall,precision,ap,threshold_point}, reliability[...], histogram{edges,correct,error}}}
   entrada = {available, id, n_features, missing_features, alpha, tau, token{metric: {value, ci:[lo,hi], n_boot_valid}}, response{...}} o {available: False, reason}
   métricas token/response: auroc, auprc, recall_at_fpr, precision_at_recall_0.8, precision_at_recall_0.9, ece, brier, log_loss, precision, recall, fnr, f1, flag_rate, prevalence, delta_auroc_vs_detector, delta_auprc_vs_detector (+ response: span_iou, aurc, e_aurc)
-render_report_html(report: Mapping) -> str   # usa report['latency'] = {baseline:{p50,p95,p99}, vigia:{...}, target?} si existe
+render_report_html(report: Mapping) -> str   # usa report['latency'] = {baseline:{p50,p95,p99}, vigia:{...}, target?} si existe; agrega un aviso bajo la Tabla 4 por cada alpha saturado
+SATURATED_FLAG_RATE = 0.95
+saturation_warning(alpha, expected_flag_rate, n_cal_responses=None) -> str|None
+  aviso en español si expected_flag_rate >= 0,95. Con pocas respuestas de calibración el CRC solo cumple la garantía con tau = 0 y marca casi todo, aunque el AUROC sea alto. Texto: 'Con N respuestas de calibración, la garantía de alpha A obliga a marcar casi todo (...). Sumá datos de calibración o subí alpha.' Sin N dice 'Con estos datos de calibración'.
 
 ## vigia.charts
 OKABE_ITO; CATEGORY_LIGHT; CATEGORY_DARK; CIVIDIS; DASHES; CHART_CSS (servir como CSS estático o con nonce)
@@ -303,8 +319,9 @@ class WebhookVerificationError(ValueError); class DeliveryError(Exception)
 generate_secret()->'whsec_<b64 32 bytes>' ; sign(secret, msg_id, timestamp:int, payload:bytes)->'v1,<b64>'
 verify(secret, msg_id, timestamp, payload, signature_header, *, tolerance=300, now=None)->cuerpo parseado (acepta varias firmas separadas por espacio; lanza WebhookVerificationError)
 validate_url(url, *, allowed_hosts=(), resolve=None)->url (UnsafeURLError de vigia.policy -> la API responde 422)
-create_webhook(db, org_id, url, events, actor, *, allowed_hosts=(), resolve=None)->(webhook_id, secret)  # valida SSRF y eventos, audita 'webhook_create'; el secreto se muestra una vez
-delete_webhook(db, org_id, webhook_id, actor)->bool ; set_enabled(db, org_id, webhook_id, enabled, actor, *, allowed_hosts=(), resolve=None)->bool (habilitar re-valida la URL; audita webhook_enable/webhook_disable)
+create_webhook(db, org_id, url, events, actor, *, allowed_hosts=(), resolve=None, authorize=None)->(webhook_id, secret)  # valida SSRF y eventos, audita 'webhook_create'; el secreto se muestra una vez
+  authorize: () -> actor|None; corre dentro de la transacción de la escritura y después de validar la URL (el DNS queda fuera del lock); el panel pasa require_current
+delete_webhook(db, org_id, webhook_id, actor, *, authorize=None)->bool ; set_enabled(db, org_id, webhook_id, enabled, actor, *, allowed_hosts=(), resolve=None)->bool (habilitar re-valida la URL; audita webhook_enable/webhook_disable)
 build_body(event_type, data, *, now)->bytes ({type,timestamp,data}; >20KB -> data={trace_id?, truncated:true})
 emit(db, jobs, org_id, event_type, data)->list[job_id] (un job por webhook habilitado suscrito; mismo webhook-id para el evento)
 make_delivery_handler(db, jobs, *, http_client=None, allowed_hosts=(), resolve=None, timeout=15.0, max_consecutive_failures=5)
@@ -402,7 +419,7 @@ vigia_ee.runtime:
     Atributos del contrato: settings, db, auth (rate limiters por key y tenant), backend, model_info, jobs (con el handler webhook registrado), metrics, calibration.
     Atributos extra: base_detector, startup_complete, startup_errors, started_at.
     Métodos del contrato: repo, detector_for, policy_for, save_policy, context_for, playground_stream, close.
-    save_policy hace merge sobre la política vigente, sube version, audita {changed, version} y rechaza un alpha menor que el mínimo del detector activo.
+    save_policy hace merge sobre la política vigente, sube version, audita {changed, version} y rechaza un alpha menor que el mínimo del detector activo. Relee al actor con require_current dentro de la transacción (StaleActor -> 401).
     Métodos extra (el panel puede usarlos):
       now()
       create_org(name, *, store_text, retention_days): audita org_create e instala el detector base
@@ -437,6 +454,7 @@ vigia_ee.calibration:
       error es el mensaje para el usuario, o uno genérico ante una falla interna
     activate(principal, detector_id): verifica modelo y alpha de la política, audita, invalida la cache y emite calibration.activated
     dataset_from_reviews(principal, name) -> dataset_id
+    upload_dataset, dataset_from_reviews, start y activate releen al actor con require_current(..., 'calibration:write') dentro de la transacción de la escritura y su auditoría (StaleActor -> 401).
   El reporte guardado es evaluate_report + report['calibration'] (job_id, dataset_id, dataset_name, n_items, n_responses, n_questions, n_tokens, positive_rate, skipped, split).
 
 vigia_ee.app:
@@ -452,7 +470,9 @@ vigia_ee.app:
 
 ```text
 vigia_ee.panel:
-- install_panel(app, runtime) incluye el router y registra panel_error_handler para PanelHTTPError. app.py ya lo usa.
+- install_panel(app, runtime) incluye el router, registra panel_error_handler para PanelHTTPError y set_html_error_page(app, panel_error_page). app.py (_panel_router) hace lo mismo.
+- async panel_error_page(request, status, message) -> Response: página de error del panel para errores sin handler (404/405 del ruteo, 413 del middleware de tamaño). Usa peek_session solo para el menú del rol.
+- form_page_url(request): sin ruta en el scope (413 cortado antes del ruteo) usa la URL pedida; /calibration/datasets -> /calibration ("Volver al formulario").
 - create_panel_router(runtime) -> APIRouter. Las rutas van en la raíz, sin prefijo.
 - PanelHTTPError(HTTPException): un error de página se muestra en HTML con role=alert y request_id. Una página GET sin sesión redirige con 303 a /login?next=...
 - page(permission): envuelve require_session y conserva PERMISSION_ATTR para la introspección.
@@ -469,8 +489,9 @@ Rutas con sesión:
 - GET /playground, POST /playground (sin JS), POST /playground/stream (SSE, header X-CSRF-Token)
   Las dos toman vigia.api.generation_gate(runtime.backend), el mismo cupo que la API; lleno -> 503 con Retry-After
   (HTML con role=alert, o JSON {error: 'server_overloaded', message, retry_after}). El stream devuelve el cupo al cerrar.
+  Generan con gate.run_sync (form) y gate.iterate (SSE, también el close()), nunca en el threadpool de anyio.
 - GET /model, GET /performance (latencia + sección "Deriva del detector": runtime.drift_for, tabla de PSI por señal con estado en texto)
-- ClosingStreamingResponse(content, *, on_close=None, **kw): cierra el iterador sync y llama on_close aunque el cliente corte.
+- ClosingStreamingResponse(content, *, on_close=None, gate=None, **kw): cierra el iterador sync y llama on_close aunque el cliente corte. Con gate, cada next() y el close() corren en los hilos del cupo.
 
 vigia_ee.panel_admin.register(router, runtime) agrega:
 - GET /review, POST /review/next, POST /review/dataset
@@ -486,6 +507,8 @@ vigia_ee.panel_admin.register(router, runtime) agrega:
 - GET /audit, GET /audit/export?formato=json|csv&desde&hasta
 - GET /data, GET /data/export, POST /data/delete
 
+Cada POST que muta sin pasar por una función de auth (review reserve/decide, settings/org, settings/users/{id}/disable, webhooks create/delete/test, data/delete) llama require_current(runtime.auth, p, '<permiso de la ruta>') como primera línea de la transacción que abarca la escritura y el audit.append. Las decisiones de rol usan el principal devuelto. Calibración y políticas lo hacen dentro de CalibrationService y Runtime.save_policy. Un StaleActor sin capturar sale como 401.
+Aviso de garantía saturada (evaluate.saturation_warning con N = report['calibration']['split']['counts']['cal']['n_responses']): el reporte del detector lista cada alpha con tasa esperada >= 0,95. La tarjeta Activar, Calibración (detector activo) y Políticas avisan si el alpha de la política usa un umbral saturado (atributo data-saturation).
 Del Runtime consumo: settings, db, auth, repo, detector_for, policy_for, save_policy, playground_stream, calibration.*, model_info, backend.capabilities(), jobs.list/enqueue/now, emit_event e invalidate_detector (a través de calibration), forget_org (POST /data/delete) y drift_for (GET /performance).
 ```
 

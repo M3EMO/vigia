@@ -41,7 +41,7 @@ from markupsafe import Markup
 from starlette.types import Receive, Scope, Send
 
 from vigia import charts
-from vigia.api import GenerationBusy, generation_gate
+from vigia.api import GenerationBusy, GenerationGate, generation_gate
 from vigia.contracts import ScoredToken
 from vigia.spans import build_spans
 from vigia_ee import audit, pii, retention
@@ -51,6 +51,7 @@ from vigia_ee.auth import (
     Principal,
     login,
     logout,
+    peek_session,
     public_route,
     require_session,
     set_password,
@@ -65,6 +66,7 @@ from vigia_ee.security import (
     RateLimitExceeded,
     check_fetch_site,
     enforce_rate_limit,
+    set_html_error_page,
 )
 
 PANEL_TZ = timezone(timedelta(hours=-3), "UTC-3")
@@ -396,7 +398,11 @@ def form_page_url(request: Request) -> str | None:
     URL concreta: `/review/next` no debe confundirse con `GET /review/{item_id}`.
     """
     template = getattr(request.scope.get("route"), "path", None)
-    if not isinstance(template, str) or not template.startswith("/"):
+    if not isinstance(template, str):
+        # El middleware de tamaño corta antes del ruteo (413): sin ruta, se usa la URL pedida.
+        # `/calibration/datasets` -> `/calibration`.
+        template = request.url.path
+    if not template.startswith("/"):
         return None
     get_paths = _get_paths(request.app.routes)
     params = request.path_params
@@ -480,10 +486,21 @@ async def panel_error_handler(request: Request, exc: PanelHTTPError) -> Response
     return response
 
 
+async def panel_error_page(request: Request, status: int, message: str) -> Response:
+    """Página de error del panel para errores sin handler: 404/405 del ruteo y 413 del límite de tamaño.
+
+    La registra `set_html_error_page`; seguridad la usa solo ante una navegación (`Accept: text/html`)
+    fuera de `/v1`, health y `/metrics`.
+    """
+    await peek_session(request)  # solo para el menú del rol; nunca autoriza
+    return await panel_error_handler(request, PanelHTTPError(status, message))
+
+
 def install_panel(app: FastAPI, runtime: Any) -> None:
     """Monta el panel y registra la página HTML de errores del panel."""
     app.include_router(create_panel_router(runtime))
     app.add_exception_handler(PanelHTTPError, panel_error_handler)  # type: ignore[arg-type]
+    set_html_error_page(app, panel_error_page)
 
 
 def not_found(what: str = "El recurso no existe.") -> PanelHTTPError:
@@ -979,11 +996,19 @@ class ClosingStreamingResponse(StreamingResponse):
     """
 
     def __init__(
-        self, content: Iterator[str], *, on_close: Callable[[], None] | None = None, **kwargs: Any
+        self,
+        content: Iterator[str],
+        *,
+        on_close: Callable[[], None] | None = None,
+        gate: GenerationGate | None = None,
+        **kwargs: Any,
     ) -> None:
-        super().__init__(content, **kwargs)
+        # Con `gate`, cada next() y el close() corren en los hilos persistentes del cupo, nunca en el
+        # threadpool de anyio: torch deja un equipo OpenMP por cada hilo que lo llama.
+        super().__init__(gate.iterate(content) if gate is not None else content, **kwargs)
         self._sync_iterator = content
         self._on_close = on_close
+        self._gate = gate
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         try:
@@ -993,7 +1018,10 @@ class ClosingStreamingResponse(StreamingResponse):
                 close = getattr(self._sync_iterator, "close", None)
                 if callable(close):
                     with anyio.CancelScope(shield=True):
-                        await anyio.to_thread.run_sync(close)
+                        if self._gate is not None:
+                            await self._gate.run_sync(close)
+                        else:
+                            await anyio.to_thread.run_sync(close)
             finally:
                 if self._on_close is not None:
                     self._on_close()
@@ -1347,7 +1375,7 @@ def create_panel_router(runtime: Any) -> APIRouter:
             resp.headers["Retry-After"] = str(busy_retry_after(gate))
             return resp
         try:
-            out = await run_in_threadpool(run_playground, runtime, p, inp)
+            out = await gate.run_sync(run_playground, runtime, p, inp)
         finally:
             gate.release()
         result = None
@@ -1407,6 +1435,7 @@ def create_panel_router(runtime: Any) -> APIRouter:
             return ClosingStreamingResponse(
                 events,
                 on_close=gate.release,  # el cupo se devuelve al terminar o al cortar el cliente
+                gate=gate,  # genera en los hilos persistentes del cupo, como la API
                 media_type="text/event-stream",
                 headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
             )

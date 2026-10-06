@@ -247,6 +247,36 @@ def test_body_limit_is_strict_except_on_dataset_upload(rt, app):
     assert [d["n_items"] for d in rt.repo(org).list_datasets()] == [80]
 
 
+def test_routing_and_body_limit_errors_render_the_panel_page_but_v1_keeps_the_openai_envelope(rt, app):
+    """Regresión (R5): create_app no registraba la página de error del panel. Un 404/405 del ruteo o el
+    413 del middleware llegaban al navegador como JSON crudo. /v1 sigue con el sobre de OpenAI."""
+    org = rt.create_org("Acme")
+    add_user(rt, org, "owner@acme.com.ar", "owner")
+    panel, csrf = login(app, "owner@acme.com.ar")
+    nav = {"Accept": "text/html,application/xhtml+xml"}
+    for path, status, back in (
+        ("/settings/keys", 405, 'href="/settings"'),
+        ("/calibration/datasets", 405, 'href="/calibration"'),
+        ("/generaciones", 404, None),
+    ):
+        resp = panel.get(path, headers=nav)
+        assert resp.status_code == status and resp.headers["content-type"].startswith("text/html"), path
+        assert 'id="vg-nav"' in resp.text and 'role="alert"' in resp.text, path
+        assert back is None or back in resp.text, path
+    big = panel.post("/policies", data={"csrf_token": csrf, "pad": "x" * 5000}, headers=nav)
+    assert big.status_code == 413 and big.headers["content-type"].startswith("text/html")
+    assert "supera" in big.text and 'href="/policies"' in big.text  # vuelve al formulario
+    assert panel.get("/generaciones").json()["error"] == "not_found"  # un fetch sigue en JSON
+    v1 = panel.post(
+        "/v1/chat/completions",
+        json={"model": "tiny:mixtral", "messages": [{"role": "user", "content": "x" * 5000}]},
+        headers=nav,
+    )
+    assert v1.status_code == 413 and v1.json()["error"]["code"] == "payload_too_large"
+    missing = panel.get("/v1/no-existe", headers=nav)
+    assert missing.status_code == 404 and missing.json()["error"]["code"] == "not_found"
+
+
 def test_deeply_nested_dataset_upload_is_422_not_500(rt, app):
     """Regresión: 'Subida de dataset de calibración con JSON profundamente anidado lanza
     RecursionError no capturada y devuelve HTTP 500 en vez de 422' (AT-P16, AT-P17)."""

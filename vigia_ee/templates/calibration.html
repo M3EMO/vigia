@@ -12,6 +12,8 @@
 
 {% if not active_id %}
 <div class="vg-alert vg-alert-warn" role="status"><p><strong>No hay un detector activo.</strong> Hasta activar uno, los puntajes salen como null y el panel no resalta.</p></div>
+{% elif saturation %}
+<div class="vg-alert vg-alert-warn" role="status" data-saturation><p><strong>El detector activo marca casi todo.</strong> {{ saturation }}</p></div>
 {% endif %}
 
 {% if can("calibration:write") %}

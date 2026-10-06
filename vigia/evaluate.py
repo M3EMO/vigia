@@ -753,6 +753,7 @@ _PAGE_CSS = (
     "table.vg-metrics th[scope=row],table.vg-metrics thead th:first-child{text-align:left}"
     ".vg-grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:16px}"
     "figure{margin:0}"
+    ".vg-warning{border-left:4px solid #9A6700;padding:4px 12px}"
 )
 
 
@@ -791,6 +792,32 @@ def _metrics_table(
     return (
         f'<table class="vg-metrics"><caption>{_e(caption)}</caption><thead><tr>{head}</tr></thead>'
         f"<tbody>{''.join(body)}</tbody></table>"
+    )
+
+
+# Tasa de marcado esperada desde la que el umbral CRC deja de ser útil: marca casi todo el texto.
+SATURATED_FLAG_RATE = 0.95
+
+
+def saturation_warning(
+    alpha: float, expected_flag_rate: Any, n_cal_responses: int | None = None
+) -> str | None:
+    """Aviso cuando la garantía CRC de `alpha` obliga a marcar casi todo (tasa esperada >= 0,95).
+
+    Con pocas respuestas de calibración, `(n/(n+1)) R_n(tau) + 1/(n+1) <= alpha` solo se cumple con
+    tau = 0: la garantía es correcta, pero el detector marca el 100 % aunque el AUROC sea alto.
+    Devuelve None si la tasa es menor o falta.
+    """
+    if not isinstance(expected_flag_rate, int | float) or not expected_flag_rate >= SATURATED_FLAG_RATE:
+        return None
+    who = (
+        f"Con {charts.fmt_num(n_cal_responses, 0)} respuestas de calibración"
+        if isinstance(n_cal_responses, int) and n_cal_responses > 0
+        else "Con estos datos de calibración"
+    )
+    return (
+        f"{who}, la garantía de alpha {charts.fmt_num(alpha, 2)} obliga a marcar casi todo "
+        f"({charts.fmt_pct(expected_flag_rate)} de los tokens). Sumá datos de calibración o subí alpha."
     )
 
 
@@ -852,6 +879,10 @@ def render_report_html(report: Mapping[str, Any]) -> str:
         '<th scope="col">Tasa esperada</th><th scope="col">Precisión</th></tr></thead>'
         f"<tbody>{crc_rows}</tbody></table>"
     )
+    for c in report["crc"]:
+        warning = saturation_warning(c["alpha"], c.get("expected_flag_rate"))
+        if warning is not None:
+            crc_table += f'<p class="vg-warning" role="note"><strong>Aviso:</strong> {_e(warning)}</p>'
 
     cv = report["curves"]
     labels = {"detector": "Detector"} | {f"baseline:{k}": f"Baseline {k}" for k in report["baselines"]}

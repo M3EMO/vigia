@@ -179,22 +179,33 @@ def create_webhook(
     *,
     allowed_hosts: Collection[str] = (),
     resolve: Resolver | None = None,
+    authorize: Callable[[], Any] | None = None,
 ) -> tuple[str, str]:
-    """Crea un webhook y devuelve `(webhook_id, secreto)`. El secreto se muestra una sola vez."""
+    """Crea un webhook y devuelve `(webhook_id, secreto)`. El secreto se muestra una sola vez.
+
+    `authorize` corre dentro de la transacción de la escritura, después de validar la URL (que puede
+    resolver DNS fuera del lock de la base): el panel pasa `require_current` y devuelve el actor vigente.
+    """
     clean_url = validate_url(url, allowed_hosts=allowed_hosts, resolve=resolve)
     chosen = _check_events(events)
     secret = generate_secret()
     repo = TenantScopedRepository(db, org_id)
     with db.transaction():
+        if authorize is not None:
+            actor = authorize() or actor
         webhook_id = repo.insert_webhook(clean_url, secret, chosen)
         audit.append(db, org_id, actor, "webhook_create", webhook_id, {"events": list(chosen)})
     return webhook_id, secret
 
 
-def delete_webhook(db: Database, org_id: str, webhook_id: str, actor: Any) -> bool:
-    """Borra un webhook del tenant. Otro tenant → False (404)."""
+def delete_webhook(
+    db: Database, org_id: str, webhook_id: str, actor: Any, *, authorize: Callable[[], Any] | None = None
+) -> bool:
+    """Borra un webhook del tenant. Otro tenant → False (404). `authorize` como en `create_webhook`."""
     repo = TenantScopedRepository(db, org_id)
     with db.transaction():
+        if authorize is not None:
+            actor = authorize() or actor
         if not repo.delete_webhook(webhook_id):
             return False
         audit.append(db, org_id, actor, "webhook_delete", webhook_id)
