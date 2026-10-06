@@ -1,4 +1,4 @@
-"""Datasets de calibración y evaluación: JSONL validado y MKQA-es con gold computable.
+"""Datasets de calibración y evaluación: JSONL validado, MKQA-es y HumanEval con gold computable.
 
 Formato de un item (una línea JSON por item, el mismo que acepta la plataforma):
 
@@ -10,15 +10,23 @@ Formato de un item (una línea JSON por item, el mismo que acepta la plataforma)
   - `response` + `label`: respuesta dada (teacher forcing) con etiqueta 0 (correcta) o 1 (errónea).
   - `response` + `hallucinated_spans`: respuesta dada con fragmentos erróneos, como pares
     `[start, end]` en code points o como substrings que aparecen una sola vez.
+  - `tests` + `entry_point` (modo `code`): el modelo genera código y la etiqueta sale de correr
+    `tests` (código Python con asserts que llama a `entry_point`) en un subprocess
+    (`vigia.codeexec`). Con `question`, el prompt es la pregunta sola, sin la instrucción de
+    respuesta corta. `type` vale `code` si falta. Correr estos items exige permiso explícito.
 - Opcionales: `group` (id de pregunta para el split; por defecto `id`), `type` (tipo de pregunta),
   `evidence` (texto de referencia para el juez).
 """
 
 from __future__ import annotations
 
+import gzip
 import hashlib
 import json
+import keyword
+import os
 import random
+import urllib.request
 from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
@@ -27,6 +35,10 @@ from vigia.contracts import VigiaError
 
 DEFAULT_INSTRUCTION = "Respondé solo con la respuesta, en pocas palabras, sin explicar."
 DEFAULT_MKQA_PATH = Path(".cache") / "data" / "mkqa_es.jsonl"
+HUMANEVAL_URL = "https://github.com/openai/human-eval/raw/master/data/HumanEval.jsonl.gz"
+DEFAULT_HUMANEVAL_RAW = Path(".cache") / "data" / "HumanEval.jsonl.gz"
+DEFAULT_HUMANEVAL_PATH = Path(".cache") / "data" / "humaneval_es.jsonl"
+MAX_HUMANEVAL_BYTES = 5_000_000
 MAX_ITEMS = 100_000
 MAX_LINE_BYTES = 1_000_000
 MAX_TEXT_CHARS = 50_000
@@ -34,7 +46,7 @@ MAX_ID_CHARS = 128
 MAX_MESSAGES = 64
 MAX_ANSWERS = 64
 ROLES = ("system", "developer", "user", "assistant")
-LABEL_MODES = ("gold", "label", "spans")
+LABEL_MODES = ("gold", "label", "spans", "code")
 _KNOWN_KEYS = frozenset(
     {
         "id",
@@ -47,6 +59,8 @@ _KNOWN_KEYS = frozenset(
         "group",
         "type",
         "evidence",
+        "tests",
+        "entry_point",
     }
 )
 
@@ -66,6 +80,31 @@ def _text(value: Any, field: str, where: str, *, max_chars: int = MAX_TEXT_CHARS
 def question_messages(question: str, instruction: str = DEFAULT_INSTRUCTION) -> list[dict[str, str]]:
     """Prompt de QA corto en español: la pregunta y la instrucción en un solo mensaje de usuario."""
     return [{"role": "user", "content": f"{question.strip()}\n\n{instruction}"}]
+
+
+def code_messages(question: str) -> list[dict[str, str]]:
+    """Prompt de un item de código: la pregunta sola (ya dice cómo responder)."""
+    return [{"role": "user", "content": question.strip()}]
+
+
+def _default_messages(question: str, mode: str) -> list[dict[str, str]]:
+    return code_messages(question) if mode == "code" else question_messages(question)
+
+
+def _tests(value: Any, where: str) -> str:
+    tests = _text(value, "tests", where)
+    try:
+        compile(tests, "<tests>", "exec")  # solo compila: no ejecuta nada
+    except (SyntaxError, ValueError, RecursionError, MemoryError) as exc:
+        raise DatasetError(f"{where}: 'tests' no es código Python válido ({type(exc).__name__})") from None
+    return tests
+
+
+def _entry_point(value: Any, where: str) -> str:
+    name = _text(value, "entry_point", where, max_chars=MAX_ID_CHARS).strip()
+    if not name.isidentifier() or keyword.iskeyword(name):
+        raise DatasetError(f"{where}: 'entry_point' debe ser un nombre de función de Python")
+    return name
 
 
 def _messages(value: Any, where: str) -> list[dict[str, str]]:
@@ -127,8 +166,9 @@ def _spans(value: Any, response: str, where: str) -> list[list[int]]:
 def validate_item(obj: Any, *, where: str = "item") -> dict[str, Any]:
     """Valida un item y lo devuelve normalizado (ver docstring del módulo).
 
-    El item normalizado tiene siempre: id, group, messages, question, mode (gold | label | spans),
-    answers, response, label, hallucinated_spans, type y evidence (None si no aplica).
+    El item normalizado tiene siempre: id, group, messages, question, mode (gold | label | spans |
+    code), answers, response, label, hallucinated_spans, tests, entry_point, type y evidence (None
+    si no aplica).
     """
     if not isinstance(obj, Mapping):
         raise DatasetError(f"{where}: cada línea debe ser un objeto JSON")
@@ -143,19 +183,30 @@ def validate_item(obj: Any, *, where: str = "item") -> dict[str, Any]:
     has_messages, has_question = "messages" in obj, "question" in obj
     if has_messages == has_question:
         raise DatasetError(f"{where}: hace falta 'messages' o 'question', y solo uno")
+    has_answers, has_response = "answers" in obj, "response" in obj
+    has_label, has_spans = "label" in obj, "hallucinated_spans" in obj
+    has_tests, has_entry = "tests" in obj, "entry_point" in obj
+    is_code = has_tests or has_entry
     if has_question:
         question = _text(obj["question"], "question", where)
-        messages = question_messages(question)
+        messages = _default_messages(question, "code" if is_code else "gold")
     else:
         messages = _messages(obj["messages"], where)
         question = next(
             m["content"] for m in reversed(messages) if m["role"] == "user" and m["content"].strip()
         )
 
-    has_answers, has_response = "answers" in obj, "response" in obj
-    has_label, has_spans = "label" in obj, "hallucinated_spans" in obj
-    answers = response = label = spans = None
-    if has_answers and not (has_response or has_label or has_spans):
+    answers = response = label = spans = tests = entry_point = None
+    if is_code:
+        if not (has_tests and has_entry) or has_answers or has_response or has_label or has_spans:
+            raise DatasetError(
+                f"{where}: un item de código lleva 'tests' y 'entry_point' juntos, "
+                "sin 'answers', 'response', 'label' ni 'hallucinated_spans'"
+            )
+        tests = _tests(obj["tests"], where)
+        entry_point = _entry_point(obj["entry_point"], where)
+        mode = "code"
+    elif has_answers and not (has_response or has_label or has_spans):
         raw = obj["answers"]
         raw = [raw] if isinstance(raw, str) else raw
         if not isinstance(raw, list) or not raw or len(raw) > MAX_ANSWERS:
@@ -183,7 +234,7 @@ def validate_item(obj: Any, *, where: str = "item") -> dict[str, Any]:
     if isinstance(group, int) and not isinstance(group, bool):
         group = str(group)
     group = _text(group, "group", where, max_chars=MAX_ID_CHARS)
-    item_type = obj.get("type")
+    item_type = obj.get("type", "code" if mode == "code" else None)
     if item_type is not None:
         item_type = _text(item_type, "type", where, max_chars=64)
     evidence = obj.get("evidence")
@@ -199,6 +250,8 @@ def validate_item(obj: Any, *, where: str = "item") -> dict[str, Any]:
         "response": response,
         "label": label,
         "hallucinated_spans": spans,
+        "tests": tests,
+        "entry_point": entry_point,
         "type": item_type,
         "evidence": evidence,
     }
@@ -254,7 +307,7 @@ def read_jsonl(path: str | Path, *, max_items: int = MAX_ITEMS) -> list[dict[str
 def item_to_json(item: Mapping[str, Any]) -> dict[str, Any]:
     """Item normalizado -> objeto JSONL del formato público (inverso de `validate_item`)."""
     out: dict[str, Any] = {"id": item["id"]}
-    if item["messages"] == question_messages(item["question"]):
+    if item["messages"] == _default_messages(item["question"], item["mode"]):
         out["question"] = item["question"]
     else:
         out["messages"] = item["messages"]
@@ -262,6 +315,9 @@ def item_to_json(item: Mapping[str, Any]) -> dict[str, Any]:
         out["group"] = item["group"]
     if item["mode"] == "gold":
         out["answers"] = item["answers"]
+    elif item["mode"] == "code":
+        out["tests"] = item["tests"]
+        out["entry_point"] = item["entry_point"]
     else:
         out["response"] = item["response"]
         if item["mode"] == "label":
@@ -370,14 +426,120 @@ def load_mkqa_es(
     return stratified_sample(items, n, seed=seed) if n is not None else items
 
 
+def humaneval_question(prompt: str, entry_point: str) -> str:
+    """Pregunta en español que pide implementar la función del prompt de HumanEval."""
+    return (
+        f"Implementá en Python la función `{entry_point}` según su firma y su docstring:\n\n"
+        f"```python\n{prompt.strip()}\n```\n\n"
+        "Respondé SOLO con un bloque ```python``` que contenga la función completa, con los imports "
+        "que necesite, sin explicaciones."
+    )
+
+
+def humaneval_item(raw: Mapping[str, Any], *, where: str = "HumanEval") -> dict[str, Any]:
+    """Item de código validado a partir de una línea oficial de HumanEval.
+
+    Usa `task_id`, `prompt`, `test` (define `check(candidate)`) y `entry_point`. Los tests son
+    `test` más la llamada `check(<entry_point>)`.
+    """
+    if not isinstance(raw, Mapping):
+        raise DatasetError(f"{where}: se esperaba un objeto")
+    fields = {k: raw.get(k) for k in ("task_id", "prompt", "test", "entry_point")}
+    missing = [k for k, v in fields.items() if not isinstance(v, str) or not v.strip()]
+    if missing:
+        raise DatasetError(f"{where}: faltan campos de HumanEval {missing}")
+    entry = _entry_point(fields["entry_point"], where)
+    return validate_item(
+        {
+            "id": fields["task_id"],
+            "question": humaneval_question(fields["prompt"], entry),
+            "tests": fields["test"] + f"\ncheck({entry})\n",
+            "entry_point": entry,
+            "type": "code",
+        },
+        where=where,
+    )
+
+
+def load_humaneval(
+    path: str | Path = DEFAULT_HUMANEVAL_RAW, n: int | None = None, seed: int = 0
+) -> list[dict[str, Any]]:
+    """Lee el HumanEval.jsonl.gz oficial (o el .jsonl sin comprimir) y arma items de código.
+
+    Con `n`, muestrea `n` items con `seed` (orden reproducible). Sin `n`, respeta el orden original.
+    """
+    path = Path(path)
+    if not path.is_file():
+        raise DatasetError(f"no existe {path}: descargalo con prepare_humaneval()")
+    opener = gzip.open if path.suffix == ".gz" else open
+    items: list[dict[str, Any]] = []
+    with opener(path, "rt", encoding="utf-8") as fh:
+        for line_no, line in enumerate(fh, start=1):
+            if not line.strip():
+                continue
+            if len(line) > MAX_LINE_BYTES:
+                raise DatasetError(f"{path.name} línea {line_no}: supera {MAX_LINE_BYTES} caracteres")
+            try:
+                raw = json.loads(line, parse_constant=_reject_constant)
+            except ValueError as exc:
+                raise DatasetError(f"{path.name} línea {line_no}: JSON inválido") from exc
+            items.append(humaneval_item(raw, where=f"{path.name} línea {line_no}"))
+    if not items:
+        raise DatasetError(f"{path} no tiene items")
+    if len({it["id"] for it in items}) != len(items):
+        raise DatasetError(f"{path} tiene task_id repetidos")
+    return stratified_sample(items, n, seed=seed) if n is not None else items
+
+
+def download_humaneval(
+    dest: str | Path = DEFAULT_HUMANEVAL_RAW, *, url: str = HUMANEVAL_URL, timeout: float = 60.0
+) -> Path:
+    """Descarga HumanEval.jsonl.gz (licencia MIT) si no existe. Escritura atómica con tope de tamaño."""
+    dest = Path(dest)
+    if dest.is_file():
+        return dest
+    if not url.startswith("https://"):
+        raise DatasetError("la URL de HumanEval debe ser https")
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    tmp = dest.with_name(dest.name + ".part")
+    with urllib.request.urlopen(url, timeout=timeout) as resp:  # noqa: S310 - https fijo
+        data = resp.read(MAX_HUMANEVAL_BYTES + 1)
+    if len(data) > MAX_HUMANEVAL_BYTES:
+        raise DatasetError(f"la descarga de HumanEval supera {MAX_HUMANEVAL_BYTES} bytes")
+    tmp.write_bytes(data)
+    os.replace(tmp, dest)
+    return dest
+
+
+def prepare_humaneval(
+    raw: str | Path = DEFAULT_HUMANEVAL_RAW, out: str | Path = DEFAULT_HUMANEVAL_PATH
+) -> Path:
+    """Descarga HumanEval si falta y lo convierte a JSONL de items de código en español."""
+    items = load_humaneval(download_humaneval(raw))
+    out = Path(out)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    tmp = out.with_name(out.name + ".tmp")
+    write_jsonl(tmp, items)
+    os.replace(tmp, out)
+    return out
+
+
 __all__ = [
+    "DEFAULT_HUMANEVAL_PATH",
+    "DEFAULT_HUMANEVAL_RAW",
     "DEFAULT_INSTRUCTION",
     "DEFAULT_MKQA_PATH",
+    "HUMANEVAL_URL",
     "LABEL_MODES",
     "DatasetError",
+    "code_messages",
+    "download_humaneval",
+    "humaneval_item",
     "item_to_json",
     "items_sha256",
+    "load_humaneval",
     "load_mkqa_es",
+    "prepare_humaneval",
     "parse_jsonl",
     "question_messages",
     "read_jsonl",

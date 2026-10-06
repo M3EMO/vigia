@@ -78,7 +78,7 @@ orquestador.
 | ML | `vigia/detector.py`, `vigia/calibrate.py`, `vigia/labels.py` | Artefacto, entrenamiento, CRC, etiquetas computables y juez | contratos |
 | evaluación | `vigia/evaluate.py`, `vigia/charts.py`, `vigia/bench.py` | Métricas, bootstrap por cluster, SVG, benchmark de latencia | ML |
 | servicio | `vigia/spans.py`, `vigia/policy.py`, `vigia/api.py`, `vigia/cli.py`, `vigia/serve.py` | Agregación, políticas, API OpenAI, CLI, servidor single-tenant | todos los de núcleo |
-| evidencia | `vigia/evidence.py`, `vigia/datasets.py` | Experimento reanudable, datasets JSONL y MKQA-es | ML, evaluación, backend HF |
+| evidencia | `vigia/evidence.py`, `vigia/datasets.py`, `vigia/codeexec.py` | Experimento reanudable, datasets JSONL, MKQA-es y HumanEval (tests ejecutados en subprocess, no sandbox) | ML, evaluación, backend HF |
 | plataforma base | `vigia_ee/db.py`, `vigia_ee/auth.py`, `vigia_ee/security.py`, `vigia_ee/audit.py`, `vigia_ee/pii.py` | Datos, identidad, RBAC, headers, auditoría, PII | contratos |
 | plataforma ops | `vigia_ee/jobs.py`, `vigia_ee/webhooks.py`, `vigia_ee/metrics.py`, `vigia_ee/retention.py` | Cola de jobs, webhooks, Prometheus, purga | plataforma base |
 | panel | `vigia_ee/panel.py`, `vigia_ee/templates/`, `vigia_ee/static/` | Páginas, accesibilidad, atajos | plataforma base, evaluación |

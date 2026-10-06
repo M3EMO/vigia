@@ -7,10 +7,15 @@ Flujo típico sobre una carpeta de corrida:
     vigia calibrate --features run/features.npz                           # detector.json + split.json
     vigia evaluate  --features run/features.npz                           # report.json + report.html
     vigia evidence  --model ibm-granite/... --mkqa 300 --out run/         # todo junto, reanudable
+    vigia evidence  --model ... --humaneval 164 --allow-code-exec --out run/  # código (ver riesgo)
 
 `--model` acepta un id de Hugging Face, una ruta local o `tiny:mixtral` / `tiny:gpt_oss` (modelo
 diminuto aleatorio con tokenizer byte-level, para demos y pruebas sin red). La API key del juez se
 lee solo de la variable de entorno `VIGIA_JUDGE_API_KEY`.
+
+Los items de código (`--humaneval` o `tests` + `entry_point` en `--data`) se etiquetan ejecutando el
+código que genera el modelo. Eso no es un sandbox: hace falta `--allow-code-exec` y conviene correrlo
+solo en una VM descartable.
 """
 
 from __future__ import annotations
@@ -30,6 +35,11 @@ TINY_PREFIX = "tiny:"
 TINY_ARCHS = ("mixtral", "gpt_oss")
 JUDGE_KEY_ENV = "VIGIA_JUDGE_API_KEY"
 DTYPES = ("auto", "float32", "bfloat16", "float16")
+CODE_EXEC_HELP = (
+    "permite ejecutar el código que genera el modelo para etiquetar items de código. RIESGO: no es "
+    "un sandbox; el código corre con tus permisos (archivos, red, procesos). Usalo solo en una VM "
+    "descartable"
+)
 _TINY_GPT_OSS_TEMPLATE = (
     "{% for m in messages %}<|start|>{{ m.role }}<|message|>{{ m.content }}<|end|>{% endfor %}"
     "{% if add_generation_prompt %}<|start|>assistant<|channel|>final<|message|>{% endif %}"
@@ -146,7 +156,7 @@ def _parse_floats(text: str) -> tuple[float, ...]:
 
 
 def _load_items(args: argparse.Namespace) -> list[dict[str, Any]]:
-    from vigia.datasets import load_mkqa_es, read_jsonl
+    from vigia.datasets import load_mkqa_es, read_jsonl, stratified_sample
 
     types = [t.strip() for t in args.types.split(",") if t.strip()] if args.types else None
     if args.data:
@@ -160,7 +170,14 @@ def _load_items(args: argparse.Namespace) -> list[dict[str, Any]]:
         return items
     if args.mkqa:
         return load_mkqa_es(args.mkqa_path, n=args.mkqa, seed=args.seed, types=types)
-    raise CLIError("indicá el dataset con --data o --mkqa")
+    if args.humaneval:
+        if not Path(args.humaneval_path).is_file():
+            raise CLIError(
+                f"no existe {args.humaneval_path}: convertí HumanEval con "
+                'python -c "from vigia.datasets import prepare_humaneval; prepare_humaneval()"'
+            )
+        return stratified_sample(read_jsonl(args.humaneval_path), args.humaneval, seed=args.seed)
+    raise CLIError("indicá el dataset con --data, --mkqa o --humaneval")
 
 
 def _make_judge(args: argparse.Namespace) -> Any:
@@ -195,10 +212,11 @@ def _print_json(data: Any) -> None:
 
 
 def cmd_extract(args: argparse.Namespace) -> int:
-    from vigia.evidence import FEATURES_FILE, ROWS_FILE, build_features, extract
+    from vigia.evidence import FEATURES_FILE, ROWS_FILE, build_features, extract, require_code_permission
 
     tiers = parse_tiers(args.tiers)
     items = _load_items(args)
+    require_code_permission(items, args.allow_code_exec)  # antes de cargar el modelo
     backend = load_backend(
         args.model, device=args.device, dtype=args.dtype, reasoning_effort=args.reasoning_effort
     )
@@ -210,6 +228,7 @@ def cmd_extract(args: argparse.Namespace) -> int:
         max_tokens=args.max_tokens,
         seed=args.seed,
         progress_cb=None if args.quiet else _progress,
+        allow_code_exec=args.allow_code_exec,
     )
     fs = build_features(args.out, rows)
     skipped = sum(1 for r in rows if r.get("skipped"))
@@ -224,7 +243,7 @@ def cmd_extract(args: argparse.Namespace) -> int:
 def cmd_label(args: argparse.Namespace) -> int:
     from vigia.evidence import relabel
 
-    report = relabel(args.run, judge=_make_judge(args))
+    report = relabel(args.run, judge=_make_judge(args), allow_code_exec=args.allow_code_exec)
     _print_json(report)
     return EXIT_OK
 
@@ -327,11 +346,12 @@ def cmd_bench(args: argparse.Namespace) -> int:
 
 
 def cmd_evidence(args: argparse.Namespace) -> int:
-    from vigia.evidence import REPORT_HTML, REPORT_JSON, run_evidence, summary_text
+    from vigia.evidence import REPORT_HTML, REPORT_JSON, require_code_permission, run_evidence, summary_text
 
     tiers = parse_tiers(args.tiers)
     judge = _make_judge(args)
     items = _load_items(args)
+    require_code_permission(items, args.allow_code_exec)  # antes de cargar el modelo
     backend = load_backend(
         args.model, device=args.device, dtype=args.dtype, reasoning_effort=args.reasoning_effort
     )
@@ -348,6 +368,7 @@ def cmd_evidence(args: argparse.Namespace) -> int:
         bench_prompts=_bench_prompts(items, args.bench) if args.bench else None,
         bench_runs=args.bench_runs,
         progress_cb=None if args.quiet else _progress,
+        allow_code_exec=args.allow_code_exec,
     )
     print(summary_text(report), end="")
     print(f"Artefactos: {Path(args.out) / REPORT_JSON}, {Path(args.out) / REPORT_HTML}")
@@ -447,12 +468,21 @@ def _add_model(p: argparse.ArgumentParser) -> None:
 
 
 def _add_data(p: argparse.ArgumentParser) -> None:
-    from vigia.datasets import DEFAULT_MKQA_PATH
+    from vigia.datasets import DEFAULT_HUMANEVAL_PATH, DEFAULT_MKQA_PATH
 
     g = p.add_mutually_exclusive_group()
     g.add_argument("--data", help="JSONL con items (formato de la plataforma)")
     g.add_argument("--mkqa", type=_positive, metavar="N", help="muestra estratificada de N items de MKQA-es")
+    g.add_argument(
+        "--humaneval",
+        type=_positive,
+        metavar="N",
+        help="muestra de N problemas de HumanEval (código; etiquetar exige --allow-code-exec)",
+    )
     p.add_argument("--mkqa-path", default=str(DEFAULT_MKQA_PATH), help="JSONL de MKQA-es convertido")
+    p.add_argument(
+        "--humaneval-path", default=str(DEFAULT_HUMANEVAL_PATH), help="JSONL de HumanEval convertido"
+    )
     p.add_argument("--types", help="filtra por tipo de pregunta (lista separada por comas)")
     p.add_argument("--limit", type=_positive, help="usa solo los primeros N items de --data")
 
@@ -475,11 +505,13 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--max-tokens", type=_positive, default=24)
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--quiet", action="store_true", help="sin progreso por item")
+    p.add_argument("--allow-code-exec", action="store_true", help=CODE_EXEC_HELP)
     p.set_defaults(func=cmd_extract)
 
     p = sub.add_parser("label", help="re-etiqueta una corrida con reglas computables o con un juez")
     p.add_argument("--run", required=True, help="carpeta de la corrida (rows.jsonl)")
     _add_judge(p)
+    p.add_argument("--allow-code-exec", action="store_true", help=CODE_EXEC_HELP)
     p.set_defaults(func=cmd_label)
 
     p = sub.add_parser("calibrate", help="features.npz -> detector.json + split.json")
@@ -526,6 +558,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--bench", type=_non_negative, default=0, metavar="N", help="prompts para el benchmark")
     p.add_argument("--bench-runs", type=_positive, default=3)
     p.add_argument("--quiet", action="store_true", help="sin progreso por item")
+    p.add_argument("--allow-code-exec", action="store_true", help=CODE_EXEC_HELP)
     p.set_defaults(func=cmd_evidence)
 
     p = sub.add_parser("serve", help="servidor OpenAI-compatible single-tenant")

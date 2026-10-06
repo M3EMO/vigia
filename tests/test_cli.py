@@ -231,7 +231,7 @@ def test_errors_exit_with_code_and_message(dataset, tmp_path, capsys):
     )
     assert code == 1 and "no existe" in err
     code, _, err = run(capsys, "extract", "--model", "tiny:mixtral", "--out", str(tmp_path))
-    assert code == 1 and "--data o --mkqa" in err
+    assert code == 1 and "--data, --mkqa o --humaneval" in err
     code, _, err = run(
         capsys, "extract", "--model", "tiny:mixtral", "--data", "x", "--out", "o", "--tiers", "F9"
     )
@@ -372,3 +372,36 @@ def test_serve_rag_allowed_hosts_enables_policy_retriever(capsys, monkeypatch, t
     )
     assert code == 0, err
     assert built == [("http://rag.local:9000/rag", ("rag.local", "otro"))]
+
+
+def test_code_items_need_allow_code_exec(tmp_path, capsys, monkeypatch):
+    """Items de código sin --allow-code-exec: error claro antes de cargar el modelo."""
+    from test_evidence import code_items
+
+    path = tmp_path / "code.jsonl"
+    write_jsonl(path, code_items(2))
+
+    def no_model(*args, **kwargs):
+        raise AssertionError("no debería cargar el modelo")
+
+    monkeypatch.setattr(cli, "load_backend", no_model)
+    for command in ("evidence", "extract"):
+        code, _, err = run(
+            capsys, command, "--model", "tiny:mixtral", "--data", str(path), "--out", str(tmp_path / "o")
+        )
+        assert code == 1 and "--allow-code-exec" in err and "VM descartable" in err
+    code, _, err = run(
+        capsys,
+        "evidence",
+        "--model",
+        "tiny:mixtral",
+        "--humaneval",
+        "3",
+        "--humaneval-path",
+        str(tmp_path / "no.jsonl"),
+        "--out",
+        str(tmp_path / "o"),
+    )
+    assert code == 1 and "prepare_humaneval" in err
+    help_text = cli.build_parser()._subparsers._group_actions[0].choices["evidence"].format_help()
+    assert "--allow-code-exec" in help_text and "sandbox" in help_text and "--humaneval" in help_text

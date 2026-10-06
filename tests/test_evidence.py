@@ -629,3 +629,200 @@ def test_resume_rejects_item_whose_content_changed(backend, items, tmp_path):
     counting = CountingBackend(backend)
     rows = extract(counting, [*first, items[0]], tmp_path, max_tokens=8)  # agregar items sigue valiendo
     assert counting.calls == 1 and [r["id"] for r in rows] == [*(it["id"] for it in first), items[0]["id"]]
+
+
+# --- Benchmark de código (modo code) ---------------------------------------------------------------
+
+CODE_TESTS = "assert {name}(3) == 9\nassert {name}(-2) == 4\n"
+CODE_RESPONSES = (
+    "```python\ndef {name}(x):\n    return x * x\n```",  # pasa
+    "```python\ndef {name}(x):\n    return x + x\n```",  # falla un assert
+    "Claro:\n```python\ndef {name}(x):\n    return x ** 2\n```\nListo.",  # pasa
+    "```python\ndef {name}(x)\n    return x * x\n```",  # error de sintaxis
+    "```\ndef {name}(x):\n    return abs(x) * abs(x)\n```",  # pasa (bloque sin lenguaje)
+    "No sé resolverlo.",  # sin bloque: el texto entero no define la función
+)
+
+
+def code_items(n: int = 6) -> list[dict]:
+    items = []
+    for i in range(n):
+        name = f"square_{i}"
+        items.append(
+            validate_item(
+                {
+                    "id": f"code{i}",
+                    "question": f"Implementá `{name}(x)` que devuelve x al cuadrado.",
+                    "tests": CODE_TESTS.format(name=name),
+                    "entry_point": name,
+                    "type": "code",
+                }
+            )
+        )
+    return items
+
+
+class _FixedStream:
+    """Stream de un backend falso: eventos reales de teacher forcing sobre un texto fijo."""
+
+    def __init__(self, events, text):
+        self._it = iter(events)
+        self.text = text
+        self.finish_reason = "stop"
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        return next(self._it)
+
+
+class FixedTextBackend(CountingBackend):
+    """El modelo diminuto no escribe código: `stream` devuelve una respuesta fija por pregunta."""
+
+    def __init__(self, inner, responses):
+        super().__init__(inner)
+        self.responses = responses
+
+    def stream(self, messages, *, tiers, **kwargs):
+        text = self.responses.get(messages[-1]["content"])
+        if text is None:
+            return super().stream(messages, tiers=tiers, **kwargs)
+        self.calls += 1
+        return _FixedStream(self.inner.teacher_force(messages, text, tiers=tiers), text)
+
+
+def fixed_code_backend(backend, items):
+    responses = {}
+    code = [it for it in items if it["mode"] == "code"]
+    for i, it in enumerate(code):
+        text = CODE_RESPONSES[i % len(CODE_RESPONSES)].format(name=it["entry_point"])
+        responses[it["messages"][-1]["content"]] = text
+    return FixedTextBackend(backend, responses)
+
+
+def test_validate_item_code_mode():
+    item = code_items(1)[0]
+    assert item["mode"] == "code" and item["type"] == "code" and item["entry_point"] == "square_0"
+    # El prompt de código no lleva la instrucción de respuesta corta.
+    assert item["messages"] == [{"role": "user", "content": item["question"]}]
+    assert DEFAULT_INSTRUCTION not in item["messages"][0]["content"]
+    assert validate_item(item_to_json(item)) == item
+    no_type = item_to_json(item)
+    del no_type["type"]
+    assert validate_item(no_type)["type"] == "code"
+
+
+@pytest.mark.parametrize(
+    ("extra", "fragment"),
+    [
+        ({"entry_point": None}, "tests' y 'entry_point' juntos"),
+        ({"answers": ["9"]}, "tests' y 'entry_point' juntos"),
+        ({"response": "x", "label": 0}, "tests' y 'entry_point' juntos"),
+        ({"tests": "assert (\n"}, "no es código Python válido"),
+        ({"entry_point": "no valido"}, "nombre de función"),
+        ({"entry_point": "class"}, "nombre de función"),
+        ({"tests": "x" * 60_000}, "supera"),
+    ],
+)
+def test_validate_item_rejects_bad_code_items(extra, fragment):
+    obj = item_to_json(code_items(1)[0]) | extra
+    obj = {k: v for k, v in obj.items() if v is not None}
+    with pytest.raises(DatasetError, match=fragment):
+        validate_item(obj)
+
+
+def test_other_modes_do_not_change_with_code_mode(items):
+    for it in items:
+        assert it["tests"] is None and it["entry_point"] is None
+        assert it["mode"] in ("gold", "label")
+        assert it["messages"] == question_messages(it["question"])
+
+
+def test_load_humaneval_builds_spanish_code_items(tmp_path):
+    import gzip
+
+    from vigia.datasets import load_humaneval, read_jsonl, write_jsonl
+
+    raw = [
+        {
+            "task_id": f"HumanEval/{i}",
+            "prompt": f'def add_{i}(a: int, b: int) -> int:\n    """Suma a y b."""\n',
+            "canonical_solution": "    return a + b\n",
+            "test": "def check(candidate):\n    assert candidate(1, 2) == 3\n",
+            "entry_point": f"add_{i}",
+        }
+        for i in range(5)
+    ]
+    path = tmp_path / "HumanEval.jsonl.gz"
+    with gzip.open(path, "wt", encoding="utf-8") as fh:
+        fh.writelines(json.dumps(r) + "\n" for r in raw)
+    items = load_humaneval(path)
+    assert [it["id"] for it in items] == [r["task_id"] for r in raw]
+    first = items[0]
+    assert first["mode"] == "code" and first["type"] == "code" and first["entry_point"] == "add_0"
+    assert first["tests"].endswith("\ncheck(add_0)\n") and first["tests"].startswith(raw[0]["test"])
+    question = first["messages"][0]["content"]
+    assert "Implementá" in question and raw[0]["prompt"].strip() in question
+    assert "SOLO con un bloque ```python```" in question
+    sample = load_humaneval(path, n=3, seed=1)
+    assert len(sample) == 3 and sample == load_humaneval(path, n=3, seed=1)
+    out = tmp_path / "humaneval_es.jsonl"
+    write_jsonl(out, items)
+    assert read_jsonl(out) == items
+    with pytest.raises(DatasetError, match="prepare_humaneval"):
+        load_humaneval(tmp_path / "no_existe.jsonl.gz")
+
+
+def test_run_evidence_without_permission_fails_before_generating(backend, items, tmp_path):
+    from vigia.evidence import CodeExecNotAllowed
+
+    counting = CountingBackend(backend)
+    with pytest.raises(CodeExecNotAllowed, match="allow-code-exec"):
+        run_evidence(counting, [*items[:3], *code_items(2)], out_dir=tmp_path, max_tokens=8)
+    with pytest.raises(CodeExecNotAllowed):
+        extract(counting, code_items(2), tmp_path, max_tokens=8)
+    assert counting.calls == 0 and not (tmp_path / ROWS_FILE).exists()
+
+
+def test_extract_labels_code_by_running_tests(backend, tmp_path):
+    from vigia.evidence import CodeExecNotAllowed
+
+    code = code_items(6)
+    fake = fixed_code_backend(backend, code)
+    rows = extract(fake, code, tmp_path, max_tokens=8, allow_code_exec=True)
+    expected = ["passed", "failed", "passed", "error", "passed", "error"]
+    assert [r["label_info"]["status"] for r in rows] == expected
+    for row, status in zip(rows, expected, strict=True):
+        assert row["source"] == "generated" and row["tokens"]
+        scored = {v for v in row["labels"] if v != IGNORE_LABEL}
+        assert scored == ({0} if status == "passed" else {1})
+        assert row["label_info"]["correct"] is (status == "passed")
+        assert isinstance(row["label_info"]["detail"], str)
+    assert "AssertionError" in rows[1]["label_info"]["detail"]
+    assert "SyntaxError" in rows[3]["label_info"]["detail"]
+
+    # Re-etiquetar ejecuta código otra vez: también exige permiso.
+    with pytest.raises(CodeExecNotAllowed):
+        relabel(tmp_path)
+    assert relabel(tmp_path, allow_code_exec=True)["n_rows"] == 6
+
+
+def test_run_evidence_with_code_items_reports_by_type(backend, items, tmp_path):
+    code = code_items(6)
+    mixed = [*items, *code]
+    fake = fixed_code_backend(backend, mixed)
+    report = run_evidence(
+        fake, mixed, out_dir=tmp_path, max_tokens=8, n_boot=100, seed=3, allow_code_exec=True
+    )
+    ev = report["evidence"]
+    assert ev["code_status"] == {"error": 2, "failed": 1, "passed": 3}
+    by_type = ev["model_quality"]["generated"]["by_type"]
+    assert by_type["code"]["n"] == 6 and by_type["code"]["accuracy"] == pytest.approx(0.5)
+    rows = {r["id"]: r for r in RunStore(tmp_path).load_rows()}
+    for i, it in enumerate(code):
+        scored = {v for v in rows[it["id"]]["labels"] if v != IGNORE_LABEL}
+        assert scored == ({0} if i in (0, 2, 4) else {1})
+    summary = (tmp_path / "summary.txt").read_text(encoding="utf-8")
+    assert "code: exactitud 50,0 %" in summary
+    assert "Tests de código: error 2, failed 1, passed 3" in summary

@@ -2,7 +2,7 @@
 
 Pipeline de `run_evidence`:
 
-1. Extracción. Cada item con `answers` se genera con `backend.stream` (greedy). Cada item con
+1. Extracción. Cada item con `answers` o de código se genera con `backend.stream` (greedy). Cada item con
    `response` pasa por `backend.teacher_force`. Cada respuesta deja una fila en `rows.jsonl` y su
    matriz de features en `chunks/`. La corrida es reanudable: una fila escrita no se recalcula y una
    línea final cortada se descarta. El manifiesto (`manifest.json`) impide mezclar corridas con otro
@@ -13,7 +13,10 @@ Pipeline de `run_evidence`:
    fecha. Los demás items son
    correctos por EM, F1 de tokens >= 0,5, número o fecha (`vigia.labels`). Todos los tokens
    `final` de la respuesta llevan la etiqueta de la respuesta. `response + label`: igual.
-   `hallucinated_spans`: etiqueta por solapamiento. Con un juez, el juez etiqueta cada respuesta y
+   `hallucinated_spans`: etiqueta por solapamiento. Código (`tests` + `entry_point`): se extrae el
+   código de la respuesta, se corren los tests en un subprocess (`vigia.codeexec`) y todos los
+   tokens `final` llevan 1 si no pasan y 0 si pasan. Ejecutar código del modelo exige
+   `allow_code_exec=True`: no es un sandbox. Con un juez, el juez etiqueta cada respuesta y
    el gold queda como auditoría.
 3. Matriz `features.npz`, detector F0+F1 (`detector.json`), reporte con IC por bootstrap de
    pregunta (`report.json`, `report.html`), benchmark de latencia opcional y `summary.txt`.
@@ -39,6 +42,7 @@ import numpy as np
 
 from vigia import charts
 from vigia.calibrate import DEFAULT_ALPHAS, train_detector
+from vigia.codeexec import extract_code, run_tests
 from vigia.contracts import Backend, ModelInfo, Tier, TokenEvent, VigiaError, feature_tier
 from vigia.datasets import DEFAULT_INSTRUCTION, items_sha256
 from vigia.detector import Detector
@@ -79,12 +83,31 @@ _ISO_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _LEADING_NUMBER = re.compile(r"^\s*[-+−]?\d")
 _NUMERIC_DMY = re.compile(r"\b\d{1,2}[/.-]\d{1,2}[/.-]\d{4}\b")
 TYPED_ITEM_TYPES = ("number", "number_with_unit", "date")
+GENERATED_MODES = ("gold", "code")
+CODE_TIMEOUT_S = 10.0
 
 ProgressCallback = Callable[[int, int, str], None]
 
 
 class EvidenceError(VigiaError):
     """La corrida no puede seguir: manifiesto incompatible, datos insuficientes o archivo dañado."""
+
+
+class CodeExecNotAllowed(EvidenceError):
+    """Hay items de código y no se dio permiso para ejecutar el código del modelo."""
+
+
+def require_code_permission(entries: Iterable[Mapping[str, Any]], allow_code_exec: bool) -> None:
+    """Falla si algún item o fila es de código y `allow_code_exec` es False."""
+    if allow_code_exec:
+        return
+    n = sum(1 for e in entries if e.get("mode") == "code")
+    if n:
+        raise CodeExecNotAllowed(
+            f"{n} items de código necesitan ejecutar el código que genera el modelo para etiquetarse. "
+            "Eso no es un sandbox: corrélo solo en una VM descartable y pasá allow_code_exec=True "
+            "(en la CLI, --allow-code-exec)"
+        )
 
 
 # --- Etiquetas computables -------------------------------------------------------------------------
@@ -241,11 +264,33 @@ def _final_text(meta: Sequence[Mapping[str, Any]]) -> str:
     return "".join(t["text"] for t in meta if t["channel"] == "final" and not t["special"])
 
 
-def computable_labels(row: Mapping[str, Any]) -> tuple[list[int], dict[str, Any]]:
-    """Etiquetas por token de una fila según la fuente del item (gold, label o spans)."""
+def code_labels(
+    row: Mapping[str, Any], *, timeout_s: float = CODE_TIMEOUT_S
+) -> tuple[list[int], dict[str, Any]]:
+    """Etiqueta de un item de código: corre los tests sobre el código de la respuesta.
+
+    Todos los tokens `final` llevan 1 si los tests no pasan (failed, error, timeout, no_code) y 0
+    si pasan. `label_info` guarda `status` y `detail` de `vigia.codeexec.run_tests`.
+    """
+    item = row["item"]
+    result = run_tests(extract_code(row["response"]), item["tests"], timeout_s=timeout_s)
+    labels = label_tokens_from_answer(_tokens_for_labels(row["tokens"]), None, result.passed)
+    return labels, {"correct": result.passed, "status": result.status, "detail": result.detail}
+
+
+def computable_labels(
+    row: Mapping[str, Any], *, allow_code_exec: bool = False
+) -> tuple[list[int], dict[str, Any]]:
+    """Etiquetas por token de una fila según la fuente del item (gold, label, spans o code).
+
+    Un item de código ejecuta código del modelo: exige `allow_code_exec=True`.
+    """
     item, meta = row["item"], row["tokens"]
     toks = _tokens_for_labels(meta)
     mode = item["mode"]
+    if mode == "code":
+        require_code_permission([item], allow_code_exec)
+        return code_labels(row)
     if mode == "gold":
         correct, detail = gold_correct(row["response"], item["answers"], item.get("type"))
         return label_tokens_from_answer(toks, None, correct), {"correct": correct, "match": detail}
@@ -278,11 +323,14 @@ def judge_labels(row: Mapping[str, Any], judge: Judge) -> tuple[list[int], dict[
     return labels, {"correct": verdict.label == 0, "judge_label": verdict.label}
 
 
-def label_row(row: Mapping[str, Any], judge: Judge | None = None) -> tuple[list[int], dict[str, Any]]:
+def label_row(
+    row: Mapping[str, Any], judge: Judge | None = None, *, allow_code_exec: bool = False
+) -> tuple[list[int], dict[str, Any]]:
     """Etiquetas de una fila: computables, o del juez con la etiqueta computable como auditoría."""
     if not row["tokens"]:
-        return [], {"correct": computable_labels(row)[1].get("correct")}
-    labels, info = computable_labels(row)
+        info = computable_labels(row, allow_code_exec=allow_code_exec)[1]
+        return [], {k: v for k, v in info.items() if k in ("correct", "status", "detail")}
+    labels, info = computable_labels(row, allow_code_exec=allow_code_exec)
     if judge is None:
         return labels, info
     j_labels, j_info = judge_labels(row, judge)
@@ -488,7 +536,7 @@ def _run_item(
     backend: Backend, item: Mapping[str, Any], *, tiers: tuple[Tier, ...], max_tokens: int, seed: int
 ) -> tuple[list[TokenEvent], dict[str, Any]]:
     t0 = time.perf_counter()
-    if item["mode"] == "gold":
+    if item["mode"] in GENERATED_MODES:
         stream = backend.stream(
             item["messages"], max_tokens=max_tokens, temperature=0.0, seed=seed, tiers=tiers
         )
@@ -528,8 +576,12 @@ def extract(
     seed: int = 0,
     judge: Judge | None = None,
     progress_cb: ProgressCallback | None = None,
+    allow_code_exec: bool = False,
 ) -> list[dict[str, Any]]:
     """Genera o fuerza cada item, lo etiqueta y lo guarda. Reanudable: saltea los ids ya escritos.
+
+    Los items de código ejecutan el código del modelo para etiquetarse: sin `allow_code_exec=True`,
+    la función falla antes de generar (`CodeExecNotAllowed`).
 
     Un id ya escrito con otro contenido (respuestas, etiqueta, spans, grupo, mensajes...) lanza
     `EvidenceError`: su fila se etiquetó con datos que ya no son los del dataset.
@@ -539,6 +591,7 @@ def extract(
     """
     if not isinstance(max_tokens, int) or max_tokens < 1:
         raise ValueError("max_tokens debe ser un entero >= 1")
+    require_code_permission(items, allow_code_exec)
     ids = [it["id"] for it in items]
     if len(ids) != len(set(ids)):
         raise ValueError("los items tienen ids repetidos")
@@ -575,6 +628,8 @@ def extract(
                     "type",
                     "evidence",
                     "response",
+                    "tests",
+                    "entry_point",
                     "mode",
                 )
             },
@@ -598,7 +653,7 @@ def extract(
         else:
             meta = _token_meta(events)
             row = base | info | {"tokens": meta, "skipped": None}
-            row["labels"], row["label_info"] = label_row(row, judge)
+            row["labels"], row["label_info"] = label_row(row, judge, allow_code_exec=allow_code_exec)
             X, names = _feature_matrix(events)
             store.append(row, X, names)
         done[item["id"]] = row
@@ -718,19 +773,26 @@ def build_features(out_dir: str | Path, rows: Sequence[Mapping[str, Any]] | None
     return fs
 
 
-def relabel(out_dir: str | Path, *, judge: Judge | None = None) -> dict[str, Any]:
-    """Vuelve a etiquetar todas las filas (computable o juez), reescribe filas y `features.npz`."""
+def relabel(
+    out_dir: str | Path, *, judge: Judge | None = None, allow_code_exec: bool = False
+) -> dict[str, Any]:
+    """Vuelve a etiquetar todas las filas (computable o juez), reescribe filas y `features.npz`.
+
+    Las filas de código vuelven a ejecutar el código: sin `allow_code_exec=True`, falla antes de
+    tocar nada.
+    """
     store = RunStore(out_dir)
     manifest = store.manifest()
     if manifest is None:
         raise EvidenceError(f"{out_dir} no tiene {MANIFEST_FILE}: corré extract primero")
     rows = store.load_rows()
+    require_code_permission([r for r in rows if not r.get("skipped")], allow_code_exec)
     rejected: Counter[str] = Counter()
     agree = disagree = 0
     for row in rows:
         if row.get("skipped"):
             continue
-        row["labels"], row["label_info"] = label_row(row, judge)
+        row["labels"], row["label_info"] = label_row(row, judge, allow_code_exec=allow_code_exec)
         if row["label_info"].get("rejected"):
             rejected[row["label_info"]["rejected"]] += 1
         cc, jc = row["label_info"].get("computable_correct"), row["label_info"].get("correct")
@@ -1006,6 +1068,9 @@ def summary_text(report: Mapping[str, Any]) -> str:
                 f"  {name}: exactitud {charts.fmt_pct(s['accuracy'])}, alucinación "
                 f"{charts.fmt_pct(s['hallucination_rate'])} (n={s['n']})"
             )
+    code_status = ev.get("code_status") or {}
+    if code_status:
+        lines.append("Tests de código: " + ", ".join(f"{k} {v}" for k, v in sorted(code_status.items())))
     ds = report["dataset"]
     lines.append(
         f"Test: {ds['n_tokens_test']} tokens, {ds['n_responses_test']} respuestas, "
@@ -1063,12 +1128,15 @@ def run_evidence(
     bench_runs: int = 3,
     bench_warmup: int = 1,
     progress_cb: ProgressCallback | None = None,
+    allow_code_exec: bool = False,
 ) -> dict[str, Any]:
     """Experimento completo y reanudable. Devuelve el reporte y deja los artefactos en `out_dir`.
 
     `bench_prompts` (lista de mensajes) activa el benchmark de overhead con `vigia.bench`; si el
-    benchmark falla, el reporte lo dice en `latency_error` y el resto sigue.
+    benchmark falla, el reporte lo dice en `latency_error` y el resto sigue. Los items de código
+    exigen `allow_code_exec=True` (ver `extract`); sin permiso, falla antes de generar.
     """
+    require_code_permission(items, allow_code_exec)
     wanted = _check_tiers(backend, tiers)
     rows = extract(
         backend,
@@ -1079,6 +1147,7 @@ def run_evidence(
         seed=seed,
         judge=judge,
         progress_cb=progress_cb,
+        allow_code_exec=allow_code_exec,
     )
     fs = build_features(out_dir, rows)
     detector, split_report = calibrate_features(fs, seed=seed)
@@ -1090,6 +1159,9 @@ def run_evidence(
 
     skipped = Counter(str(r["skipped"]).split(":")[0] for r in rows if r.get("skipped"))
     rejected = Counter(r["label_info"]["rejected"] for r in rows if r["label_info"].get("rejected"))
+    code_status = Counter(
+        str(r["label_info"].get("status")) for r in rows if r.get("mode") == "code" and not r.get("skipped")
+    )
     gen_rows = [r for r in rows if r.get("source") == "generated"]
     gen_tokens = sum(len(r["tokens"]) for r in gen_rows)
     gen_s = sum(float(r.get("elapsed_s") or 0.0) for r in gen_rows)
@@ -1100,6 +1172,7 @@ def run_evidence(
         "n_teacher_forced": sum(1 for r in rows if r.get("source") == "teacher_forced"),
         "skipped": dict(sorted(skipped.items())),
         "labels_rejected": dict(sorted(rejected.items())),
+        "code_status": dict(sorted(code_status.items())),
         "tiers": [t.value for t in wanted],
         "detector_features": len(detector.feature_names),
         "max_tokens": max_tokens,
@@ -1162,11 +1235,13 @@ def json_safe(obj: Any) -> Any:
 
 __all__ = [
     "DEFAULT_TIERS",
+    "CodeExecNotAllowed",
     "EvidenceError",
     "FeatureSet",
     "RunStore",
     "build_features",
     "calibrate_features",
+    "code_labels",
     "computable_labels",
     "detector_feature_names",
     "evaluate_features",
@@ -1179,6 +1254,7 @@ __all__ = [
     "model_quality",
     "relabel",
     "report_html",
+    "require_code_permission",
     "run_evidence",
     "save_calibration",
     "summary_text",
