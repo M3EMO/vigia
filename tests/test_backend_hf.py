@@ -305,3 +305,48 @@ def test_prompt_rejections_are_typed_invalid_request_errors(backend, monkeypatch
     with pytest.raises(InvalidRequestError) as exc:
         backend._prompt_ids(MESSAGES)
     assert exc.value.code == "invalid_prompt"
+
+
+@pytest.mark.parametrize("temperature", [1e-40, 1e-300, 5e-324])
+def test_tiny_positive_temperature_samples_like_greedy(backend, temperature):
+    """Defecto: 'Una temperature positiva muy chica (1e-40, 1e-300, 5e-324) devuelve 500
+    internal_error en chat y completions, con y sin streaming'. Debe generar como greedy."""
+    greedy = [e.token_id for e in backend.stream(MESSAGES, max_tokens=6)]
+    for top_p in (1.0, 0.5):
+        tiny = backend.stream(MESSAGES, max_tokens=6, temperature=temperature, top_p=top_p, seed=1)
+        assert [e.token_id for e in tiny] == greedy
+
+
+def test_sample_handles_tiny_temperature_and_masked_logits():
+    """Defecto: 'Una temperature positiva muy chica ... devuelve 500 internal_error'."""
+    from vigia.backends.hf import _sample
+
+    logits = torch.tensor([0.5, 2.0, float("-inf"), 1.875], dtype=torch.bfloat16)
+    for t in (1e-40, 5e-324, 1e-6):
+        assert _sample(logits, t, 1.0, torch.Generator().manual_seed(0)) == 1
+
+
+def test_chat_template_kwargs_reach_the_template():
+    """reasoning_effort (gpt-oss) llega a apply_chat_template sin tocar los mensajes."""
+    from vigia.backends.hf import HFBackend
+
+    seen = {}
+
+    class Tok:
+        chat_template = "x"
+        eos_token_id = 0
+        all_special_ids = [0]
+
+        def apply_chat_template(self, messages, tokenize, add_generation_prompt, **kw):
+            seen.update(kw)
+            return "hola"
+
+        def __call__(self, text, add_special_tokens=False):
+            return {"input_ids": [1, 2]}
+
+    be = HFBackend.__new__(HFBackend)
+    be._template_kwargs = {"reasoning_effort": "low"}
+    be.tokenizer = Tok()
+    be._max_positions = 128
+    assert be._prompt_ids([{"role": "user", "content": "hola"}]) == [1, 2]
+    assert seen == {"reasoning_effort": "low"}

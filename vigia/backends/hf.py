@@ -242,7 +242,10 @@ def _validate_messages(messages: Any) -> list[dict[str, str]]:
 def _sample(logits: torch.Tensor, temperature: float, top_p: float, generator: torch.Generator | None) -> int:
     if temperature == 0.0:
         return int(torch.argmax(logits))
-    probs = torch.softmax(logits.float() / temperature, dim=-1)
+    # float64 y máximo restado: con temperature subnormal (5e-324) el cociente queda en [-inf, 0]
+    # y nunca da inf ni NaN; el token máximo conserva probabilidad 1 (equivale a greedy).
+    z = logits.double()
+    probs = torch.softmax((z - z.max()) / temperature, dim=-1)
     if top_p < 1.0:
         sorted_p, order = torch.sort(probs, descending=True)
         drop = torch.cumsum(sorted_p, dim=-1) - sorted_p > top_p
@@ -263,7 +266,10 @@ class HFBackend:
         *,
         model_id: str | None = None,
         probe_layer: int | None = None,
+        chat_template_kwargs: dict[str, Any] | None = None,
     ) -> None:
+        # Kwargs extra para apply_chat_template, ej. {"reasoning_effort": "low"} en gpt-oss.
+        self._template_kwargs = dict(chat_template_kwargs or {})
         if isinstance(model_id_or_model, str):
             from transformers import AutoModelForCausalLM, AutoTokenizer
 
@@ -331,7 +337,9 @@ class HFBackend:
     def _prompt_ids(self, messages: list[dict[str, str]]) -> list[int]:
         messages = _validate_messages(messages)
         if getattr(self.tokenizer, "chat_template", None):
-            text = self.tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+            text = self.tokenizer.apply_chat_template(
+                messages, tokenize=False, add_generation_prompt=True, **self._template_kwargs
+            )
         else:
             text = "".join(f"{m['role']}: {m['content']}\n" for m in messages) + "assistant: "
         ids = list(self.tokenizer(text, add_special_tokens=False)["input_ids"])

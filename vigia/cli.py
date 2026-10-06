@@ -104,7 +104,9 @@ def make_tiny_backend(arch: str = "mixtral", *, seed: int = 0) -> Any:
     return HFBackend(model, tokenizer, model_id=f"{TINY_PREFIX}{arch}")
 
 
-def load_backend(model: str, *, device: str = "cpu", dtype: str = "auto") -> Any:
+def load_backend(
+    model: str, *, device: str = "cpu", dtype: str = "auto", reasoning_effort: str | None = None
+) -> Any:
     """`tiny:<arch>` o un checkpoint de Hugging Face (id o ruta local) con el backend HF."""
     if model.startswith(TINY_PREFIX):
         return make_tiny_backend(model[len(TINY_PREFIX) :])
@@ -115,7 +117,8 @@ def load_backend(model: str, *, device: str = "cpu", dtype: str = "auto") -> Any
     from vigia.backends.hf import HFBackend
 
     torch_dtype = None if dtype == "auto" else getattr(torch, dtype)
-    return HFBackend(model, device=device, dtype=torch_dtype)
+    kwargs = {"reasoning_effort": reasoning_effort} if reasoning_effort else None
+    return HFBackend(model, device=device, dtype=torch_dtype, chat_template_kwargs=kwargs)
 
 
 # --- Utilidades de argumentos ---------------------------------------------------------------------
@@ -196,7 +199,9 @@ def cmd_extract(args: argparse.Namespace) -> int:
 
     tiers = parse_tiers(args.tiers)
     items = _load_items(args)
-    backend = load_backend(args.model, device=args.device, dtype=args.dtype)
+    backend = load_backend(
+        args.model, device=args.device, dtype=args.dtype, reasoning_effort=args.reasoning_effort
+    )
     rows = extract(
         backend,
         items,
@@ -299,7 +304,9 @@ def cmd_bench(args: argparse.Namespace) -> int:
     except ImportError as exc:
         raise CLIError(f"el módulo de benchmark no está disponible: {exc}") from exc
     items = _load_items(args)
-    backend = load_backend(args.model, device=args.device, dtype=args.dtype)
+    backend = load_backend(
+        args.model, device=args.device, dtype=args.dtype, reasoning_effort=args.reasoning_effort
+    )
     result = run_overhead_bench(
         backend,
         _bench_prompts(items, args.n_prompts),
@@ -325,7 +332,9 @@ def cmd_evidence(args: argparse.Namespace) -> int:
     tiers = parse_tiers(args.tiers)
     judge = _make_judge(args)
     items = _load_items(args)
-    backend = load_backend(args.model, device=args.device, dtype=args.dtype)
+    backend = load_backend(
+        args.model, device=args.device, dtype=args.dtype, reasoning_effort=args.reasoning_effort
+    )
     report = run_evidence(
         backend,
         items,
@@ -367,7 +376,9 @@ def cmd_serve(args: argparse.Namespace) -> int:
 
         raw = json.loads(Path(args.policy).read_text(encoding="utf-8"))
         policy = policy_from_dict(raw, rag_allowed_hosts=rag_hosts)
-    backend = load_backend(args.model, device=args.device, dtype=args.dtype)
+    backend = load_backend(
+        args.model, device=args.device, dtype=args.dtype, reasoning_effort=args.reasoning_effort
+    )
     app = create_app(backend, detector=detector, policy=policy, api_key=api_key, rag_allowed_hosts=rag_hosts)
     import uvicorn
 
@@ -427,6 +438,12 @@ def _add_model(p: argparse.ArgumentParser) -> None:
     p.add_argument("--model", required=True, help="id de HF, ruta local, tiny:mixtral o tiny:gpt_oss")
     p.add_argument("--device", default="cpu", help="dispositivo de torch (por defecto cpu)")
     p.add_argument("--dtype", default="auto", choices=DTYPES, help="dtype de los pesos")
+    p.add_argument(
+        "--reasoning-effort",
+        choices=("low", "medium", "high"),
+        default=None,
+        help="esfuerzo de razonamiento para la plantilla de chat (gpt-oss); otros modelos lo ignoran",
+    )
 
 
 def _add_data(p: argparse.ArgumentParser) -> None:
