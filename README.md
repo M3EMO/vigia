@@ -48,7 +48,7 @@ Límites de este resultado, sin suavizar:
 - El test tiene 120 respuestas. Los intervalos son anchos.
 - La latencia agregada en Granite (CPU) quedó entre +3,6 % y +8,5 %, con un intervalo ancho por
   el ruido de la laptop. La meta del plan es < 5 % y todavía no está demostrada.
-- gpt-oss-20b no se midió: falta GPU.
+- gpt-oss-20b en GPU T4: F0+F1 0,881 contra 0,643 de la entropía, con +3,0 % de latencia (ver informe §4.4).
 
 ## Instalación
 

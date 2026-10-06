@@ -1,6 +1,6 @@
 # Informe técnico: señales del router MoE para detectar alucinaciones por token
 
-Fecha: 2026-10-04. Estado: borrador con datos medidos. Procedimiento reproducible con
+Fecha: 2026-10-06. Estado: borrador con datos medidos en dos modelos (CPU y GPU). Procedimiento reproducible con
 `vigia evidence` (ver §6).
 
 ## 1. Resumen
@@ -19,7 +19,7 @@ distinguir el tema. Una sonda lineal sobre el residual stream iguala al detector
 resultado acota la tesis: el router no aporta información que el estado oculto no tenga, pero la
 aporta con 1.271 features baratas en lugar de un vector denso por capa.
 
-La latencia agregada en CPU queda entre +3,6 % y +8,5 % con un intervalo ancho (§5).
+En gpt-oss-20b sobre GPU (§4.4), el detector logra AUROC 0,881 contra 0,643 de la entropía, y la latencia agregada es **+3,0 %** [2,97 %; 3,03 %]: la puerta 1 del plan se cumple en ese modelo.
 
 ## 2. Datos
 
@@ -89,6 +89,37 @@ etiquetas de juez por span en inglés. Los números de este informe no son compa
 directa: la etiqueta es por respuesta y la prevalencia es mucho más alta. La conclusión común es
 que las señales del router superan a la entropía de salida.
 
+### 4.4 gpt-oss-20b en GPU (Colab, Tesla T4)
+
+Mismo dataset de 600 preguntas, con `reasoning_effort=low` y solo el canal `final` puntuado. El
+modelo acierta el 54,3 %, así que las clases están más balanceadas que en Granite.
+
+| Detector | AUROC por token | IC 95 % |
+|---|---|---|
+| Entropía de salida (baseline) | 0,643 | 0,565–0,702 |
+| NLL del token (baseline) | 0,637 | 0,560–0,697 |
+| F0 | 0,650 | 0,576–0,705 |
+| **F1 (solo router)** | **0,875** | 0,778–0,947 |
+| **F0+F1 (por defecto)** | **0,881** | 0,783–0,951 |
+| Todos (F0+F1+H) | 0,903 | 0,796–0,970 |
+| Sonda lineal sobre H (baseline) | 0,871 | 0,753–0,963 |
+
+Control de confusión, con el detector reentrenado dentro de cada estrato:
+
+| Estrato | Entropía de salida | F1 | F0+F1 |
+|---|---|---|---|
+| Aritmética | 0,625 | 0,969 | 0,983 |
+| MKQA | 0,552 | 0,834 | 0,837 |
+| Solo multiplicaciones | 0,605 | 0,941 | 0,976 |
+| Solo preguntas de entidades | 0,555 | 0,898 | 0,898 |
+
+La señal se sostiene dentro de un mismo tipo de operación y de pregunta. Los estratos chicos tienen
+intervalos anchos (24 respuestas de test en multiplicaciones).
+
+Latencia en GPU (A/B intercalado, 20 unidades, 5.100 latencias por token): la mediana pareada del
+overhead de F0+F1 es **+3,0 %** [2,97 %; 3,03 %] y el del primer token es +0,6 %. Cumple la meta
+de < 5 % del plan.
+
 ## 5. Latencia
 
 La meta del plan es < 5 % de latencia agregada. La medición limpia corrió en la misma laptop
@@ -121,6 +152,6 @@ La corrida es reanudable. En una laptop con CPU i5-1035G1 y 8 GB de RAM tarda un
 ## 7. Límites y próximos pasos
 
 1. La etiqueta es por respuesta; falta medir con etiquetas por span (juez validado o humanos).
-2. El modelo es chico y se equivoca en el 84 % de los casos; falta repetir en gpt-oss-20b con GPU.
+2. gpt-oss-20b ya se midió en una T4; falta gpt-oss-120b y un servidor de producción (vLLM con plugin).
 3. La sonda sobre H iguala a F1; falta medir si F1 transfiere mejor entre dominios o modelos.
-4. La latencia necesita una medición en GPU con más corridas; en CPU el ruido domina.
+4. La latencia en GPU cumple la meta con HF transformers; falta medirla en vLLM con batching.
