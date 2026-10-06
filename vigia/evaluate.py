@@ -17,6 +17,7 @@ import numpy as np
 
 from vigia import charts
 from vigia.calibrate import (
+    DEFAULT_ALPHAS,
     DEFAULT_C_GRID,
     CalibrationError,
     build_dataset,
@@ -106,34 +107,63 @@ def _curve_stats(ranked: _Ranked, W: np.ndarray) -> dict[str, np.ndarray]:
     return out
 
 
-def _bin_index(p: np.ndarray, n_bins: int) -> np.ndarray:
-    """Bins de igual masa: el i-ésimo de n puntajes ordenados cae en el bin floor(i * n_bins / n).
+class _MassBins:
+    """Bins de igual masa con pesos, calculados por réplica.
 
-    Los puntajes empatados quedan en el bin de su primera aparición (un empate nunca se parte).
+    Con los puntajes en orden ascendente, una fila cae en el bin floor(W_antes * n_bins / W), donde
+    W_antes es el peso de las filas anteriores y W el peso total. Con pesos 1 es floor(i * n_bins /
+    n). Los puntajes empatados quedan en el bin de su primera aparición (un empate nunca se parte).
+    Una fila con peso k cuenta como k filas: el ECE de una réplica bootstrap es el ECE del dataset
+    con las filas repetidas (los bins se recalculan en cada réplica).
     """
-    order = np.argsort(p, kind="stable")
-    by_rank = (np.arange(len(p)) * n_bins) // len(p)
-    _, first, inverse = np.unique(p[order], return_index=True, return_inverse=True)
+
+    def __init__(self, p: np.ndarray):
+        self.order = np.argsort(p, kind="stable")
+        ps = p[self.order]
+        starts = np.r_[0, np.nonzero(np.diff(ps))[0] + 1]
+        self.first = np.repeat(starts, np.diff(np.r_[starts, len(ps)]))
+
+    def sorted_bins(self, W: np.ndarray, n_bins: int) -> np.ndarray:
+        """Bin de cada fila en orden ascendente de puntaje, por réplica: (B, n)."""
+        Ws = W[:, self.order]
+        before = np.hstack([np.zeros((len(Ws), 1)), np.cumsum(Ws, axis=1)[:, :-1]])
+        total = Ws.sum(axis=1, keepdims=True)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            b = np.floor(before[:, self.first] * n_bins / total)
+        return np.clip(np.nan_to_num(b), 0, n_bins - 1).astype(np.int64)
+
+    def ece(self, y: np.ndarray, p: np.ndarray, W: np.ndarray, n_bins: int) -> np.ndarray:
+        bins = self.sorted_bins(W, n_bins)
+        gap = W[:, self.order] * (y - p)[self.order]
+        B = len(W)
+        flat = (bins + n_bins * np.arange(B)[:, None]).ravel()
+        per_bin = np.bincount(flat, weights=gap.ravel(), minlength=B * n_bins).reshape(B, n_bins)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            return np.sum(np.abs(per_bin), axis=1) / W.sum(axis=1)
+
+
+def _bin_index(p: np.ndarray, n_bins: int, w: np.ndarray | None = None) -> np.ndarray:
+    """Bin de igual masa (con pesos, ver `_MassBins`) de cada puntaje, en el orden original."""
+    w = np.ones(len(p)) if w is None else w
+    mass = _MassBins(p)
     idx = np.empty(len(p), dtype=np.int64)
-    idx[order] = by_rank[first[inverse]]
+    idx[mass.order] = mass.sorted_bins(w[None, :], n_bins)[0]
     return idx
 
 
 def _prob_stats(
-    y: np.ndarray, p: np.ndarray, flags: np.ndarray, bins: np.ndarray, W: np.ndarray
+    y: np.ndarray, p: np.ndarray, flags: np.ndarray, mass: _MassBins | None, W: np.ndarray
 ) -> dict[str, np.ndarray]:
+    """Métricas de probabilidad y de umbral por réplica; sin `mass` no calcula ECE."""
     sw = W.sum(axis=1)
     pc = np.clip(p, _EPS, 1 - _EPS)
-    M = np.zeros((len(p), int(bins.max()) + 1))
-    M[np.arange(len(p)), bins] = 1.0
-    wy, wp = W @ (M * y[:, None]), W @ (M * p[:, None])
     f = flags.astype(np.float64)
     tp, fp, fn = W @ (f * y), W @ (f * (1 - y)), W @ ((1 - f) * y)
+    out = {} if mass is None else {"ece": mass.ece(y, p, W, N_BINS)}
     with np.errstate(divide="ignore", invalid="ignore"):
         precision = tp / (tp + fp)
         recall = tp / (tp + fn)
-        return {
-            "ece": np.sum(np.abs(wy - wp), axis=1) / sw,
+        return out | {
             "brier": W @ ((p - y) ** 2) / sw,
             "log_loss": W @ (-(y * np.log(pc) + (1 - y) * np.log(1 - pc))) / sw,
             "precision": precision,
@@ -237,9 +267,9 @@ def pr_curve(y: Any, s: Any) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
 
 
 def ece(y: Any, p: Any, n_bins: int = N_BINS, w: Any = None) -> float:
-    """Error de calibración esperado con bins de igual masa."""
+    """Error de calibración esperado con bins de igual masa (con pesos: masa de los pesos)."""
     y, p, w = _arrays(y, p, w)
-    return float(_prob_stats(y, p, p >= 2, _bin_index(p, n_bins), w[None, :])["ece"][0])
+    return float(_MassBins(p).ece(y, p, w[None, :], n_bins)[0])
 
 
 def reliability_bins(y: Any, p: Any, n_bins: int = N_BINS) -> list[dict[str, float]]:
@@ -276,7 +306,7 @@ def log_loss(y: Any, p: Any, w: Any = None) -> float:
 def threshold_metrics(y: Any, p: Any, tau: float) -> dict[str, float | None]:
     """Precisión, recall, F1, FNR y tasa de marcado con la regla `p >= tau`."""
     y, p, w = _arrays(y, p)
-    stats = _prob_stats(y, p, p >= tau, np.zeros(len(p), dtype=np.int64), w[None, :])
+    stats = _prob_stats(y, p, p >= tau, None, w[None, :])
     return {k: _num(stats[k][0]) for k in ("precision", "recall", "f1", "fnr", "flag_rate")}
 
 
@@ -360,7 +390,7 @@ class _Level:
             "p": p,
             "flags": flags,
             "ranked": _Ranked(self.y, p) if len(np.unique(self.y)) == 2 else None,
-            "bins": _bin_index(p, N_BINS),
+            "mass": _MassBins(p),
             "per_item": dict(per_item or {}),
             "with_aurc": with_aurc,
         }
@@ -368,7 +398,7 @@ class _Level:
     def stats(self, W: np.ndarray) -> dict[str, dict[str, np.ndarray]]:
         out = {}
         for name, e in self.entries.items():
-            st = _prob_stats(self.y, e["p"], e["flags"], e["bins"], W)
+            st = _prob_stats(self.y, e["p"], e["flags"], e["mass"], W)
             if e["ranked"] is not None:
                 st.update(_curve_stats(e["ranked"], W))
             if e["with_aurc"]:
@@ -512,6 +542,19 @@ def evaluate_report(
     _require_two_classes(test.y.astype(np.float64), what="las etiquetas de test")
     if detector is not None:
         detector.check_model(model_info)
+        alpha = detector.default_alpha if alpha is None else float(alpha)
+        detector.tau(alpha)  # un alpha fuera de lo calibrado falla antes de entrenar comparadores
+    elif alpha is not None:
+        alpha = float(alpha)
+        if not 0 < alpha < 1:
+            raise ValueError(f"alpha debe estar en (0, 1), llegó {alpha!r}")
+    # Los comparadores se calibran también en el alpha reportado y en los del detector: con un
+    # detector calibrado en alphas < min(DEFAULT_ALPHAS), tau(alpha) no existiría en ellos.
+    comparator_alphas = set(DEFAULT_ALPHAS)
+    if detector is not None:
+        comparator_alphas |= {float(t["alpha"]) for t in detector.thresholds}
+    if alpha is not None:
+        comparator_alphas.add(alpha)
 
     # Entrenamiento por nivel y baselines (se reutiliza el detector si el set de features coincide).
     cache: dict[tuple[str, ...], Detector | str] = {}
@@ -531,6 +574,7 @@ def evaluate_report(
                     split=split,
                     seed=seed,
                     c_grid=c_grid,
+                    alphas=sorted(comparator_alphas),
                 )[0]
             except CalibrationError as exc:
                 cache[key] = f"no se pudo entrenar: {exc}"

@@ -280,3 +280,44 @@ Con esto, /readyz devuelve 503 cuando vLLM no responde (app.py ya hace all(check
 - R3 `core-service`: docs/spec/api-modulos.md (orquestador), solo documentacion. En vigia.api, RequestContext suma closing: Callable[[], bool] | None = None. Hay errores nuevos: 503 shutting_down y 502 upstream_unavailable, los dos con Retry-After, y 499 en el log para un cliente que corto. En vigia.serve se exporta browser_origin_problem(headers). Sin key, serve devuelve 403 ante un Host u Origin no loopback o ante Sec-Fetch-Site cross-site/same-site, y 415 ante un POST que no es application/json.
 - R3 `ee-app`: vigia_ee/db.py (dueño: plataforma base), para el defecto 'GET /v1/vigia/traces/{id} ... rag_status null'. (1) Cambiar MIGRATIONS a: `MIGRATIONS: tuple[tuple[int, str], ...] = ((1, SCHEMA_PATH.read_text(encoding="utf-8")), (2, "ALTER TABLE traces ADD COLUMN rag_status TEXT; ALTER TABLE traces ADD COLUMN status TEXT NOT NULL DEFAULT 'ok';"),)`. No hay que agregar las columnas también en schema.sql: la migración 1 corre en una base nueva y la 2 fallaría con 'duplicate column'. (2) Agregar a la firma de insert_trace `rag_status: str | None = None, status: str = "ok",`. Agregar `rag_status, status` a la lista de columnas del INSERT INTO traces, con dos '?' más (23 en total), y agregar `rag_status, status,` a la tupla después de `_json(dict(usage)) if usage is not None else None,`. (3) tests/test_db.py:53 debe pasar de `== 1` a `== 2`. Después yo aplico el cambio de vigia_ee/runtime.py en Runtime.store_trace: agregar `rag_status=res.rag_status, status=res.status,` en la llamada repo.insert_trace(...), y agregar un test en tests/test_runtime.py. El test hace POST con rag_retry contra un retriever falso y comprueba que trace_view(org, id)['rag_status'] == 'retried'.
 - R3 `ee-app`: docs/spec/api-modulos.md (spec de contrato), en la sección vigia_ee.runtime 'Campos extra, todos con default'. Agregar shutdown_timeout_s=30 (VIGIA_SHUTDOWN_TIMEOUT). Agregar vllm_n_experts, vllm_top_k y vllm_n_layers (VIGIA_VLLM_N_EXPERTS / VIGIA_VLLM_TOP_K / VIGIA_VLLM_N_LAYERS), con default None y obligatorios con backend=vllm porque fijan la normalización de U. Agregar que todo SettingsError nombra la variable VIGIA_* que el operador corrige.
+
+## Ronda 4 (cierre)
+
+Defectos nuevos: 13.
+
+| Sev. | Lente | Archivo | Defecto |
+|---|---|---|---|
+| high | ops-resilience | `vigia_ee/auth.py` | Las dependencias async de autenticación consultan SQLite en el event loop: con la base bloqueada, un solo request congela todo el proceso, /livez incluido |
+| medium | ml-correctness | `vigia/evaluate.py` | evaluate_report no puede evaluar un detector calibrado con alphas menores a 0,05: los niveles y baselines internos usan DEFAULT_ALPHAS y tau(alpha) lanza ValueError |
+| medium | ml-correctness | `vigia/labels.py` | gold_correct lee mal los números con espacio de miles (norma RAE '12 345'): el gold '12 345' vale 12, la respuesta exacta queda incorrecta y '12' queda correcta |
+| medium | ops-resilience | `vigia_ee/runtime.py` | /readyz no tiene tope de tiempo: con la base bloqueada no responde hasta que se libera el lock y ocupa un hilo del threadpool por cada sonda |
+| low | a11y-visual | `vigia_ee/panel.py` | Gráficos con 'Ver datos' abierto: la región del SVG y la región de la tabla tienen el mismo nombre accesible (axe landmark-unique) |
+| low | a11y-visual | `vigia_ee/templates/audit.html` | Auditoría: la columna Objeto mide 142 px y parte cada id de 32 caracteres en 3 líneas |
+| low | a11y-visual | `vigia_ee/static/app.css` | Rendimiento: el valor del KPI 'Tokens por segundo (p50)' queda 21 px más abajo que los demás |
+| low | a11y-visual | `vigia_ee/templates/performance.html` | Rendimiento: la nota que define el overhead queda pegada a la tarjeta siguiente (0 px) y parece pertenecer al gráfico |
+| low | api-edge | `vigia/backends/hf.py` | Una temperature positiva muy chica (1e-40, 1e-300, 5e-324) devuelve 500 internal_error en chat y completions, con y sin streaming |
+| low | ml-correctness | `vigia/labels.py` | parse_dates_es no reconoce formas españolas comunes de fecha completa: '1.º de mayo de 1945' (ordinal RAE) y '12 de octubre del año 1492' |
+| low | ml-correctness | `vigia/evaluate.py` | ECE con pesos (y por lo tanto la réplica bootstrap de ECE) no equivale al ECE del dataset con filas repetidas: los bins de igual masa ignoran los pesos |
+| low | ml-correctness | `vigia/calibrate.py` | La spec P-05 promete calibración isotónica con más de 1000 respuestas y el entrenamiento solo usa Platt |
+| low | ops-resilience | `vigia_ee/app.py` | Un cierre ordenado con Ctrl+C (SIGINT) termina 'serve' con código de salida 1, como si fuera un error |
+
+## Ronda 5 (cierre)
+
+Defectos nuevos: 14.
+
+| Sev. | Lente | Archivo | Defecto |
+|---|---|---|---|
+| high | ops-resilience | `vigia/api.py` | Fuga de hilos nativos y memoria bajo carga: cada hilo nuevo del threadpool de anyio que genera con torch deja vivo un equipo OpenMP de unos 18 MB |
+| medium | e2e | `vigia_ee/security.py` | Los errores que no salen de un handler del panel (404 y 405 de ruteo, 413 del middleware de tamaño) llegan al navegador como JSON crudo y en inglés, no como la página de error del panel |
+| medium | a11y-visual | `vigia_ee/templates/audit.html` | Auditoría: entre 640 y 1080 px de ancho la tabla desborda su contenedor, la columna Detalle queda fuera de vista y axe marca scrollable-region-focusable (serious) |
+| medium | a11y-visual | `vigia_ee/static/app.js` | Los atajos de una sola tecla (j, k, ?, 1, 2, 3) actúan en toda la página y no se pueden desactivar (WCAG 2.1.4 Character Key Shortcuts, nivel A) |
+| medium | api-edge | `vigia/backends/vllm_proxy.py` | Modo vLLM: con stop strings la respuesta incluye el stop y el resto del token, porque el texto se arma con logprobs e ignora message.content |
+| medium | api-edge | `vigia/backends/hf.py` | El texto del usuario con tokens especiales de la plantilla se tokeniza como control: un mensaje de user puede inyectar un turno system |
+| medium | ml-correctness | `vigia/evidence.py` | gold_correct marca incorrecta la respuesta exacta y acepta respuestas erróneas cuando el gold sin tipo tiene varios números (rangos, marcadores, horas, fracciones) |
+| medium | ops-resilience | `vigia_ee/db.py` | Con la base bloqueada, un request de la API tarda unos 57 s en devolver 503 en lugar de unos 5 s: los workers de jobs retienen el RLock de Database durante cada busy_timeout |
+| low | isolation-rbac | `vigia_ee/auth.py` | Bajo carga, un admin degradado a viewer sigue creando API keys admin válidas después de que la degradación quedó confirmada. El arreglo de R3 solo cubre el body lento. |
+| low | api-edge | `vigia_ee/runtime.py` | GET /v1/vigia/traces/{id} de la plataforma dice calibrated=true en una traza de stream cortado, que el núcleo guardó con calibrated=false |
+| low | api-edge | `vigia/backends/vllm_proxy.py` | Modo vLLM: un prompt que excede el contexto responde code invalid_prompt; el backend HF responde context_length_exceeded |
+| low | ml-correctness | `vigia/labels.py` | parse_dates_es no reconoce el ordinal '1ro'/'1ero'/'1er' y pierde el día: una respuesta de fecha correcta queda marcada como error |
+| low | ml-correctness | `vigia/calibrate.py` | split_groups no reserva lugar en train para un estrato de 3 o más preguntas: con 5 preguntas y fracciones 0,3/0,3, train recibe siempre la única pregunta de la otra clase |
+| low | ops-resilience | `vigia_ee/app.py` | Un cierre ordenado por SIGTERM (STOPSIGNAL del Dockerfile) o Ctrl+Break no sale con código 0: uvicorn vuelve a lanzar la señal y el proceso muere por el manejador por defecto |

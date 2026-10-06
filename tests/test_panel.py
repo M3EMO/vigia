@@ -1115,13 +1115,13 @@ def test_charts_never_scale_their_text_below_10px(env):
     play(runtime, users["owner"])
     client = login(app, users["viewer"])
     region_re = re.compile(
-        r'<div class="vg-chart-scroll" tabindex="0" role="region" aria-labelledby="([^"]+)">'
+        r'<div class="vg-chart-scroll" tabindex="0" role="region" aria-label="Gráfico: ([^"]+)">'
     )
     for path in ("/", "/performance"):
         html = client.get(path).text
         region = region_re.search(html)
         assert region, path
-        assert f'<title id="{region.group(1)}">' in html
+        assert re.search(r'<title id="[^"]+">' + re.escape(region.group(1)) + "</title>", html), path
     overview = (TEMPLATES / "overview.html").read_text(encoding="utf-8")
     assert '<div class="vg-grid-charts">' in overview and "vg-grid-2" not in overview
 

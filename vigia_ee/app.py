@@ -11,7 +11,8 @@ CLI (`python -m vigia_ee.app <comando>`):
 - `serve [--host 127.0.0.1] [--port 8000] [--proxy-headers]`: uvicorn sin header `Server`. Ctrl+C o
   SIGTERM marcan el runtime como cerrando (las generaciones nuevas responden 503) y el cierre espera
   a lo sumo `VIGIA_SHUTDOWN_TIMEOUT` segundos (30 por defecto) antes de cancelar lo pendiente. Los
-  logs de uvicorn y asyncio salen en el mismo JSON que los de Vigía, sin stack traces.
+  logs de uvicorn y asyncio salen en el mismo JSON que los de Vigía, sin stack traces. Un cierre
+  ordenado por señal sale con código 0.
 
 Rutas:
 
@@ -34,8 +35,8 @@ import hmac
 import logging
 import os
 import sys
-from collections.abc import AsyncIterator, Sequence
-from contextlib import asynccontextmanager
+from collections.abc import AsyncIterator, Iterator, Sequence
+from contextlib import asynccontextmanager, contextmanager
 from datetime import timedelta
 from typing import Any
 
@@ -365,6 +366,17 @@ def _server(app: FastAPI, runtime: Runtime, **kwargs: Any) -> Any:
             runtime.begin_shutdown()
             super().handle_exit(sig, frame)
 
+        @contextmanager
+        def capture_signals(self) -> Iterator[None]:
+            # uvicorn vuelve a lanzar al final cada señal capturada. Con SIGTERM o SIGBREAK actúa el
+            # manejador por defecto y el proceso muere con código distinto de 0. La señal ya pidió el
+            # cierre ordenado en `handle_exit`, así que no se relanza.
+            with super().capture_signals():
+                try:
+                    yield
+                finally:
+                    self._captured_signals.clear()
+
     return ClosingServer(uvicorn.Config(app, **kwargs))
 
 
@@ -383,7 +395,13 @@ def cmd_serve(args: argparse.Namespace, settings: Settings, environ: Any) -> int
         log_config=None,
         timeout_graceful_shutdown=settings.shutdown_timeout_s,
     )
-    server.run()
+    try:
+        server.run()
+    except KeyboardInterrupt:
+        # `ClosingServer` no relanza las señales capturadas. Un Ctrl+C que llega justo después de
+        # restaurar los manejadores igual sale con 0 si el runtime ya estaba cerrando.
+        if not app.state.runtime.shutting_down:
+            raise
     return EXIT_OK
 
 

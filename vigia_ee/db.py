@@ -22,7 +22,8 @@ import re
 import secrets
 import sqlite3
 import threading
-from collections.abc import Iterable, Iterator, Mapping
+import time
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
@@ -79,6 +80,13 @@ MAX_PAGE = 200
 _ID_RE = re.compile(r"^[A-Za-z0-9_-]{8,64}$")
 _ISO_FMT = "%Y-%m-%dT%H:%M:%S.%fZ"
 
+# Espera de SQLite por intento ante otro proceso que retiene el lock de archivo. La espera total la
+# fija `busy_timeout_ms` de `Database`; entre intentos el hilo suelta el `RLock` (ver `Database._call`).
+BUSY_ATTEMPT_MS = 10
+_BACKOFF_MIN_S = 0.02
+_BACKOFF_MAX_S = 0.25
+_BUSY_CODES = frozenset({5, 6})  # SQLITE_BUSY, SQLITE_LOCKED (código primario)
+
 
 # --- utilidades -----------------------------------------------------------------------------------
 
@@ -116,6 +124,15 @@ def _get(obj: Any, name: str, default: Any = None) -> Any:
     return getattr(obj, name, default)
 
 
+def _is_busy(exc: sqlite3.OperationalError) -> bool:
+    """True si SQLite rechazó la operación porque otra conexión retiene el lock."""
+    code = getattr(exc, "sqlite_errorcode", None)
+    if isinstance(code, int):
+        return (code & 0xFF) in _BUSY_CODES
+    text = str(exc).lower()
+    return "database is locked" in text or "database is busy" in text or "table is locked" in text
+
+
 def _json(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
@@ -124,21 +141,28 @@ def _json(value: Any) -> str:
 
 
 class Database:
-    """Conexión SQLite con migraciones, WAL, claves foráneas y transacciones explícitas."""
+    """Conexión SQLite con migraciones, WAL, claves foráneas y transacciones explícitas.
+
+    `busy_timeout_ms` es la espera TOTAL de una operación ante otro proceso que retiene el lock de
+    archivo. El `RLock` nunca se retiene durante esa espera: cada intento usa un `busy_timeout` corto
+    (`BUSY_ATTEMPT_MS`) y, si SQLite sigue ocupado, el hilo suelta el `RLock`, espera y reintenta
+    hasta el tope. Así cinco workers que reintentan no suman sus esperas a la de un request.
+    """
 
     def __init__(self, path: str | Path, *, busy_timeout_ms: int = 5000) -> None:
         self.path = str(path)
         self._lock = threading.RLock()
         self._depth = 0
+        self.busy_timeout_s = max(0, int(busy_timeout_ms)) / 1000
         conn = sqlite3.connect(self.path, check_same_thread=False, isolation_level=None)
         try:
             conn.row_factory = sqlite3.Row
-            conn.execute("PRAGMA foreign_keys=ON")
-            conn.execute(f"PRAGMA busy_timeout={int(busy_timeout_ms)}")
-            if self.path != ":memory:":
-                conn.execute("PRAGMA journal_mode=WAL")
-                conn.execute("PRAGMA synchronous=NORMAL")
             self._conn = conn
+            conn.execute("PRAGMA foreign_keys=ON")
+            conn.execute(f"PRAGMA busy_timeout={min(BUSY_ATTEMPT_MS, max(0, int(busy_timeout_ms)))}")
+            if self.path != ":memory:":
+                self._call(lambda: conn.execute("PRAGMA journal_mode=WAL"))
+                conn.execute("PRAGMA synchronous=NORMAL")
             self.migrate()
         except BaseException:
             # Un archivo que no es SQLite o una migración que falla no deja la conexión abierta hasta el
@@ -146,85 +170,145 @@ class Database:
             conn.close()
             raise
 
+    # -- reintentos ante SQLITE_BUSY --
+
+    def _call(self, op: Callable[[], Any]) -> Any:
+        """Corre `op` con el `RLock`. Ante SQLITE_BUSY fuera de una transacción suelta el lock y reintenta.
+
+        Dentro de una transacción no reintenta: el `BEGIN IMMEDIATE` ya tomó el lock de escritura y
+        soltar el `RLock` expondría la transacción a otros hilos. Una sentencia que falla por
+        SQLITE_BUSY no aplicó nada, así que repetirla es seguro.
+        """
+        deadline = time.monotonic() + self.busy_timeout_s
+        delay = _BACKOFF_MIN_S
+        while True:
+            with self._lock:
+                try:
+                    return op()
+                except sqlite3.OperationalError as exc:
+                    if self._depth or not _is_busy(exc) or time.monotonic() >= deadline:
+                        raise
+            time.sleep(min(delay, max(0.0, deadline - time.monotonic())))
+            delay = min(delay * 2, _BACKOFF_MAX_S)
+
+    def _begin(self) -> bool:
+        """Toma el `RLock` y abre `BEGIN IMMEDIATE`. Devuelve True si se une a una transacción abierta.
+
+        Al volver, el hilo retiene el `RLock` (el llamador lo suelta). Entre intentos fallidos por
+        SQLITE_BUSY lo suelta, con la misma espera total que `_call`.
+        """
+        deadline = time.monotonic() + self.busy_timeout_s
+        delay = _BACKOFF_MIN_S
+        while True:
+            self._lock.acquire()
+            if self._depth:
+                return True
+            try:
+                self._conn.execute("BEGIN IMMEDIATE")
+                return False
+            except BaseException as exc:
+                self._lock.release()
+                if (
+                    not isinstance(exc, sqlite3.OperationalError)
+                    or not _is_busy(exc)
+                    or time.monotonic() >= deadline
+                ):
+                    raise
+            time.sleep(min(delay, max(0.0, deadline - time.monotonic())))
+            delay = min(delay * 2, _BACKOFF_MAX_S)
+
     # -- migraciones --
 
     def migrate(self) -> int:
         """Aplica las migraciones pendientes, cada una atómica. Devuelve la versión final."""
-        with self._lock:
-            self._conn.execute(
+        self._call(
+            lambda: self._conn.execute(
                 "CREATE TABLE IF NOT EXISTS schema_migrations "
                 "(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)"
             )
-            current = self.schema_version()
-            for version, sql in MIGRATIONS:
-                if version <= current:
-                    continue
-                # Solo valores generados acá (entero y fecha propia); el SQL viene de MIGRATIONS.
-                record = (
-                    "INSERT INTO schema_migrations (version, applied_at) "  # noqa: S608
-                    f"VALUES ({int(version)}, '{to_iso(utcnow())}');"
-                )
-                script = f"BEGIN IMMEDIATE;\n{sql}\n;{record}\nCOMMIT;"
+        )
+        for version, sql in MIGRATIONS:
+            if version <= self.schema_version():
+                continue
+            # Solo valores generados acá (entero y fecha propia); el SQL viene de MIGRATIONS.
+            record = (
+                "INSERT INTO schema_migrations (version, applied_at) "  # noqa: S608
+                f"VALUES ({int(version)}, '{to_iso(utcnow())}');"
+            )
+            script = f"BEGIN IMMEDIATE;\n{sql}\n;{record}\nCOMMIT;"
+
+            def run(script: str = script, version: int = version) -> None:
+                if self.schema_version() >= version:  # otro proceso la aplicó mientras esperábamos
+                    return
                 try:
                     self._conn.executescript(script)
                 except sqlite3.Error:
                     if self._conn.in_transaction:
                         self._conn.execute("ROLLBACK")
                     raise
-            return self.schema_version()
+
+            self._call(run)
+        return self.schema_version()
 
     def schema_version(self) -> int:
-        with self._lock:
-            row = self._conn.execute("SELECT MAX(version) FROM schema_migrations").fetchone()
-            return int(row[0] or 0)
+        row = self._call(lambda: self._conn.execute("SELECT MAX(version) FROM schema_migrations").fetchone())
+        return int(row[0] or 0)
 
     # -- ejecución --
 
     @contextmanager
     def transaction(self) -> Iterator[Database]:
         """Transacción `BEGIN IMMEDIATE`. Una transacción anidada se une a la exterior."""
-        with self._lock:
-            if self._depth:
+        nested = self._begin()
+        try:
+            if nested:
                 self._depth += 1
                 try:
                     yield self
                 finally:
                     self._depth -= 1
                 return
-            self._conn.execute("BEGIN IMMEDIATE")
             self._depth = 1
             try:
                 yield self
             except BaseException:
                 self._conn.execute("ROLLBACK")
                 raise
-            else:
+            try:
                 self._conn.execute("COMMIT")
-            finally:
+            except BaseException:
+                # Un COMMIT fallido no deja la transacción abierta en la conexión compartida.
+                if self._conn.in_transaction:
+                    self._conn.execute("ROLLBACK")
+                raise
+        finally:
+            if not nested:
                 self._depth = 0
+            self._lock.release()
 
     def execute(self, sql: str, params: Iterable[Any] | Mapping[str, Any] = ()) -> int:
         """Ejecuta una sentencia y devuelve las filas afectadas."""
-        with self._lock:
-            return self._conn.execute(sql, params).rowcount
+        return self._call(lambda: self._conn.execute(sql, params).rowcount)
 
     def insert(self, sql: str, params: Iterable[Any] | Mapping[str, Any] = ()) -> int:
         """Ejecuta un INSERT y devuelve el rowid."""
-        with self._lock:
-            return int(self._conn.execute(sql, params).lastrowid or 0)
+        return self._call(lambda: int(self._conn.execute(sql, params).lastrowid or 0))
 
     def executemany(self, sql: str, rows: Iterable[Iterable[Any]]) -> None:
-        with self._lock:
-            self._conn.executemany(sql, rows)
+        """Ejecuta la sentencia por fila, todo en una transacción (o en la que ya está abierta)."""
+        batch = list(rows)
+        with self.transaction():
+            self._conn.executemany(sql, batch)
 
     def query(self, sql: str, params: Iterable[Any] | Mapping[str, Any] = ()) -> list[dict[str, Any]]:
-        with self._lock:
-            return [dict(r) for r in self._conn.execute(sql, params).fetchall()]
+        return self._call(lambda: [dict(r) for r in self._conn.execute(sql, params).fetchall()])
 
     def query_one(self, sql: str, params: Iterable[Any] | Mapping[str, Any] = ()) -> dict[str, Any] | None:
-        with self._lock:
+        def op() -> dict[str, Any] | None:
             row = self._conn.execute(sql, params).fetchone()
             return dict(row) if row is not None else None
+
+        return self._call(op)
 
     def close(self) -> None:
         with self._lock:

@@ -233,9 +233,15 @@ pre { background: var(--vg-code-bg); padding: .75rem; border-radius: var(--vg-ra
 .vg-grid-2 { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(min(20rem, 100%), 1fr)); }
 
 .vg-kpis { display: grid; gap: .75rem; grid-template-columns: repeat(auto-fit, minmax(min(11rem, 100%), 1fr)); margin: 0 0 1rem; padding: 0; }
-.vg-kpi { background: var(--vg-surface); border: 1px solid var(--vg-border); border-radius: var(--vg-radius); padding: .8rem 1rem; margin: 0; }
-.vg-kpi dt { color: var(--vg-text-muted); font-size: .85rem; }
-.vg-kpi dd { margin: .15rem 0 0; font-size: 1.45rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+/* Cada KPI ocupa dos filas de la grilla (dt y dd) con subgrid: si un rótulo ocupa dos líneas, su
+   fila crece en todas las tarjetas y los valores de la fila comparten la línea base. */
+.vg-kpi { background: var(--vg-surface); border: 1px solid var(--vg-border); border-radius: var(--vg-radius); padding: .8rem 1rem; margin: 0;
+  display: grid; grid-row: span 2; grid-template-rows: subgrid; row-gap: .15rem; align-content: start; }
+.vg-kpi dt { color: var(--vg-text-muted); font-size: .85rem; align-self: end; }
+.vg-kpi dd { margin: 0; font-size: 1.45rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+/* Nota que define los KPIs (su aria-describedby): pegada a ellos y con aire antes de la tarjeta siguiente. */
+.vg-kpis:has(+ .vg-kpis-note) { margin-bottom: .5rem; }
+.vg-hint.vg-kpis-note { margin-bottom: 1rem; }
 .vg-kpi .vg-kpi-note { display: block; font-size: .82rem; font-weight: 400; color: var(--vg-text-muted); }
 .vg-kpi.is-alert dd { color: var(--vg-danger); }
 

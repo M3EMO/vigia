@@ -77,6 +77,7 @@ SHUTTING_DOWN_MESSAGE = "La plataforma se está cerrando. Reintentá en unos seg
 DRIFT_TRACES = 500  # el drift compara las últimas N trazas puntuadas con el detector activo
 DRIFT_MIN_TOKENS = 200  # con menos tokens el PSI es ruido: no se informa
 DRIFT_CACHE_S = 60.0  # /metrics recalcula el drift de cada tenant a lo sumo una vez por minuto
+READINESS_TIMEOUT_S = 2.0  # espera máxima de /readyz por la base y la cola; si vence, ambas en False
 _TRUE = {"1", "true", "yes", "on", "si", "sí"}
 _FALSE = {"0", "false", "no", "off"}
 
@@ -477,6 +478,8 @@ class Runtime:
         self.db = open_database(settings)
         self._closed = False
         self._shutting_down = threading.Event()
+        self._probe_lock = threading.Lock()
+        self._probe: tuple[threading.Thread, dict[str, bool]] | None = None
         try:
             base_artifact = self._read_base_detector()  # antes del modelo: falla rápido
             peppers = settings.peppers or PepperRing.from_env()
@@ -961,7 +964,10 @@ class Runtime:
             response_p_error=trace["response_p_error"],
             action=trace["action"],
             calibration_id=trace["calibration_id"],
-            calibrated=trace["calibration_id"] is not None and not trace["degraded"],
+            # Una traza parcial (stream cortado) o degradada se guarda con tau=None y no está calibrada.
+            calibrated=(
+                trace["calibration_id"] is not None and not trace["degraded"] and trace["tau"] is not None
+            ),
             mode=trace["mode"],
             degraded=bool(trace["degraded"]),
             status=trace.get("status") or "ok",
@@ -1075,19 +1081,10 @@ class Runtime:
         La cola mide solo `DEFAULT_LANE` (purga y calibración): el backlog de webhooks de un tenant
         corre en su propio carril y no saca el nodo. La métrica `vigia_jobs_queue_depth` cuenta todo.
         Un backend con `ping()` (proxy vLLM) suma el chequeo `backend`: un upstream caído saca el nodo.
+        Base y cola esperan a lo sumo `READINESS_TIMEOUT_S` (ver `_storage_checks`).
         """
-        checks = {"db": False, "worker": False, "queue": False}
-        try:
-            with self.db.transaction():
-                self.db.execute("UPDATE schema_migrations SET applied_at = applied_at WHERE 0")
-            checks["db"] = True
-        except Exception as exc:  # noqa: BLE001
-            log_event(_log, "readyz_db_error", level=logging.WARNING, error_type=type(exc).__name__)
-        checks["worker"] = self.jobs.is_alive()
-        try:
-            checks["queue"] = self.jobs.depth(lane=DEFAULT_LANE) < self.settings.max_queue_depth
-        except Exception as exc:  # noqa: BLE001
-            log_event(_log, "readyz_queue_error", level=logging.WARNING, error_type=type(exc).__name__)
+        storage = self._storage_checks()
+        checks = {"db": storage["db"], "worker": self.jobs.is_alive(), "queue": storage["queue"]}
         ping = getattr(self.backend, "ping", None)
         if callable(ping):
             try:
@@ -1096,6 +1093,41 @@ class Runtime:
                 log_event(_log, "readyz_backend_error", level=logging.WARNING, error_type=type(exc).__name__)
                 checks["backend"] = False
         return checks
+
+    def _storage_checks(self) -> dict[str, bool]:
+        """Chequeos `db` y `queue` en un hilo auxiliar, esperados como máximo `READINESS_TIMEOUT_S`.
+
+        Con la base bloqueada, la escritura espera el `RLock` compartido y el `busy_timeout`. Sin tope,
+        cada sonda colgaba un hilo del threadpool hasta que se liberaba el lock. Si vence, ambos
+        quedan en False. Una sonda que llega con un chequeo en curso lo reusa: no suma hilos colgados.
+        """
+        with self._probe_lock:
+            probe = self._probe
+            if probe is None or not probe[0].is_alive():
+                result: dict[str, bool] = {"db": False, "queue": False}
+                thread = threading.Thread(
+                    target=self._probe_storage, args=(result,), name="vigia-readyz-db", daemon=True
+                )
+                probe = self._probe = (thread, result)
+                thread.start()
+        thread, result = probe
+        thread.join(READINESS_TIMEOUT_S)
+        if thread.is_alive():
+            log_event(_log, "readyz_db_error", level=logging.WARNING, error_type="TimeoutError")
+            return {"db": False, "queue": False}
+        return dict(result)
+
+    def _probe_storage(self, result: dict[str, bool]) -> None:
+        try:
+            with self.db.transaction():
+                self.db.execute("UPDATE schema_migrations SET applied_at = applied_at WHERE 0")
+            result["db"] = True
+        except Exception as exc:  # noqa: BLE001
+            log_event(_log, "readyz_db_error", level=logging.WARNING, error_type=type(exc).__name__)
+        try:
+            result["queue"] = self.jobs.depth(lane=DEFAULT_LANE) < self.settings.max_queue_depth
+        except Exception as exc:  # noqa: BLE001
+            log_event(_log, "readyz_queue_error", level=logging.WARNING, error_type=type(exc).__name__)
 
     # -- playground --
 

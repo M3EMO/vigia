@@ -21,6 +21,7 @@ Reglas de este módulo:
 
 from __future__ import annotations
 
+import html
 import json
 import math
 import re
@@ -221,18 +222,21 @@ def fixed_size_svg(svg: str, scale: float = HEATMAP_SCALE) -> str:
     return head + svg[match.end() :]
 
 
-_SVG_TITLE_ID_RE = re.compile(r'<title id="([^"]+)">')
+_SVG_TITLE_RE = re.compile(r'<title id="[^"]+">([^<]*)</title>')
 
 
 def scrollable_chart(svg: str) -> str:
     """Envuelve un SVG de `vigia.charts` en una región con scroll horizontal y foco de teclado.
 
     El CSS fija el SVG en 30rem (escala 1, texto de 10 a 12 px). En una columna angosta la región
-    hace scroll en lugar de achicar el texto. La región toma su nombre del `<title>` del SVG.
+    hace scroll en lugar de achicar el texto. La región se llama «Gráfico: <título del SVG>». La
+    tabla de `charts.data_table` usa el título solo como nombre de su región: con el prefijo, las
+    dos regiones de un mismo gráfico tienen nombres distintos (axe landmark-unique).
     """
-    match = _SVG_TITLE_ID_RE.search(svg)
-    name = f'aria-labelledby="{match.group(1)}"' if match else 'aria-label="Gráfico"'
-    return f'<div class="vg-chart-scroll" tabindex="0" role="region" {name}>{svg}</div>'
+    match = _SVG_TITLE_RE.search(svg)
+    title = html.unescape(match.group(1)).strip() if match else ""
+    name = html.escape(f"Gráfico: {title}" if title else "Gráfico", quote=True)
+    return f'<div class="vg-chart-scroll" tabindex="0" role="region" aria-label="{name}">{svg}</div>'
 
 
 def token_label(text: Any) -> str:

@@ -15,7 +15,7 @@
   <div class="vg-kpi"><dt>Tokens por segundo (p50)</dt><dd>{{ tps_p50|num(1) }}</dd></div>
   <div class="vg-kpi"><dt>Requests medidos</dt><dd>{{ n|count }}</dd></div>
 </dl>
-<p class="vg-hint" id="ovh-def">Overhead de un request: tiempo de Vigía dividido la latencia sin Vigía. Cada pXX es el percentil de ese valor sobre los requests medidos, igual que en el resumen.</p>
+<p class="vg-hint vg-kpis-note" id="ovh-def">Overhead de un request: tiempo de Vigía dividido la latencia sin Vigía. Cada pXX es el percentil de ese valor sobre los requests medidos, igual que en el resumen.</p>
 <section class="vg-card" aria-labelledby="lat-title">
   <h2 id="lat-title">Latencia sin Vigía y con Vigía</h2>
   <p class="vg-hint">«Sin Vigía» descuenta el tiempo de extracción de señales y puntaje de cada request. La línea punteada es la meta de +{{ OVERHEAD_TARGET|pct(0) }}.</p>

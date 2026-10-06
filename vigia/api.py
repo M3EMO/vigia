@@ -19,21 +19,26 @@ dependencia async `(request) -> RequestContext` que resuelve auth, tenant, backe
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
+import contextvars
+import functools
 import json
 import logging
 import math
+import queue
 import re
 import secrets
 import threading
 import time
 import weakref
 from collections import deque
-from collections.abc import Awaitable, Callable, Iterator
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from typing import Any, Literal, TypeVar
 
 import anyio
+import anyio.lowlevel
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import (
@@ -248,12 +253,73 @@ class GenerationBusy(Exception):
     """La cola de generación está llena o la espera venció."""
 
 
+class _Workers:
+    """Hilos daemon persistentes: como mucho `size`, se crean a demanda y nunca se retiran solos.
+
+    torch arma un equipo OpenMP por cada hilo de Python que lo llama y no lo libera cuando el hilo
+    muere. Los workers de anyio se retiran tras 10 s inactivos, así que cada pausa de tráfico seguida
+    de una ráfaga dejaba equipos huérfanos (unos 18 MB y 3 hilos nativos cada uno). Son daemon: una
+    generación colgada no frena la salida del intérprete. `stop()` los despide al terminar su tarea.
+    """
+
+    def __init__(self, size: int) -> None:
+        self.size = size
+        self._jobs: queue.SimpleQueue[tuple[concurrent.futures.Future[Any], Callable[[], Any]] | None] = (
+            queue.SimpleQueue()
+        )
+        self._mutex = threading.Lock()
+        self._threads: list[threading.Thread] = []
+        self._idle = 0  # hilos que ya terminaron su tarea y esperan otra
+
+    @property
+    def threads(self) -> int:
+        return len(self._threads)
+
+    def submit(self, fn: Callable[[], _R]) -> concurrent.futures.Future[_R]:
+        fut: concurrent.futures.Future[_R] = concurrent.futures.Future()
+        with self._mutex:
+            self._jobs.put((fut, fn))
+            if self._idle > 0:
+                self._idle -= 1
+            elif len(self._threads) < self.size:
+                thread = threading.Thread(target=self._loop, name="vigia-gen", daemon=True)
+                self._threads.append(thread)
+                thread.start()
+        return fut
+
+    def stop(self) -> None:
+        with self._mutex:
+            for _ in self._threads:
+                self._jobs.put(None)
+
+    def _loop(self) -> None:
+        while True:
+            job = self._jobs.get()
+            if job is None:
+                return
+            fut, fn = job
+            if fut.set_running_or_notify_cancel():
+                try:
+                    fut.set_result(fn())
+                except StopIteration as exc:  # un Future de asyncio no la acepta y quedaría colgado
+                    fut.set_exception(RuntimeError("la tarea lanzó StopIteration"))
+                    del exc
+                except BaseException as exc:  # noqa: BLE001 - viaja al que espera el resultado
+                    fut.set_exception(exc)
+            del job, fut, fn
+            with self._mutex:
+                self._idle += 1
+
+
 class GenerationGate:
     """Cupo de generaciones simultáneas de un backend. La espera ocurre en el event loop.
 
-    Una generación toma el cupo antes de pedir un hilo del threadpool y lo suelta al cerrar el
-    stream. Así ningún hilo del pool queda bloqueado esperando el lock del backend: el threadpool
-    por defecto (auth, /readyz) nunca se agota por generaciones encoladas.
+    Una generación toma el cupo antes de pedir un hilo y lo suelta al cerrar el stream. Así ningún
+    hilo del threadpool queda bloqueado esperando el lock del backend: el threadpool por defecto
+    (auth, /readyz) nunca se agota por generaciones encoladas.
+
+    La generación corre en `run_sync()` e `iterate()`: `slots` hilos persistentes del cupo, no los
+    workers efímeros de anyio. Así los hilos nativos que torch ata a cada hilo quedan acotados.
     """
 
     def __init__(self, slots: int, *, max_waiting: int, timeout_s: float) -> None:
@@ -265,6 +331,32 @@ class GenerationGate:
         self._mutex = threading.Lock()
         self._free = slots
         self._waiters: deque[asyncio.Future[None]] = deque()
+        self._workers = _Workers(slots)
+        weakref.finalize(self, self._workers.stop)  # el cupo muere con su backend: sus hilos también
+
+    @property
+    def worker_threads(self) -> int:
+        """Hilos de generación creados hasta ahora (nunca más que `slots`)."""
+        return self._workers.threads
+
+    async def run_sync(self, fn: Callable[..., _R], *args: Any, **kwargs: Any) -> _R:
+        """Corre `fn` en un hilo persistente del cupo, como `run_in_threadpool`.
+
+        Igual que anyio, una cancelación pendiente sale antes de empezar (así un stream cortado deja de
+        pedir tokens) y una que llega después espera a que el hilo termine: quien libera el cupo después
+        de esta llamada nunca deja una generación corriendo sin cupo.
+        """
+        await anyio.lowlevel.checkpoint_if_cancelled()
+        call = functools.partial(contextvars.copy_context().run, fn, *args, **kwargs)
+        fut = asyncio.wrap_future(self._workers.submit(call))
+        with anyio.CancelScope(shield=True):
+            return await fut
+
+    async def iterate(self, iterator: Iterator[_R]) -> AsyncIterator[_R]:
+        """`iterate_in_threadpool` sobre los hilos del cupo: cada `next()` corre en uno de ellos."""
+        end = object()  # StopIteration no puede viajar dentro de un Future de asyncio
+        while (item := await self.run_sync(next, iterator, end)) is not end:
+            yield item
 
     @property
     def waiting(self) -> int:
@@ -361,8 +453,10 @@ class _ClosingStreamingResponse(StreamingResponse):
     backend queda suspendido con su lock tomado hasta que lo recolecte el GC cíclico.
     """
 
-    def __init__(self, events: Iterator[str], on_close: Callable[[], Awaitable[None]], **kwargs: Any) -> None:
-        super().__init__(iterate_in_threadpool(events), **kwargs)
+    def __init__(
+        self, events: AsyncIterator[str], on_close: Callable[[], Awaitable[None]], **kwargs: Any
+    ) -> None:
+        super().__init__(events, **kwargs)
         self._on_close = on_close
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
@@ -1151,39 +1245,33 @@ def create_api_router(
             await _take_slot(gate, request, ctx.closing)
             if not req.stream:
                 try:
-                    out = await _run_watched(request, _run_full, ctx, messages, params, alpha)
+                    out = await _run_watched(request, gate, _run_full, ctx, messages, params, alpha)
                 finally:
                     gate.release()
                 headers[TRACE_HEADER] = out.trace_id
                 return JSONResponse(shape.full(out), headers=headers)
             try:
-                live = await _run_watched(
-                    request, _start_stream, ctx, messages, params, alpha, shape, include_usage, request_id
-                )
+                start = (ctx, messages, params, alpha, shape, include_usage, request_id)
+                live = await _run_watched(request, gate, _start_stream, *start)
             except BaseException:
                 gate.release()
                 raise
             if not live.holds_backend:
                 gate.release()  # buffer: la generación ya terminó; un cliente lento no frena a otros
             if await request.is_disconnected():  # cortó durante el primer token: no hay a quién enviar
-                try:
-                    await run_in_threadpool(live.close)
-                finally:
-                    if live.holds_backend:
-                        gate.release()
+                await _close_live(live, gate)
                 raise _ClientGone
 
             async def on_close() -> None:
-                try:
-                    await run_in_threadpool(live.close)
-                finally:
-                    if live.holds_backend:
-                        gate.release()
+                await _close_live(live, gate)
 
+            # En vivo, cada next() genera con el backend: corre en los hilos del cupo. En buffer ya no
+            # queda cómputo y el cupo está libre: no espera detrás de otra generación.
+            events = gate.iterate(live.events) if live.holds_backend else iterate_in_threadpool(live.events)
             headers[TRACE_HEADER] = live.trace_id
             headers["Cache-Control"] = "no-cache"
             return _ClosingStreamingResponse(
-                live.events, on_close, media_type="text/event-stream", headers=headers
+                events, on_close, media_type="text/event-stream", headers=headers
             )
         except APIError as err:
             return _error_response(err, request_id)
@@ -1285,24 +1373,43 @@ async def _take_slot(gate: GenerationGate, request: Request, closing: Callable[[
         raise
 
 
-async def _watch_disconnect(request: Request, cancel: threading.Event) -> None:
-    while not cancel.is_set():
+async def _watch_disconnect(request: Request, cancel: threading.Event, stop: asyncio.Event) -> None:
+    """Marca `cancel` si el cliente corta. Sale cuando `stop` se marca.
+
+    `stop` no sobra: `request.is_disconnected()` abre un CancelScope de anyio que se cancela a sí
+    mismo, y un `task.cancel()` que llega justo ahí se pierde. Sin `stop`, el watcher seguía vivo y
+    `_run_watched` lo esperaba para siempre (pasa cuando la generación termina antes del primer sondeo).
+    """
+    while not cancel.is_set() and not stop.is_set():
         if await request.is_disconnected():
             cancel.set()
             return
         await asyncio.sleep(_POLL_S)
 
 
-async def _run_watched(request: Request, fn: Callable[..., _R], *args: Any) -> _R:
-    """Corre `fn(*args, cancel=...)` en el threadpool; si el cliente corta, `cancel` se marca y la
-    generación se interrumpe entre tokens (como el abort de vLLM)."""
+async def _run_watched(request: Request, gate: GenerationGate, fn: Callable[..., _R], *args: Any) -> _R:
+    """Corre `fn(*args, cancel=...)` en los hilos del cupo; si el cliente corta, `cancel` se marca y
+    la generación se interrumpe entre tokens (como el abort de vLLM)."""
     cancel = threading.Event()
-    watcher = asyncio.ensure_future(_watch_disconnect(request, cancel))
+    stop = asyncio.Event()
+    watcher = asyncio.ensure_future(_watch_disconnect(request, cancel, stop))
     try:
-        return await run_in_threadpool(fn, *args, cancel=cancel)
+        return await gate.run_sync(fn, *args, cancel=cancel)
     finally:
+        stop.set()
         watcher.cancel()
         await asyncio.wait({watcher})
+
+
+async def _close_live(live: _LiveStream, gate: GenerationGate) -> None:
+    """Cierra el stream y devuelve el cupo si lo retenía. Cerrar el backend corre en sus hilos."""
+    if not live.holds_backend:
+        await run_in_threadpool(live.close)
+        return
+    try:
+        await gate.run_sync(live.close)
+    finally:
+        gate.release()
 
 
 # --- Ejecución (corre en el threadpool) ---------------------------------------------------------

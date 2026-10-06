@@ -449,7 +449,8 @@ def test_role_assignment_rules(state, orgs):
     assert auth.can_assign_role("admin", "reviewer")
     assert not auth.can_assign_role("admin", "owner")
     assert not auth.can_assign_role("reviewer", "viewer")
-    admin = Principal(org_id=orgs[0], role="admin", user_id="x")
+    admin_id = add_user(state, orgs[0], "ada@example.com", "admin")
+    admin = Principal(org_id=orgs[0], role="admin", user_id=admin_id)
     with pytest.raises(PermissionError):
         auth.register_user(state, orgs[0], "nuevo@example.com", PW, "owner", actor=admin)
     with pytest.raises(PermissionError):
@@ -471,7 +472,8 @@ def test_at_p02_viewer_cannot_mutate_and_role_change_kills_sessions(state, orgs)
     csrf = do_login(client, "vera@example.com").json()["csrf"]
     assert client.get("/me").json()["role"] == "viewer"
     assert client.post("/policy", headers={"X-CSRF-Token": csrf}).status_code == 403
-    owner = Principal(org_id=orgs[0], role="owner", user_id="o")
+    owner_id = add_user(state, orgs[0], "olga@example.com", "owner")
+    owner = Principal(org_id=orgs[0], role="owner", user_id=owner_id)
     assert auth.change_role(state, orgs[0], uid, "admin", actor=owner)
     assert client.get("/me").status_code == 401  # debe volver a entrar con el rol nuevo
     csrf = do_login(client, "vera@example.com").json()["csrf"]
@@ -674,3 +676,193 @@ def test_body_that_never_finishes_is_cut_with_408(state, orgs, monkeypatch):
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
     status = asyncio.run(_slow_post(make_app(state), "/api/ingest", headers, b'{"a": 1}', stall=True))
     assert status == 408
+
+
+# --- base bloqueada: la autenticación no congela el event loop ------------------------------------
+
+
+@pytest.mark.parametrize("kind", ["api_key", "session"])
+def test_locked_db_auth_does_not_freeze_event_loop(tmp_path, clock, kind):
+    """Las dependencias async de autenticación consultan SQLite en el event loop: con la base
+    bloqueada, un solo request congela todo el proceso, /livez incluido.
+
+    Otra conexión toma `BEGIN EXCLUSIVE`. Un request autenticado queda esperando el `busy_timeout`
+    en su hilo, y `/livez` del mismo proceso responde enseguida (arquitectura.md §5).
+    """
+    import sqlite3
+    import time
+
+    import httpx
+
+    busy = 2.0
+    database = Database(tmp_path / "locked.db", busy_timeout_ms=int(busy * 1000))
+    st = AuthState(db=database, peppers=PEPPERS, scrypt_n=N, clock=clock, login_ip_limiter=None)
+    org = create_org(database, "A")
+    app = make_app(st)
+
+    @app.get("/livez", dependencies=[Depends(public_route())])
+    async def livez():
+        return {"ok": True}
+
+    if kind == "api_key":
+        token, _ = auth.create_api_key(st, org, "k", ["ingest"])  # nunca usada: el uso escribe
+        method, path, headers = "POST", "/api/ingest", {"Authorization": f"Bearer {token}"}
+        cookies = {}
+    else:
+        add_user(st, org)
+        tc = client_for(st)
+        do_login(tc)
+        cookies = {SESSION_COOKIE: tc.cookies.get(SESSION_COOKIE)}
+        clock.now += timedelta(minutes=5)  # vence el intervalo de touch: resolver escribe
+        method, path, headers = "GET", "/me", {}
+
+    async def scenario():
+        transport = httpx.ASGITransport(app=app)
+        base = "https://testserver"
+        async with httpx.AsyncClient(transport=transport, base_url=base, cookies=cookies) as c:
+            t0 = time.perf_counter()
+            authed = asyncio.create_task(c.request(method, path, headers=headers))
+            await asyncio.sleep(0.2)  # con el loop bloqueado, este sleep dura todo el busy_timeout
+            live = await c.get("/livez")
+            livez_s = time.perf_counter() - t0 - 0.2
+            resp = await authed
+        return live.status_code, livez_s, resp.status_code
+
+    lock = sqlite3.connect(tmp_path / "locked.db", isolation_level=None)
+    try:
+        lock.execute("BEGIN EXCLUSIVE")
+        live_status, livez_s, auth_status = asyncio.run(scenario())
+    finally:
+        lock.execute("ROLLBACK")
+        lock.close()
+        database.close()
+    assert live_status == 200
+    assert livez_s < busy / 4, f"/livez tardó {livez_s:.2f} s con la base bloqueada"
+    assert auth_status == 503  # fail-closed en su propio hilo
+
+
+# --- acciones en cola con un principal viejo (TOCTOU) ---------------------------------------------
+
+STALE_TITLE = (
+    "Bajo carga, un admin degradado a viewer sigue creando API keys admin válidas después de que la "
+    "degradación quedó confirmada"
+)
+
+
+def _audit_actions(db, org):
+    rows = db.query("SELECT action FROM audit_log WHERE org_id = ? ORDER BY seq", (org,))
+    return [r["action"] for r in rows]
+
+
+def _session_principal_for(state, email):
+    """Principal como lo arma `_session_principal`: con el hash de una sesión real."""
+    result = auth.login(state, email, PW, ip="203.0.113.9")
+    info = state.sessions.resolve(result.session_id)
+    return Principal(org_id=info.org_id, role=info.role, user_id=info.user_id, session_id_hash=info.id_hash)
+
+
+def test_a_demoted_admin_with_a_stale_principal_cannot_create_or_revoke_keys_nor_invite(state, orgs):
+    """Regresión de «Bajo carga, un admin degradado a viewer sigue creando API keys admin válidas después
+    de que la degradación quedó confirmada». El principal se resolvió como admin; el owner lo degrada
+    antes de que corra el handler: la mutación debe fallar dentro de su transacción."""
+    org = orgs[0]
+    owner_id = add_user(state, org, "olga@example.com", "owner")
+    admin_id = add_user(state, org, "ada@example.com", "admin")
+    owner = Principal(org_id=org, role="owner", user_id=owner_id)
+    stale_admin = _session_principal_for(state, "ada@example.com")
+    token, kid = auth.create_api_key(state, org, "previa", ["ingest"], actor=stale_admin)
+    assert auth.change_role(state, org, admin_id, "viewer", actor=owner)
+
+    keys_before = {k["id"] for k in state.repo(org).list_api_keys()}
+    with pytest.raises(PermissionError):
+        auth.create_api_key(state, org, "tardía", ["admin"], actor=stale_admin)
+    with pytest.raises(PermissionError):
+        auth.revoke_api_key(state, org, kid, actor=stale_admin)
+    with pytest.raises(PermissionError):
+        auth.register_user(state, org, "nuevo@example.com", PW, "admin", actor=stale_admin)
+    with pytest.raises(PermissionError):
+        auth.change_role(state, org, owner_id, "viewer", actor=stale_admin)
+    assert {k["id"] for k in state.repo(org).list_api_keys()} == keys_before
+    assert auth.verify_api_key(state, token) is not None  # la key previa sigue vigente (no se revocó)
+    assert auth.lookup_user_by_email(state.db, "nuevo@example.com") is None
+    actions = _audit_actions(state.db, org)
+    assert actions[-1] == "role_change", actions
+
+
+def test_require_current_rejects_a_closed_session_a_disabled_account_and_a_revoked_key(state, orgs):
+    """Mismo defecto: además del rol, una sesión cerrada, una cuenta deshabilitada o una key revocada
+    tampoco confirman la acción en cola."""
+    org = orgs[0]
+    admin_id = add_user(state, org, "ada@example.com", "admin")
+    stale = _session_principal_for(state, "ada@example.com")
+    assert auth.require_current(state, stale, "keys:write").role == "admin"
+    state.repo(org).delete_user_sessions(admin_id)
+    with pytest.raises(auth.StaleActor):
+        auth.require_current(state, stale, "keys:write")
+    with pytest.raises(PermissionError):  # el cambio de la propia contraseña tampoco con la sesión cerrada
+        auth.set_password(state, org, admin_id, PW + " nueva", actor=stale)
+    fresh = _session_principal_for(state, "ada@example.com")
+    state.repo(org).update_user(admin_id, disabled=True)
+    with pytest.raises(auth.StaleActor):
+        auth.require_current(state, fresh, None)
+    _token, kid = auth.create_api_key(state, org, "k", ["admin"])
+    key_actor = Principal(org_id=org, key_id=kid, scopes=frozenset({"admin"}))
+    assert auth.require_current(state, key_actor) is key_actor
+    auth.revoke_api_key(state, org, kid)
+    with pytest.raises(auth.StaleActor):
+        auth.require_current(state, key_actor)
+    assert auth.require_current(state, None) is None
+
+
+def test_panel_key_creation_fails_when_the_role_drops_between_session_resolution_and_handler(
+    tmp_path, monkeypatch
+):
+    """Regresión de «Bajo carga, un admin degradado a viewer sigue creando API keys admin válidas después
+    de que la degradación quedó confirmada». La degradación se intercala justo en el hueco: después de
+    resolver la sesión (dentro de enforce_csrf) y antes del handler de POST /settings/keys."""
+    import _panel_support as ps
+
+    runtime = ps.make_runtime(tmp_path)
+    try:
+        org = runtime.create_org("Acme")
+        owner_email = ps.add_user(runtime, org, "owner")
+        admin_email = ps.add_user(runtime, org, "admin")
+        app = ps.make_app(runtime)
+        client = ps.login(app, admin_email)
+        csrf = ps.csrf_of(client, "/settings")
+        owner = ps.principal_for(runtime, owner_email)
+        admin_id = ps.principal_for(runtime, admin_email).user_id
+        real_enforce = auth.enforce_csrf
+
+        async def demote_then_check(request, secret, id_hash):
+            await real_enforce(request, secret, id_hash)
+            await run_in_threadpool(auth.change_role, runtime.auth, org, admin_id, "viewer", actor=owner)
+
+        monkeypatch.setattr(auth, "enforce_csrf", demote_then_check)
+        resp = client.post(
+            "/settings/keys",
+            data={"csrf_token": csrf, "name": "tardía", "scopes": ["admin"]},
+            follow_redirects=False,
+        )
+        assert resp.status_code in (401, 403), resp.status_code
+        assert [k["name"] for k in runtime.repo(org).list_api_keys()] == []
+        assert _audit_actions(runtime.db, org)[-1] == "role_change"
+    finally:
+        runtime.close()
+
+
+def test_auth_backend_error_503_carries_retry_after(state, monkeypatch):
+    """Regresión de «Con la base bloqueada, un request de la API tarda unos 57 s en devolver 503 …»: el
+    503 de auth_backend_error no traía Retry-After."""
+
+    def boom(*_a, **_k):
+        raise RuntimeError("database is locked")
+
+    monkeypatch.setattr(auth, "verify_api_key", boom)
+    monkeypatch.setattr(state.sessions, "resolve", boom)
+    with pytest.raises(HTTPException) as key_err:
+        auth._resolve_key(state, "vg_live_x")
+    with pytest.raises(HTTPException) as session_err:
+        auth._resolve_session(state, "x" * 43)
+    for err in (key_err.value, session_err.value):
+        assert err.status_code == 503 and err.headers["Retry-After"].isdigit()

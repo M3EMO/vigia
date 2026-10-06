@@ -239,6 +239,14 @@ def _validate_messages(messages: Any) -> list[dict[str, str]]:
     return messages
 
 
+def _control_tokens(tokenizer: Any) -> tuple[str, ...]:
+    """Textos de los tokens especiales del tokenizer (los que la plantilla usa como control)."""
+    found = {t for t in getattr(tokenizer, "all_special_tokens", []) or [] if isinstance(t, str)}
+    decoder = getattr(tokenizer, "added_tokens_decoder", {}) or {}
+    found |= {str(getattr(tok, "content", tok)) for tok in decoder.values() if getattr(tok, "special", False)}
+    return tuple(sorted(t for t in found if t.strip()))
+
+
 def _sample(logits: torch.Tensor, temperature: float, top_p: float, generator: torch.Generator | None) -> int:
     if temperature == 0.0:
         return int(torch.argmax(logits))
@@ -336,6 +344,7 @@ class HFBackend:
 
     def _prompt_ids(self, messages: list[dict[str, str]]) -> list[int]:
         messages = _validate_messages(messages)
+        self._reject_control_tokens(messages)
         if getattr(self.tokenizer, "chat_template", None):
             text = self.tokenizer.apply_chat_template(
                 messages, tokenize=False, add_generation_prompt=True, **self._template_kwargs
@@ -351,6 +360,23 @@ class HFBackend:
                 code="context_length_exceeded",
             )
         return ids
+
+    def _reject_control_tokens(self, messages: list[dict[str, str]]) -> None:
+        """Rechaza un mensaje que trae un token especial de la plantilla en su texto.
+
+        El texto de la plantilla se tokeniza con los tokens especiales activos: si el contenido trae
+        `<|start|>` o `<|end|>`, ese texto se vuelve control y un mensaje de user puede abrir un
+        turno system. Por eso el contenido con tokens de control sale 400 `invalid_prompt`.
+        """
+        controls = _control_tokens(self.tokenizer)
+        for m in messages:
+            hit = next((t for t in controls if t in m["content"]), None)
+            if hit is not None:
+                raise InvalidRequestError(
+                    f"un mensaje de rol {m['role']!r} contiene el token de control {hit!r} del modelo; "
+                    "quitalo del texto",
+                    code="invalid_prompt",
+                )
 
     def stream(
         self,

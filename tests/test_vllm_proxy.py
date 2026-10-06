@@ -307,11 +307,13 @@ CONTEXT_ERROR = {
 }
 
 
-def test_vllm_400_is_invalid_prompt_eagerly_and_through_api():
+def test_vllm_400_is_context_length_exceeded_eagerly_and_through_api():
     """Regresión: "Errores de vLLM salen como 500 internal_error: un 400 de contexto excedido no es 400".
 
-    `stream()` hace el request antes de devolver: el rechazo sale de la llamada y la API lo
-    responde 400 `invalid_prompt`, con y sin stream.
+    También: "Modo vLLM: un prompt que excede el contexto responde code invalid_prompt; el backend
+    HF responde context_length_exceeded". `stream()` hace el request antes de devolver: el rechazo
+    sale de la llamada y la API lo responde 400 `context_length_exceeded`, con y sin stream, igual
+    que el backend HF.
     """
     from vigia.contracts import InvalidRequestError
 
@@ -320,13 +322,93 @@ def test_vllm_400_is_invalid_prompt_eagerly_and_through_api():
     )
     with pytest.raises(InvalidRequestError, match="contexto") as exc:
         backend.stream([{"role": "user", "content": "hola"}], max_tokens=5)  # sin iterar
-    assert exc.value.code == "invalid_prompt" and "2048" not in str(exc.value)
+    assert exc.value.code == "context_length_exceeded" and "2048" not in str(exc.value)
     client = _api_client(backend)
     body = {"model": "m", "messages": [{"role": "user", "content": "hola"}], "max_tokens": 5, "vigia": {}}
     for stream in (False, True):
         resp = client.post("/v1/chat/completions", json={**body, "stream": stream})
         assert resp.status_code == 400, (stream, resp.text)
-        assert resp.json()["error"]["code"] == "invalid_prompt"
+        assert resp.json()["error"]["code"] == "context_length_exceeded"
+
+
+def test_vllm_other_400_stays_invalid_prompt():
+    """Un rechazo de vLLM que no es de contexto sigue saliendo 400 `invalid_prompt`."""
+    from vigia.contracts import InvalidRequestError
+
+    bad = {"object": "error", "message": "temperature must be >= 0", "code": 400}
+    backend = VllmProxyBackend("http://vllm.local", "m", None, fake_vllm(bad, [], status=400), n_experts=4)
+    with pytest.raises(InvalidRequestError) as exc:
+        backend.stream([{"role": "user", "content": "hola"}], max_tokens=5)
+    assert exc.value.code == "invalid_prompt"
+
+
+STOP_TOKENS = [
+    {"token": "Hola", "logprob": -0.1, "bytes": list(b"Hola")},
+    {"token": " mundo", "logprob": -0.2, "bytes": list(b" mundo")},
+    {"token": ".", "logprob": -0.3, "bytes": list(b".")},
+    {"token": " Chau", "logprob": -0.4, "bytes": list(b" Chau")},
+]
+STOP_CROSS_TOKENS = [
+    {"token": "Hola", "logprob": -0.1, "bytes": list(b"Hola")},
+    {"token": " mundo", "logprob": -0.2, "bytes": list(b" mundo")},
+    {"token": ". Chau", "logprob": -0.3, "bytes": list(b". Chau")},
+]
+
+
+@pytest.mark.parametrize(
+    ("tokens", "expected"),
+    [
+        (STOP_TOKENS, ["Hola", " mundo"]),
+        (STOP_CROSS_TOKENS, ["Hola", " mundo"]),
+        (TOKENS, ["Hola", " ni", "ño"]),
+    ],
+)
+def test_vllm_stop_clips_text_to_message_content(tokens, expected):
+    """Regresión: "Modo vLLM: con stop strings la respuesta incluye el stop y el resto del token,
+    porque el texto se arma con logprobs e ignora message.content".
+
+    El vLLM falso imita al detokenizador: corta `message.content` en el stop y no recorta los
+    logprobs ni routed_experts. Vigía corta el texto y los tokens en `message.content`; el token
+    que cruza el stop se acorta. Sin stop (content completo) no cambia nada.
+    """
+    routed = np.array([[[0, 1], [2, 3]]] * len(tokens), dtype=np.int64)
+    payload = vllm_response(routed.tolist(), tokens)
+    full = "".join(t["token"] for t in tokens)
+    content = full.split(".")[0]
+    payload["choices"][0]["message"]["content"] = content
+    backend = make_backend(payload)
+    stream = backend.stream(
+        [{"role": "user", "content": "hola"}], max_tokens=8, stop=["."], tiers=(Tier.F0, Tier.U)
+    )
+    events = list(stream)
+    assert [e.text for e in events] == expected
+    assert stream.text == content == "".join(e.text for e in events)
+    assert events[-1].end == len(content) and stream.completion_tokens == len(expected)
+    assert all(e.expert_ids is not None for e in events)
+
+    client = _api_client(make_backend(payload))
+    body = {
+        "model": "granite-moe",
+        "messages": [{"role": "user", "content": "hola"}],
+        "max_tokens": 8,
+        "stop": ["."],
+        "vigia": {},
+    }
+    resp = client.post("/v1/chat/completions", json=body)
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    assert data["choices"][0]["message"]["content"] == content
+
+
+def test_clip_to_content_ignores_non_prefix_content():
+    """Si `message.content` no es prefijo del texto de logprobs (parser de razonamiento), no se recorta."""
+    from vigia.backends.vllm_proxy import clip_to_content
+
+    offsets = [(0, 4), (4, 10)]
+    assert clip_to_content("Hola mundo", offsets, "mundo") == ("Hola mundo", offsets)
+    assert clip_to_content("Hola mundo", offsets, None) == ("Hola mundo", offsets)
+    assert clip_to_content("Hola mundo", offsets, "Hola mundo") == ("Hola mundo", offsets)
+    assert clip_to_content("Hola mundo", offsets, "") == ("", [])
 
 
 def test_vllm_5xx_and_transport_errors_stay_backend_errors():

@@ -142,8 +142,9 @@ def split_groups(
         }
     strata = [s[rng.permutation(len(s))] for s in _majority_strata(g, labels, unique)]
     sizes = np.array([len(s) for s in strata])
-    test_q = _allocate(n_test, sizes, sizes)
-    cal_q = _allocate(n_cal, sizes, sizes - test_q)
+    big = (sizes >= 3).astype(np.int64)  # estratos que deben llegar a los tres splits
+    test_q = _allocate(n_test, sizes, sizes, keep=2 * big)
+    cal_q = _allocate(n_cal, sizes, sizes - test_q, keep=big)
     out: dict[str, list[str]] = {"test": [], "cal": [], "train": []}
     for s, t, c in zip(strata, test_q, cal_q, strict=True):
         out["test"] += s[:t].tolist()
@@ -167,27 +168,33 @@ def _majority_strata(
     return [unique[~majority], unique[majority]]
 
 
-def _allocate(total: int, sizes: np.ndarray, room: np.ndarray) -> np.ndarray:
+def _allocate(total: int, sizes: np.ndarray, room: np.ndarray, *, keep: np.ndarray) -> np.ndarray:
     """Reparte `total` preguntas entre estratos en proporción a `sizes` (mayor resto), sin superar
-    `room`. Un estrato con tres o más preguntas recibe al menos una si el total lo permite."""
+    `room`. Un estrato con tres o más preguntas recibe al menos una si el total lo permite.
+
+    Cada estrato deja `keep` preguntas libres para los splits siguientes (cal y train) mientras
+    el total entre en el resto del lugar; si no entra, las usa.
+    """
     quota = np.zeros(len(sizes), dtype=np.int64)
     if total == 0 or sizes.sum() == 0:
         return quota
+    soft = np.maximum(room - keep, 0)
     share = total * sizes / sizes.sum()
-    quota = np.minimum(np.floor(share).astype(np.int64), room)
+    quota = np.minimum(np.floor(share).astype(np.int64), soft)
     for i in np.argsort(-(share - np.floor(share)), kind="stable"):
         if quota.sum() >= total:
             break
-        if quota[i] < room[i]:
+        if quota[i] < soft[i]:
             quota[i] += 1
     for i in range(len(sizes)):
-        if quota[i] == 0 and sizes[i] >= 3 and room[i] > 0:
+        if quota[i] == 0 and sizes[i] >= 3 and soft[i] > 0:
             donor = int(np.argmax(quota))
             if quota[donor] > 1:
                 quota[donor] -= 1
                 quota[i] += 1
-    while quota.sum() < total and (room - quota).max() > 0:  # algún estrato sin lugar: completar
-        quota[int(np.argmax(room - quota))] += 1
+    for cap in (soft, room):  # algún estrato sin lugar: completar, primero sin tocar lo reservado
+        while quota.sum() < total and (cap - quota).max() > 0:
+            quota[int(np.argmax(cap - quota))] += 1
     return quota
 
 

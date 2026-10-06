@@ -75,7 +75,9 @@ def _rejection(resp: httpx.Response) -> InvalidRequestError:
         raw = body["error"].get("message", raw)
     upstream = raw.lower() if isinstance(raw, str) else ""
     if "context" in upstream or "too long" in upstream or "maximum" in upstream:
-        return InvalidRequestError("El prompt excede el contexto del modelo servido por vLLM.")
+        return InvalidRequestError(
+            "El prompt excede el contexto del modelo servido por vLLM.", code="context_length_exceeded"
+        )
     return InvalidRequestError("vLLM rechazó el request: el prompt o los parámetros no son válidos.")
 
 
@@ -222,6 +224,28 @@ def token_offsets(pieces: list[str], raw_bytes: list[list[int] | None]) -> tuple
         offsets.append((pos, pos + len(p)))
         pos += len(p)
     return "".join(pieces), offsets
+
+
+def clip_to_content(
+    text: str, offsets: list[tuple[int, int]], content: Any
+) -> tuple[str, list[tuple[int, int]]]:
+    """Recorta el texto armado desde logprobs a `message.content` cuando este es un prefijo propio.
+
+    Con `stop`, el detokenizador de vLLM corta `message.content` antes del stop pero no recorta los
+    logprobs. Como `hf._Emitter._truncate`, el token que cruza el borde se acorta y los siguientes
+    se descartan. Si `content` no es prefijo (p. ej. un parser de razonamiento), no se toca nada.
+    """
+    if not isinstance(content, str) or len(content) >= len(text) or not text.startswith(content):
+        return text, offsets
+    cut = len(content)
+    kept: list[tuple[int, int]] = []
+    for start, end in offsets:
+        if end > cut:
+            if start < cut:
+                kept.append((start, cut))
+            break
+        kept.append((start, end))
+    return text[:cut], kept
 
 
 # --- Backend ------------------------------------------------------------------------------------
@@ -406,6 +430,7 @@ class VllmProxyBackend:
                 ]
             )
         text, offsets = token_offsets(pieces, raw_bytes)
+        text, offsets = clip_to_content(text, offsets, (choice.get("message") or {}).get("content"))
 
         usage: list[dict[str, float]] | None = None
         routed: np.ndarray | None = None
@@ -427,7 +452,7 @@ class VllmProxyBackend:
             usage = routed_usage_features(routed, max(n_exp, 2))
 
         events: list[TokenEvent] = []
-        for i in range(len(pieces)):
+        for i in range(len(offsets)):
             feats = top_logprob_features(logprobs[i], tops[i])
             expert_ids = None
             if usage is not None and routed is not None:

@@ -729,3 +729,300 @@ def test_tenant_export_carries_no_secrets(world):
     assert "whsec_" not in text and "csrf_secret" not in text
     for token, _ in a["keys"].values():
         assert token not in text
+
+
+# --- ronda 4 --------------------------------------------------------------------------------------
+
+
+def _tenant_snapshot(rt, org):
+    """Estado persistido de una org: lo que un intento ajeno nunca debe cambiar."""
+    q = rt.db.query
+    o = (org,)
+    return {
+        "org": q(
+            "SELECT name, store_text, retention_days, policy_json, active_detector_id FROM orgs WHERE id = ?",
+            o,
+        ),
+        "users": q("SELECT id, role, disabled FROM users WHERE org_id = ? ORDER BY id", o),
+        "keys": q("SELECT id, revoked_at FROM api_keys WHERE org_id = ? ORDER BY id", o),
+        "traces": q("SELECT id FROM traces WHERE org_id = ? ORDER BY id", o),
+        "items": q("SELECT id, state, reserved_by FROM review_items WHERE org_id = ? ORDER BY id", o),
+        "decisions": q("SELECT id FROM review_decisions WHERE org_id = ? ORDER BY id", o),
+        "detectors": q("SELECT id, status FROM detectors WHERE org_id = ? ORDER BY id", o),
+        "datasets": q("SELECT id FROM datasets WHERE org_id = ? ORDER BY id", o),
+        "webhooks": q("SELECT id, disabled FROM webhooks WHERE org_id = ? ORDER BY id", o),
+        "jobs": q("SELECT id, state FROM jobs WHERE org_id = ? ORDER BY id", o),
+        "audit": q("SELECT COUNT(*) AS n FROM audit_log WHERE org_id = ?", o),
+    }
+
+
+def test_foreign_mutations_leave_the_other_tenant_untouched(world):
+    """Cada rol y cada key de A intenta mutar con ids de B: el estado de B (auditoría incluida) no cambia."""
+    rt, app, a, b = world
+    before = _tenant_snapshot(rt, b["org"])
+    tried = 0
+    for role in ROLES:
+        panel = Panel(app, a["emails"][role])
+        for route, method, spec in routes(app):
+            if method != "POST" or spec.kind != "session" or not params_of(route.path):
+                continue
+            assert panel.post(fill(route.path, b["ids"]), FORM).status_code in (403, 404)
+            tried += 1
+        if has_permission(role, "calibration:write"):
+            resp = panel.post("/calibration/start", {"dataset_id": b["dataset"], "alphas": "", "seed": "0"})
+            assert resp.status_code == 404
+    for token, _ in a["keys"].values():
+        for route, method, spec in routes(app):
+            if method == "POST" and spec.kind == "session" and params_of(route.path):
+                assert not 200 <= api(app, token, "POST", fill(route.path, b["ids"])).status_code < 300
+    assert tried >= 4 * 10
+    assert _tenant_snapshot(rt, b["org"]) == before
+
+
+@pytest.mark.parametrize("scope", SCOPES)
+def test_api_keys_never_open_panel_routes(world, scope):
+    """Una API key (de cualquier scope) no abre rutas del panel, ni con ids propios ni ajenos."""
+    rt, app, a, b = world
+    token = a["keys"][scope][0]
+    values = leaks(rt, b)
+    checked = 0
+    for route, method, spec in routes(app):
+        if spec.kind != "session" or route.path == "/static/{name}":
+            continue
+        for ids in (a["ids"], b["ids"]):
+            path = fill(route.path, ids)
+            client = TestClient(app, base_url="https://testserver", follow_redirects=False)
+            resp = client.request(
+                method, path, headers={"Authorization": f"Bearer {token}"}, data={"confirm": "yes"}
+            )
+            assert not 200 <= resp.status_code < 300, (scope, method, path, resp.status_code)
+            assert_no_leak(f"key {scope} {method} {path}", resp, values, allowed=list(b["ids"].values()))
+            checked += 1
+    assert checked >= 80
+
+
+def test_trace_api_url_variants_do_not_distinguish_foreign_ids(world):
+    """Barra final, query, HEAD y OPTIONS en la traza de la API: id ajeno e inexistente, igual respuesta."""
+    rt, app, a, b = world
+    client = TestClient(app, follow_redirects=False)
+    headers = {"Authorization": f"Bearer {a['keys']['read'][0]}"}
+    other, absent = b["ids"]["trace_id"], secrets.token_hex(16)
+    for template in ("/v1/vigia/traces/{}", "/v1/vigia/traces/{}/", "/v1/vigia/traces/{}?x=1"):
+        for method in ("GET", "HEAD", "OPTIONS"):
+            r_other = client.request(method, template.format(other), headers=headers)
+            r_absent = client.request(method, template.format(absent), headers=headers)
+            assert r_other.status_code == r_absent.status_code, (method, template)
+            assert r_other.status_code != 200, (method, template)
+            assert normalized(r_other, other) == normalized(r_absent, absent), (method, template)
+            location = (r_other.headers.get("location") or "").replace(other, "X")
+            assert location == (r_absent.headers.get("location") or "").replace(absent, "X")
+
+
+def test_role_change_in_both_directions_and_self_demotion_close_sessions(org_env):
+    """Subir de rol también invalida la sesión vieja; un admin que se degrada a sí mismo queda afuera."""
+    rt, app, org, users = org_env
+    owner = Panel(app, "owner@solo.com.ar")
+    reviewer = Panel(app, "reviewer@solo.com.ar")
+    rid, aid = users["reviewer"].user_id, users["admin"].user_id
+    assert owner.post(f"/settings/users/{rid}/role", {"role": "admin"}).status_code == 303
+    resp = reviewer.get("/review")
+    assert resp.status_code == 303 and resp.headers["location"].startswith("/login")
+    assert Panel(app, "reviewer@solo.com.ar").get("/settings").status_code == 200
+    admin = Panel(app, "admin@solo.com.ar")
+    assert admin.post(f"/settings/users/{aid}/role", {"role": "viewer"}).status_code == 303
+    resp = admin.get("/settings")
+    assert resp.status_code == 303 and resp.headers["location"].startswith("/login")
+    assert Panel(app, "admin@solo.com.ar").get("/settings").status_code == 403
+    assert rt.repo(org).get_user(aid)["role"] == "viewer"
+
+
+def test_flipping_the_active_detector_of_one_tenant_never_scores_the_other(tmp_path):
+    """A alterna su detector activo entre requests de B: B puntúa con el suyo y A con el recién activado."""
+    rt = make_runtime(tmp_path, key_rate_per_minute=100_000, tenant_rate_per_minute=100_000)
+    try:
+        app = create_app(runtime=rt)
+        org_a, org_b = rt.create_org("A"), rt.create_org("B")
+        owner_a = add_user(rt, org_a, "owner-a@flip.com.ar", "owner")
+        det_b = constant_detector(rt.model_info, 0.8)
+        install_detector(rt, org_b, det_b)
+        first, second = constant_detector(rt.model_info, 0.9), constant_detector(rt.model_info, 0.6)
+        for det in (first, second):
+            rt.repo(org_a).insert_detector(det.id, det.to_json())
+        key_a = create_api_key(rt.auth, org_a, "a", ["ingest"])[0]
+        key_b = create_api_key(rt.auth, org_b, "b", ["ingest"])[0]
+        for i in range(6):
+            active = (first, second)[i % 2]
+            rt.calibration.activate(owner_a, active.id)
+            assert _calibration_id(app, key_b) == det_b.id
+            assert _calibration_id(app, key_a) == active.id
+    finally:
+        rt.close()
+
+
+# --- ronda 5 --------------------------------------------------------------------------------------
+
+
+@pytest.fixture
+def pair(tmp_path):
+    """Dos orgs con los cuatro roles, el mismo detector activo y una key ingest+read cada una."""
+    rt = make_runtime(
+        tmp_path, key_rate_per_minute=100_000, tenant_rate_per_minute=100_000, review_min_reviewers=1
+    )
+    app = create_app(runtime=rt)
+    orgs = {}
+    shared = constant_detector(rt.model_info, 0.9)
+    for tag in ("a", "b"):
+        org = rt.create_org(f"Org {tag}")
+        rt.repo(org).update_org(store_text="full")
+        users = {role: add_user(rt, org, f"{role}@{tag}5.com.ar", role) for role in ROLES}
+        install_detector(rt, org, shared)
+        key = create_api_key(rt.auth, org, f"k {tag}", ["ingest", "read"])[0]
+        orgs[tag] = {"org": org, "users": users, "key": key}
+    yield rt, app, orgs["a"], orgs["b"], shared
+    rt.close()
+
+
+def _chat(app, key, content, max_tokens=3):
+    body = {
+        "model": "tiny:mixtral",
+        "messages": [{"role": "user", "content": content}],
+        "max_tokens": max_tokens,
+        "vigia": {},
+    }
+    resp = TestClient(app).post("/v1/chat/completions", headers={"Authorization": f"Bearer {key}"}, json=body)
+    assert resp.status_code == 200, resp.text[:200]
+    return resp
+
+
+def _audit_count(rt, org):
+    return rt.db.query_one("SELECT COUNT(*) AS n FROM audit_log WHERE org_id = ?", (org,))["n"]
+
+
+def test_review_next_and_dataset_from_reviews_stay_in_the_tenant(pair):
+    """Cola propia vacía: `/review/next` no reserva items de B y `/review/dataset` no trae sus trazas."""
+    rt, app, a, b, _ = pair
+    marker = f"SECRETO-B-{secrets.token_hex(3)}"
+    trace_b = _chat(app, b["key"], f"pregunta {marker}").headers["X-Vigia-Trace-Id"]
+    trace_a = _chat(app, a["key"], "pregunta de A").headers["X-Vigia-Trace-Id"]
+    for tag, org, label in (("b", b, "error"), ("a", a, "correct")):
+        reviewer = Panel(app, f"reviewer@{tag}5.com.ar")
+        items = rt.repo(org["org"]).list_review_items()
+        assert items, "la acción del detector constante encola revisión"
+        for item in items:
+            assert reviewer.post(f"/review/{item['id']}/decide", {"label": label}).status_code == 303
+    pending_b = rt.repo(b["org"]).create_review_item(trace_b)
+    state_b = [(i["id"], i["state"], i["reserved_by"]) for i in rt.repo(b["org"]).list_review_items()]
+    resp = Panel(app, "reviewer@a5.com.ar").post("/review/next")
+    assert resp.status_code == 303 and resp.headers["location"].startswith("/review?")
+    assert pending_b not in resp.headers["location"]
+    assert [(i["id"], i["state"], i["reserved_by"]) for i in rt.repo(b["org"]).list_review_items()] == state_b
+    assert Panel(app, "admin@a5.com.ar").post("/review/dataset", {"name": "revisiones A"}).status_code == 303
+    (dataset,) = rt.repo(a["org"]).list_datasets()
+    content = bytes(rt.repo(a["org"]).get_dataset(dataset["id"])["content"]).decode("utf-8")
+    assert trace_a in content
+    assert trace_b not in content and marker not in content
+    assert rt.repo(b["org"]).list_datasets() == []
+
+
+def test_pending_calibration_cap_is_counted_per_tenant(pair):
+    """Una calibración en cola de B no bloquea la de A: el tope de jobs pendientes es por organización."""
+    rt, app, a, b, _ = pair
+    datasets = {
+        tag: rt.calibration.upload_dataset(org["users"]["owner"], f"ds {tag}", learnable_jsonl(20))
+        for tag, org in (("a", a), ("b", b))
+    }
+    owner_b = Panel(app, "owner@b5.com.ar")
+    form = {"alphas": "", "seed": "0"}
+    assert owner_b.post("/calibration/start", {"dataset_id": datasets["b"], **form}).status_code == 303
+    assert owner_b.post("/calibration/start", {"dataset_id": datasets["b"], **form}).status_code == 422
+    admin_a = Panel(app, "admin@a5.com.ar")
+    assert admin_a.post("/calibration/start", {"dataset_id": datasets["a"], **form}).status_code == 303
+    assert len(rt.calibration.list_jobs(a["org"])) == 1
+    assert len(rt.calibration.list_jobs(b["org"])) == 1
+
+
+def test_foreign_webhook_test_and_delete_enqueue_nothing_in_either_tenant(pair):
+    rt, app, a, b, _ = pair
+    hook_b = rt.repo(b["org"]).insert_webhook(
+        "https://hooks-b5.example/x", "whsec_" + "A" * 43, ["trace.flagged"]
+    )
+    orgs = (a["org"], b["org"])
+    owner_a = Panel(app, "owner@a5.com.ar")  # el login audita: se cuenta después
+    jobs_before = {org: len(rt.jobs.list(org, limit=200)) for org in orgs}
+    audit_before = {org: _audit_count(rt, org) for org in orgs}
+    assert owner_a.post(f"/settings/webhooks/{hook_b}/test").status_code == 404
+    assert owner_a.post(f"/settings/webhooks/{hook_b}/delete").status_code == 404
+    assert {org: len(rt.jobs.list(org, limit=200)) for org in orgs} == jobs_before
+    assert {org: _audit_count(rt, org) for org in orgs} == audit_before
+    assert rt.repo(b["org"]).get_webhook(hook_b) is not None
+
+
+def test_inviting_a_foreign_email_in_any_letter_case_is_generic_and_creates_nothing(pair):
+    """Email único global (riesgo aceptado, seguridad.md §3): mayúsculas o espacios no cambian el mensaje."""
+    rt, app, a, b, _ = pair
+    admin = Panel(app, "admin@a5.com.ar")
+    orgs = (a["org"], b["org"])
+    users_before = {org: len(rt.repo(org).list_users()) for org in orgs}
+    for email in ("owner@b5.com.ar", "OWNER@B5.com.ar", "  Viewer@b5.COM.ar  ", "admin@a5.com.ar"):
+        resp = admin.post("/settings/users", {"email": email, "role": "viewer"})
+        assert resp.status_code == 422, email
+        assert "No se pudo crear una cuenta con ese email." in resp.text, email
+        assert b["org"] not in resp.text
+    assert {org: len(rt.repo(org).list_users()) for org in orgs} == users_before
+
+
+def test_concurrent_detector_flips_in_one_tenant_never_score_the_other(pair):
+    """Hilos de API de A y B mientras A alterna su detector activo: B siempre puntúa con el suyo."""
+    import threading
+    from collections import Counter
+
+    rt, app, a, b, shared = pair
+    other = constant_detector(rt.model_info, 0.6)
+    rt.repo(a["org"]).insert_detector(other.id, other.to_json())
+    own_b = constant_detector(rt.model_info, 0.7)
+    rt.repo(b["org"]).insert_detector(own_b.id, own_b.to_json())
+    rt.calibration.activate(b["users"]["owner"], own_b.id)
+    stop = threading.Event()
+    seen: Counter = Counter()
+    errors: list[str] = []
+
+    def flip():
+        i = 0
+        while not stop.is_set():
+            rt.calibration.activate(a["users"]["owner"], (shared.id, other.id)[i % 2])
+            i += 1
+
+    def ingest(tag, key):
+        for _ in range(8):
+            try:
+                resp = _chat(app, key, "hola", max_tokens=2)
+                seen[(tag, resp.json()["choices"][0]["vigia"]["calibration_id"])] += 1
+            except Exception as exc:  # noqa: BLE001 - se informa en el assert
+                errors.append(repr(exc))
+
+    flipper = threading.Thread(target=flip)
+    flipper.start()
+    workers = [threading.Thread(target=ingest, args=args) for args in (("a", a["key"]), ("b", b["key"]))]
+    for w in workers:
+        w.start()
+    for w in workers:
+        w.join()
+    stop.set()
+    flipper.join()
+    assert not errors
+    assert {cal for tag, cal in seen if tag == "b"} == {own_b.id}
+    assert {cal for tag, cal in seen if tag == "a"} <= {shared.id, other.id}
+    assert sum(n for (tag, _), n in seen.items() if tag == "b") == 8
+
+
+def test_signals_of_a_detector_shared_by_two_tenants_count_only_own_traces(pair):
+    """El mismo artefacto activo en A y B: las señales de drift de B no cuentan las trazas de A."""
+    rt, app, a, b, shared = pair
+    for i in range(4):
+        _chat(app, a["key"], f"consulta {i}")
+    assert rt.drift_for(a["org"])["detector_id"] == rt.drift_for(b["org"])["detector_id"] == shared.id
+    assert rt.repo(a["org"]).recent_token_signals(shared.id)["n_traces"] == 4
+    assert rt.repo(b["org"]).recent_token_signals(shared.id) == {"n_traces": 0, "tokens": []}
+    report_b = rt.drift_for(b["org"])
+    assert report_b["n_traces"] == 0 and report_b["n_tokens"] == 0
+    assert Panel(app, "viewer@b5.com.ar").get("/performance").status_code == 200

@@ -137,8 +137,13 @@ def _date_parts_match(prediction: str, gold: DateParts) -> bool:
 
 def _implicit_type(answers: Sequence[str]) -> str | None:
     """Tipo de un gold sin tipo: `date` si todos los alias son fechas legibles y no ambiguas con al
-    menos mes y año, `number_with_unit` si todos empiezan con un número y ninguno tiene una fecha,
-    o None."""
+    menos mes y año, `number_with_unit` si todos empiezan con un número, tienen un solo número y
+    ninguno tiene una fecha, o None.
+
+    Un alias con varios números ("1810-1816", "2 a 1", "15:30", "3/4 de taza") queda sin tipo:
+    la comparación del último número de la predicción con el primero del alias no sirve ahí, y
+    decide `_text_match`, que exige todos los números del alias en el mismo orden.
+    """
     aliases = [a.strip() for a in answers]
     if not aliases:
         return None
@@ -146,7 +151,11 @@ def _implicit_type(answers: Sequence[str]) -> str | None:
     if len(dated) == len(aliases):
         return "date"
     if all(
-        _LEADING_NUMBER.match(a) and not _NUMERIC_DMY.search(a) and not parse_dates_es(a) for a in aliases
+        _LEADING_NUMBER.match(a)
+        and len(extract_numbers(a)) == 1
+        and not _NUMERIC_DMY.search(a)
+        and not parse_dates_es(a)
+        for a in aliases
     ):
         return "number_with_unit"
     return None
@@ -157,19 +166,26 @@ def _is_typed(item_type: str | None) -> bool:
     return item_type in TYPED_ITEM_TYPES or (item_type or "").startswith("arit")
 
 
+def _in_order(needle: Sequence[float], haystack: Sequence[float]) -> bool:
+    """True si `needle` es una subsecuencia de `haystack` (mismo orden, no necesariamente contigua)."""
+    rest = iter(haystack)
+    return all(any(v == h for h in rest) for v in needle)
+
+
 def _text_match(candidate: str, answers: Sequence[str]) -> bool:
     """EM o F1 de tokens >= 0,5 contra algún alias cuyos números estén todos en la predicción.
 
     El F1 trata "1945" y "1946" como palabras intercambiables: un alias con números solo cuenta si
-    la predicción contiene esos números. Un alias sin números no cuenta si la predicción da números
-    y ninguno coincide con los del gold (otro alias dice el número correcto).
+    la predicción contiene esos números en el mismo orden, con repeticiones ("2 a 1" no acepta
+    "1 a 2" y "1 a 1" no acepta "1 a 0"). Un alias sin números no cuenta si la predicción da
+    números y ninguno coincide con los del gold (otro alias dice el número correcto).
     """
-    predicted = set(extract_numbers(candidate))
+    predicted = extract_numbers(candidate)
     gold_numbers = {v for a in answers for v in extract_numbers(a)}
-    contradicts = bool(predicted and gold_numbers and not predicted & gold_numbers)
+    contradicts = bool(predicted and gold_numbers and not set(predicted) & gold_numbers)
     for alias in answers:
-        numbers = set(extract_numbers(alias))
-        if (numbers and not numbers <= predicted) or (not numbers and contradicts):
+        numbers = extract_numbers(alias)
+        if (numbers and not _in_order(numbers, predicted)) or (not numbers and contradicts):
             continue
         if exact_match(candidate, [alias]) or token_f1(candidate, [alias]) >= GOLD_F1_THRESHOLD:
             return True
@@ -190,9 +206,9 @@ def gold_correct(
     deciden: la normalización borra la coma de "1,5" y el F1 premia la unidad o el mes aunque el
     número o el año difieran. Un item sin tipo recibe el tipo implícito de su gold
     (`_implicit_type`): fecha si todos los alias son fechas con mes y año, número con unidad si
-    todos empiezan con un número. Resto de los items: correcta si hay EM o F1 de tokens >= 0,5
-    contra un alias cuyos números aparecen en la predicción (`_text_match`), coincidencia
-    numérica o coincidencia de fecha completa.
+    todos empiezan con un número y tienen uno solo. Resto de los items: correcta si hay EM o F1
+    de tokens >= 0,5 contra un alias cuyos números aparecen en orden en la predicción
+    (`_text_match`), coincidencia numérica o coincidencia de fecha completa.
     """
     text = prediction.strip()
     first = next((ln.strip() for ln in text.splitlines() if ln.strip()), "")

@@ -32,11 +32,12 @@ import secrets
 import unicodedata
 import zlib
 from collections.abc import Callable, Iterable, Iterator, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi.concurrency import run_in_threadpool
 from fastapi.routing import APIRoute
 
 from vigia_ee import audit
@@ -86,6 +87,20 @@ class LoginFailed(AuthError):
 
     def __init__(self) -> None:
         super().__init__("Email o contraseña incorrectos.")
+
+
+class StaleActor(HTTPException, PermissionError):
+    """El actor ya no puede hacer la acción: su sesión, su rol o su key cambiaron después de resolverse.
+
+    Es `PermissionError` (los handlers que ya capturan ese error responden 403) y también un 401 de
+    FastAPI: si nadie la captura, el manejador de errores HTTP responde 401 en lugar de un 500.
+    """
+
+    def __init__(self, message: str = "Tu sesión o tus permisos cambiaron. Volvé a iniciar sesión.") -> None:
+        HTTPException.__init__(self, 401, message)
+
+    def __str__(self) -> str:
+        return str(self.detail)
 
 
 # --- contraseñas (scrypt, NIST SP 800-63B rev 4) --------------------------------------------------
@@ -391,6 +406,9 @@ class Principal:
     user_id: str | None = None
     key_id: str | None = None
     scopes: frozenset[str] = frozenset()
+    # Hash de la sesión que resolvió este principal (None fuera del panel). `require_current` lo usa
+    # para que una acción en cola no se confirme después de un logout, un cambio de rol o de clave.
+    session_id_hash: str | None = field(default=None, compare=False, repr=False)
 
     def can(self, permission: str) -> bool:
         return has_permission(self.role, permission)
@@ -554,6 +572,44 @@ def install_auth(app: FastAPI, state: AuthState) -> None:
     app.state.vigia_auth = state
 
 
+def require_current(
+    state: AuthState, actor: Principal | None, permission: str | None = None
+) -> Principal | None:
+    """Relee al actor en la base y devuelve su principal vigente; lanza `StaleActor` si ya no puede actuar.
+
+    El principal de un request se resuelve antes del handler, y entre los dos hay `await`: en ese hueco
+    otro request puede degradar el rol, deshabilitar la cuenta, cerrar la sesión o revocar la key. Para
+    que la acción vieja no se confirme, hay que llamar a esta función DENTRO de la misma transacción que
+    la escritura (`with state.db.transaction():`), sin `await` entre el chequeo y la escritura. El
+    principal devuelto lleva el rol actual: las decisiones de RBAC que siguen deben usarlo.
+    `actor=None` (alta inicial o sistema) se devuelve tal cual.
+    """
+    if actor is None:
+        return None
+    if actor.user_id is not None:
+        user = state.repo(actor.org_id).get_user(actor.user_id)
+        if user is None or user["disabled"]:
+            raise StaleActor("Tu cuenta ya no está habilitada.")
+        if actor.session_id_hash is not None:
+            session = lookup_session(state.db, actor.session_id_hash)
+            if session is None or session["user_id"] != actor.user_id:
+                raise StaleActor()
+        current = replace(actor, role=user["role"])
+        if permission is not None and not current.can(permission):
+            raise StaleActor("Tu rol ya no tiene permiso para esta acción.")
+        return current
+    if actor.key_id is not None:
+        row = lookup_api_key(state.db, actor.key_id)
+        if (
+            row is None
+            or row["org_id"] != actor.org_id
+            or row["revoked_at"]
+            or (row["expires_at"] and parse_iso(row["expires_at"]) <= state.clock())
+        ):
+            raise StaleActor("La API key ya no es válida.")
+    return actor
+
+
 # --- operaciones de identidad ---------------------------------------------------------------------
 
 _EMAIL_RE = re.compile(r"^[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}$")
@@ -639,24 +695,37 @@ def register_user(
     ):
         raise PermissionError("No podés asignar ese rol.")
     check_password_policy(password, email=email)
-    user_id = state.repo(org_id).create_user(email, hash_password(password, n=state.scrypt_n), role)
-    audit.append(state.db, org_id, actor, "user_create", user_id, {"role": role})
+    password_hash = hash_password(password, n=state.scrypt_n)  # scrypt fuera de la transacción
+    with state.db.transaction():
+        actor = require_current(state, actor, "users:write")
+        if actor is not None and not can_assign_role(actor.role, role):
+            raise PermissionError("No podés asignar ese rol.")
+        user_id = state.repo(org_id).create_user(email, password_hash, role)
+        audit.append(state.db, org_id, actor, "user_create", user_id, {"role": role})
     return user_id
 
 
 def change_role(state: AuthState, org_id: str, user_id: str, new_role: str, *, actor: Principal) -> bool:
     """Cambia el rol e invalida las sesiones del usuario (regeneración al cambiar privilegios)."""
     repo = state.repo(org_id)
-    target = repo.get_user(user_id)
-    if target is None or actor.org_id != org_id:
+    if actor.org_id != org_id:
         return False
-    if not actor.can("users:write") or not can_assign_role(actor.role, new_role):
-        raise PermissionError("No podés asignar ese rol.")
-    if target["role"] == "owner" and actor.role != "owner":
-        raise PermissionError("Solo un owner puede cambiar a otro owner.")
-    repo.update_user(user_id, role=new_role)
-    repo.delete_user_sessions(user_id)
-    audit.append(state.db, org_id, actor, "role_change", user_id, {"from": target["role"], "to": new_role})
+    with state.db.transaction():
+        target = repo.get_user(user_id)
+        if target is None:
+            return False
+        if not actor.can("users:write") or not can_assign_role(actor.role, new_role):
+            raise PermissionError("No podés asignar ese rol.")
+        actor = require_current(state, actor, "users:write")
+        if not can_assign_role(actor.role, new_role):
+            raise PermissionError("No podés asignar ese rol.")
+        if target["role"] == "owner" and actor.role != "owner":
+            raise PermissionError("Solo un owner puede cambiar a otro owner.")
+        repo.update_user(user_id, role=new_role)
+        repo.delete_user_sessions(user_id)
+        audit.append(
+            state.db, org_id, actor, "role_change", user_id, {"from": target["role"], "to": new_role}
+        )
     return True
 
 
@@ -666,12 +735,18 @@ def set_password(state: AuthState, org_id: str, user_id: str, new_password: str,
     target = repo.get_user(user_id)
     if target is None or actor.org_id != org_id:
         return False
-    if actor.user_id != user_id and not actor.can("users:write"):
+    own = actor.user_id == user_id
+    if not own and not actor.can("users:write"):
         raise PermissionError("No podés cambiar esa contraseña.")
     check_password_policy(new_password, email=target["email"])
-    repo.update_user(user_id, password_hash=hash_password(new_password, n=state.scrypt_n))
-    repo.delete_user_sessions(user_id)
-    audit.append(state.db, org_id, actor, "password_change", user_id)
+    password_hash = hash_password(new_password, n=state.scrypt_n)  # scrypt fuera de la transacción
+    with state.db.transaction():
+        require_current(state, actor, "account:self" if own else "users:write")
+        if repo.get_user(user_id) is None:
+            return False
+        repo.update_user(user_id, password_hash=password_hash)
+        repo.delete_user_sessions(user_id)
+        audit.append(state.db, org_id, actor, "password_change", user_id)
     return True
 
 
@@ -694,16 +769,18 @@ def create_api_key(
         raise PermissionError("No podés crear keys.")
     token, kid, secret = generate_api_key()
     pepper_kid = state.peppers.current_kid
-    state.repo(org_id).insert_api_key(
-        kid,
-        name=name.strip(),
-        hmac_hex=key_hmac(state.peppers.peppers[pepper_kid], kid, secret),
-        pepper_kid=pepper_kid,
-        scopes=scope_list,
-        created_by=actor.user_id if actor else None,
-        expires_at=expires_at,
-    )
-    audit.append(state.db, org_id, actor, "key_create", kid, {"scopes": scope_list, "name": name.strip()})
+    with state.db.transaction():
+        actor = require_current(state, actor, "keys:write")
+        state.repo(org_id).insert_api_key(
+            kid,
+            name=name.strip(),
+            hmac_hex=key_hmac(state.peppers.peppers[pepper_kid], kid, secret),
+            pepper_kid=pepper_kid,
+            scopes=scope_list,
+            created_by=actor.user_id if actor else None,
+            expires_at=expires_at,
+        )
+        audit.append(state.db, org_id, actor, "key_create", kid, {"scopes": scope_list, "name": name.strip()})
     return token, kid
 
 
@@ -711,9 +788,11 @@ def revoke_api_key(state: AuthState, org_id: str, key_id: str, *, actor: Princip
     """Revoca de inmediato (sin cache). False si la key no es de este tenant o ya estaba revocada."""
     if actor is not None and (actor.org_id != org_id or not actor.can("keys:write")):
         raise PermissionError("No podés revocar keys.")
-    revoked = state.repo(org_id).revoke_api_key(key_id, now=state.clock())
-    if revoked:
-        audit.append(state.db, org_id, actor, "key_revoke", key_id)
+    with state.db.transaction():
+        actor = require_current(state, actor, "keys:write")
+        revoked = state.repo(org_id).revoke_api_key(key_id, now=state.clock())
+        if revoked:
+            audit.append(state.db, org_id, actor, "key_revoke", key_id)
     return revoked
 
 
@@ -793,6 +872,8 @@ def _bind(request: Request, principal: Principal) -> Principal:
 
 
 BODY_READ_TIMEOUT = timedelta(seconds=30)
+# Un 503 de autenticación (base bloqueada o caída) es transitorio: el cliente puede reintentar.
+AUTH_RETRY_HEADERS = {"Retry-After": "5"}
 
 
 async def _await_body(request: Request) -> bool:
@@ -818,25 +899,29 @@ def _resolve_session(state: AuthState, raw: str | None) -> SessionInfo:
         info = state.sessions.resolve(raw) if raw else None
     except Exception:  # noqa: BLE001 - fail-closed: un error interno nunca autentica
         log_event(_log, "auth_backend_error", level=logging.ERROR)
-        raise HTTPException(503, "Autenticación no disponible.") from None
+        raise HTTPException(503, "Autenticación no disponible.", headers=AUTH_RETRY_HEADERS) from None
     if info is None:
         raise HTTPException(401, "Sesión inválida o vencida.")
     return info
 
 
 async def _session_principal(request: Request, permission: str) -> Principal:
+    # La resolución toca SQLite: corre en un hilo para que una base bloqueada no congele el loop.
     state = _auth_state(request)
     raw = request.cookies.get(state.cookie_name)
-    info = _resolve_session(state, raw)
+    info = await run_in_threadpool(_resolve_session, state, raw)
     if await _await_body(request):
-        info = _resolve_session(state, raw)
+        info = await run_in_threadpool(_resolve_session, state, raw)
     request.state.authenticated = True
     request.state.session = info
     request.state.csrf_token = info.csrf_token
     await enforce_csrf(request, info.csrf_secret, info.id_hash)
     if not has_permission(info.role, permission):
         raise HTTPException(403, "Tu rol no tiene permiso para esta acción.")
-    return _bind(request, Principal(org_id=info.org_id, role=info.role, user_id=info.user_id))
+    return _bind(
+        request,
+        Principal(org_id=info.org_id, role=info.role, user_id=info.user_id, session_id_hash=info.id_hash),
+    )
 
 
 def _resolve_key(state: AuthState, token: str) -> Principal:
@@ -844,7 +929,7 @@ def _resolve_key(state: AuthState, token: str) -> Principal:
         principal = verify_api_key(state, token)
     except Exception:  # noqa: BLE001 - fail-closed
         log_event(_log, "auth_backend_error", level=logging.ERROR)
-        raise HTTPException(503, "Autenticación no disponible.") from None
+        raise HTTPException(503, "Autenticación no disponible.", headers=AUTH_RETRY_HEADERS) from None
     if principal is None:
         log_event(_log, "api_key_rejected", level=logging.WARNING)
         raise _invalid_key("API key inválida, vencida o revocada.")
@@ -857,9 +942,9 @@ async def _key_principal(request: Request, scope: str) -> Principal:
     token = bearer_token(request)
     if token is None:
         raise _invalid_key("Falta la API key.")
-    principal = _resolve_key(state, token)
+    principal = await run_in_threadpool(_resolve_key, state, token)  # SQLite fuera del loop
     if await _await_body(request):
-        principal = _resolve_key(state, token)
+        principal = await run_in_threadpool(_resolve_key, state, token)
     request.state.authenticated = True
     if not principal.has_scope(scope):
         raise CodedHTTPException(403, "La API key no tiene el scope requerido.", "insufficient_scope")
@@ -888,6 +973,32 @@ def require_session(permission: str) -> Callable[..., Any]:
         return await _session_principal(request, permission)
 
     return _mark(dependency, PermissionSpec("session", permission=permission))
+
+
+async def peek_session(request: Request) -> Principal | None:
+    """Principal de la sesión vigente del request, o None. Nunca lanza ni valida CSRF ni permisos.
+
+    Solo sirve para MOSTRAR una página fuera de una ruta (la página de error de un 404, 405 o 413 que
+    no pasó por un handler): así lleva el menú del rol. Jamás autoriza una acción. Deja en
+    `request.state` el principal, la sesión y el token CSRF, igual que `require_session`.
+    """
+    state = getattr(request.app.state, "vigia_auth", None)
+    raw = request.cookies.get(state.cookie_name) if isinstance(state, AuthState) else None
+    if not raw:
+        return None
+    try:
+        info = await run_in_threadpool(state.sessions.resolve, raw)
+    except Exception:  # noqa: BLE001 - una página de error no falla por la base
+        log_event(_log, "auth_backend_error", level=logging.WARNING)
+        return None
+    if info is None:
+        return None
+    request.state.session = info
+    request.state.csrf_token = info.csrf_token
+    return _bind(
+        request,
+        Principal(org_id=info.org_id, role=info.role, user_id=info.user_id, session_id_hash=info.id_hash),
+    )
 
 
 def require_api_key(scope: str) -> Callable[..., Any]:

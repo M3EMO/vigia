@@ -1403,3 +1403,90 @@ def test_backend_unavailable_error_from_any_backend_is_502():
     r = chat(make_client(ctx))
     assert r.status_code == 502 and r.json()["error"]["code"] == "upstream_unavailable"
     assert traces == []
+
+
+class ThreadRecordingBackend(FakeBackend):
+    """Anota el hilo de Python que corre cada tramo de la generación (abrir y cada token)."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.idents: set[int] = set()
+
+    def stream(self, messages, **kw):
+        self.idents.add(threading.get_ident())
+        return self._recorded(super().stream(messages, **kw))
+
+    def _recorded(self, inner):
+        for ev in inner:
+            self.idents.add(threading.get_ident())
+            yield ev
+
+
+def test_generation_runs_on_persistent_threads_across_idle_bursts(monkeypatch):
+    """Fuga de hilos nativos y memoria bajo carga: cada hilo nuevo del threadpool de anyio que genera
+    con torch deja vivo un equipo OpenMP de unos 18 MB. La generación corre en hilos persistentes del
+    cupo: tras ráfagas separadas por más que la inactividad que retira workers de anyio, el backend
+    solo vio `gate.slots` hilos de Python y el proceso no acumula hilos."""
+    from anyio._backends._asyncio import WorkerThread
+
+    from vigia.api import generation_gate
+
+    monkeypatch.setattr(WorkerThread, "MAX_IDLE_TIME", 0.02)  # en producción son 10 s
+    backend = ThreadRecordingBackend()
+    ctx, traces = make_ctx(backend=backend)
+    app = _asgi_app(ctx)
+    gate = generation_gate(backend)
+
+    @app.get("/busy")
+    async def busy():  # otro trabajo del threadpool (auth, SQLite): anyio crea y retira workers
+        await run_in_threadpool(time.sleep, 0.03)
+        return {"ok": True}
+
+    async def scenario() -> list[int]:
+        transport = httpx.ASGITransport(app=app)
+        counts: list[int] = []
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            for burst in range(8):
+                body = {"model": MODEL, "messages": [{"role": "user", "content": "hola"}]}
+                url = "/v1/chat/completions"
+                reqs = [client.post(url, json={**body, "stream": i % 2 == 0}) for i in range(4)]
+                reqs += [client.get("/busy") for _ in range(3)]
+                resps = await asyncio.wait_for(asyncio.gather(*reqs), 30)
+                assert [r.status_code for r in resps] == [200] * 7, burst
+                await asyncio.sleep(0.15)  # inactividad: anyio retira sus workers
+                counts.append(threading.active_count())
+        return counts
+
+    counts = asyncio.run(scenario())
+    assert len(traces) == 32
+    assert len(backend.idents) <= gate.slots, backend.idents
+    assert max(counts) - min(counts) <= 1, counts
+
+
+def test_generation_workers_are_bounded_and_die_with_their_gate():
+    """Fuga de hilos nativos y memoria bajo carga: cada hilo nuevo del threadpool de anyio que genera
+    con torch deja vivo un equipo OpenMP de unos 18 MB. Los hilos del cupo nunca pasan de `slots`,
+    se reusan entre llamadas y terminan cuando el cupo se recolecta (el backend murió)."""
+    from vigia.api import GenerationGate
+
+    gate = GenerationGate(2, max_waiting=4, timeout_s=5)
+
+    async def scenario(g: GenerationGate) -> set[int]:
+        idents = await asyncio.gather(*(g.run_sync(_ident_after, 0.02) for _ in range(12)))
+        assert [x async for x in g.iterate(iter([1, 2]))] == [1, 2]
+        with pytest.raises(RuntimeError):
+            await g.run_sync(next, iter([]))  # StopIteration no cuelga el Future
+        return set(idents)
+
+    assert len(asyncio.run(scenario(gate))) <= 2 and gate.worker_threads == 2
+    workers = list(gate._workers._threads)
+    del gate
+    gc.collect()
+    for t in workers:
+        t.join(5)
+    assert len(workers) >= 2 and not any(t.is_alive() for t in workers)
+
+
+def _ident_after(delay: float) -> int:
+    time.sleep(delay)
+    return threading.get_ident()

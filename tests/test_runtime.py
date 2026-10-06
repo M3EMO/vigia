@@ -613,6 +613,52 @@ def test_readiness_checks_db_worker_and_queue(tmp_path):
         rt.close()  # idempotente
 
 
+def test_readiness_is_bounded_when_the_database_is_locked(tmp_path):
+    """Regresión: '/readyz no tiene tope de tiempo: con la base bloqueada no responde hasta que se
+    libera el lock y ocupa un hilo del threadpool por cada sonda'. Con la base tomada por otro proceso
+    y el RLock en manos del hilo de jobs, /readyz responde 503 con db:false dentro del tope y las
+    sondas repetidas reusan el chequeo en curso en vez de colgar un hilo cada una."""
+    import sqlite3
+    import threading
+    import time
+
+    from vigia_ee.app import create_app
+
+    rt = make_runtime(tmp_path)
+    holder = sqlite3.connect(rt.db.path, isolation_level=None, timeout=1)
+    release = threading.Event()
+
+    def jobs_thread():  # como el worker que espera el busy_timeout con el RLock de Database tomado
+        with rt.db._lock:
+            release.wait(8)
+
+    hog = threading.Thread(target=jobs_thread, daemon=True)
+    try:
+        holder.execute("BEGIN EXCLUSIVE")
+        hog.start()
+        client = TestClient(create_app(runtime=rt))
+        for _ in range(3):
+            t0 = time.monotonic()
+            resp = client.get("/readyz")
+            assert time.monotonic() - t0 < 3.5, "la sonda tiene tope aunque la base siga bloqueada"
+            assert resp.status_code == 503
+            assert resp.json()["checks"]["db"] is False and resp.json()["checks"]["queue"] is False
+        probes = [t for t in threading.enumerate() if t.name == "vigia-readyz-db" and t.is_alive()]
+        assert len(probes) <= 1, "las sondas siguientes esperan el mismo chequeo"
+    finally:
+        holder.execute("ROLLBACK")
+        holder.close()
+        release.set()
+        hog.join()
+    try:
+        deadline = time.monotonic() + 10
+        while not rt.readiness()["db"] and time.monotonic() < deadline:
+            time.sleep(0.1)
+        assert rt.readiness() == {"db": True, "worker": False, "queue": True}, "se recupera solo"
+    finally:
+        rt.close()
+
+
 def test_readiness_ignores_the_webhook_lane(tmp_path):
     """Regresión: '/readyz cuenta la cola de webhooks: el backlog de webhooks de un tenant saca el nodo
     para todos' y 'el webhook colgado de un solo tenant saca al nodo de servicio'."""
@@ -716,6 +762,51 @@ def test_store_trace_persists_a_non_ok_status(rt, org):
     )
     rt.store_trace(org, record)
     assert rt.trace_view(org, record.trace_id)["vigia"]["status"] == "truncated_before_final"
+
+
+def test_trace_view_of_a_cut_stream_is_not_calibrated(rt, org):
+    """Regresión: 'GET /v1/vigia/traces/{id} de la plataforma dice calibrated=true en una traza de
+    stream cortado, que el núcleo guardó con calibrated=false'. El núcleo guarda el stream cortado con
+    calibration_id, tau=None y calibrated=False; la vista de la plataforma coincide con la del núcleo."""
+    from vigia.contracts import ScoredToken
+    from vigia.serve import trace_view as core_trace_view
+
+    detector = constant_detector(rt.model_info, 0.9)
+    install_detector(rt, org, detector)
+    trace_id = "cortado" + "0" * 9
+    tokens = [ScoredToken(k, "x", k, k + 1, 0.9, False) for k in range(3)]
+    record = TraceRecord(
+        trace_id=trace_id,
+        org_id=org,
+        key_id=None,
+        created_at="2026-10-06T12:00:00+00:00",
+        model=rt.model_info,
+        prompt_messages=MESSAGES,
+        generation=Generation(
+            text="xxx", tokens=[], finish_reason="stop", prompt_tokens=3, model=rt.model_info
+        ),
+        result=VigiaResult(
+            trace_id=trace_id,
+            tokens=tokens,
+            spans=[],
+            response_p_error=None,
+            action="pass",
+            calibration_id=detector.id,
+            calibrated=False,
+            mode="full",
+            status="cancelled",
+            alpha=0.1,
+            tau=None,
+        ),
+        latency_ms=1.0,
+        overhead_ms=0.0,
+    )
+    rt.store_trace(org, record)
+    view = rt.trace_view(org, trace_id)["vigia"]
+    core = core_trace_view(record)["vigia"]
+    assert view["calibrated"] is False and core["calibrated"] is False
+    for key in ("calibration_id", "tau", "status", "degraded", "tokens"):
+        assert view[key] == core[key], key
 
 
 def test_context_for_wires_closing_to_shutdown(rt, org, owner):

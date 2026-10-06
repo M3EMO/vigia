@@ -295,3 +295,113 @@ def test_access_log_omits_query_string():
     out = stream.getvalue()
     assert '"path": "/page"' in out
     assert "vg_live_secreto" not in out and "ana@example.com" not in out
+
+
+# --- página HTML de error del panel para errores fuera de un handler -------------------------------
+
+HTML_ERRORS_TITLE = (
+    "Los errores que no salen de un handler del panel (404 y 405 de ruteo, 413 del middleware de "
+    "tamaño) llegan al navegador como JSON crudo y en inglés"
+)
+NAV = {"Accept": "text/html,application/xhtml+xml,*/*;q=0.8"}
+
+
+def make_html_app(*, failing_page: bool = False) -> tuple[FastAPI, list[tuple[str, int, str]]]:
+    """App con la misma composición que vigia_ee.app: límite general y página HTML de error registrada."""
+    from fastapi.responses import HTMLResponse
+
+    seen: list[tuple[str, int, str]] = []
+
+    async def page(request: Request, status: int, message: str):
+        if failing_page:
+            raise RuntimeError("plantilla rota")
+        seen.append((request.url.path, status, message))
+        rid = request.state.request_id
+        return HTMLResponse(
+            f'<nav id="vg-nav"></nav><main><div role="alert">{message}<code>{rid}</code></div></main>',
+            status_code=status,
+        )
+
+    app = FastAPI()
+    install_security(app, max_body_bytes=1024, html_error_page=page)
+
+    @app.post("/settings/keys")
+    async def create_key():
+        return {"ok": True}
+
+    @app.post("/calibration/datasets")
+    async def upload(request: Request):
+        return {"len": len(await request.body())}
+
+    @app.get("/livez")
+    def livez():
+        return {"status": "ok"}
+
+    return app, seen
+
+
+def test_routing_405_and_404_render_the_panel_error_page_for_browser_navigations():
+    """Regresión de «Los errores que no salen de un handler del panel (404 y 405 de ruteo, 413 del
+    middleware de tamaño) llegan al navegador como JSON crudo y en inglés»: Enter en la barra sobre
+    /settings/keys (405) o una ruta mal tipeada (404)."""
+    app, seen = make_html_app()
+    client = TestClient(app, base_url="https://testserver")
+    left_by_post = client.get("/settings/keys", headers=NAV)
+    assert left_by_post.status_code == 405
+    assert left_by_post.headers["content-type"].startswith("text/html")
+    assert left_by_post.headers["allow"] == "POST"  # el 405 conserva Allow
+    assert "solo acepta envíos de formulario" in left_by_post.text
+    assert left_by_post.headers["content-security-policy"]  # pasa por los headers de seguridad
+    typo = client.get("/generaciones", headers=NAV)
+    assert typo.status_code == 404 and typo.headers["content-type"].startswith("text/html")
+    assert "No encontrado" in typo.text and typo.headers["x-request-id"] in typo.text
+    assert [(path, status) for path, status, _ in seen] == [("/settings/keys", 405), ("/generaciones", 404)]
+    assert all("Not Found" not in m and "Method Not Allowed" not in m for _, _, m in seen)
+
+
+def test_too_large_upload_renders_the_panel_error_page_for_browser_navigations():
+    """Mismo defecto, 413: el BodySizeLimitMiddleware respondía {"error": "payload_too_large"} a la subida
+    del formulario de Calibración."""
+    app, seen = make_html_app()
+    client = TestClient(app, base_url="https://testserver")
+    resp = client.post("/calibration/datasets", files={"file": ("d.jsonl", b"x" * 4096)}, headers=NAV)
+    assert resp.status_code == 413
+    assert resp.headers["content-type"].startswith("text/html")
+    assert "supera el máximo" in resp.text and 'role="alert"' in resp.text
+    assert resp.headers["x-request-id"] in resp.text
+    assert seen == [("/calibration/datasets", 413, seen[0][2])]
+
+
+def test_api_health_and_fetch_clients_keep_json_errors_in_spanish():
+    """Las rutas de máquinas y los clientes que no piden HTML siguen con JSON, ahora sin frases en inglés."""
+    app, seen = make_html_app()
+    client = TestClient(app, base_url="https://testserver")
+    for path in ("/v1/nada", "/generaciones"):
+        resp = client.get(path, headers={"Accept": "application/json"})
+        assert resp.status_code == 404 and resp.headers["content-type"] == "application/json"
+        assert "Not Found" not in resp.text
+    assert client.get("/v1/nada", headers=NAV).headers["content-type"] == "application/json"
+    assert client.post("/livez", headers=NAV).headers["content-type"] == "application/json"
+    panel_json = client.get("/settings/keys", headers={"Accept": "application/json"}).json()
+    assert (
+        panel_json["error"] == "method_not_allowed"
+        and panel_json["message"] == "Esta dirección no acepta ese método."
+    )
+    big = client.post("/calibration/datasets", content=b"x" * 4096, headers={"Accept": "application/json"})
+    assert big.status_code == 413 and big.json()["error"] == "payload_too_large"
+    assert seen == []
+
+
+def test_a_failing_html_error_page_falls_back_to_json():
+    """La página de error nunca tapa el error original: si falla, sale el JSON de siempre."""
+    app, _ = make_html_app(failing_page=True)
+    client = TestClient(app, base_url="https://testserver")
+    resp = client.get("/generaciones", headers=NAV)
+    assert resp.status_code == 404 and resp.json()["error"] == "not_found"
+    big = client.post("/calibration/datasets", content=b"x" * 4096, headers=NAV)
+    assert big.status_code == 413 and big.json()["error"] == "payload_too_large"
+
+
+def test_without_a_registered_page_errors_stay_json(client):
+    resp = client.get("/no-existe", headers=NAV)
+    assert resp.status_code == 404 and resp.json()["message"] == "No encontrado."

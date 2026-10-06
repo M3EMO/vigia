@@ -99,15 +99,20 @@ def test_probability_metrics_match_sklearn():
 
 
 def _ece_oracle(y, p, n_bins=15, w=None):
-    """Bins de igual masa por rango; un empate queda entero en el bin de su primera aparición."""
+    """Bins de igual masa de los pesos; un empate queda entero en el bin de su primera aparición.
+
+    Con pesos 1 la masa anterior es el rango. Con pesos, una fila de peso k cuenta como k filas.
+    """
     n = len(p)
     w = np.ones(n) if w is None else w
     order = sorted(range(n), key=lambda i: (p[i], i))
     first: dict[float, int] = {}
     bin_of = {}
-    for rank, i in enumerate(order):
-        first.setdefault(p[i], rank * n_bins // n)
+    before = 0.0
+    for i in order:
+        first.setdefault(p[i], math.floor(before * n_bins / w.sum()))
         bin_of[i] = first[p[i]]
+        before += w[i]
     total = 0.0
     for b in set(bin_of.values()):
         total += abs(sum(w[i] * (y[i] - p[i]) for i in range(n) if bin_of[i] == b))
@@ -1063,3 +1068,309 @@ def test_report_crc_table_matches_independent_fnr():
         )
         assert row["flag_rate"] == pytest.approx(flagged.mean(), abs=1e-12)
     assert report["dataset"]["prevalence_token"] == pytest.approx(yt.mean(), abs=1e-12)
+
+
+# --- Ronda 4 (cierre) ---------------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("arch", ("mixtral", "granitemoe", "deepseek_v3", "gpt_oss"))
+def test_stream_and_teacher_force_agree_on_random_unicode_texts(arch, monkeypatch):
+    """Textos al azar con tildes, ñ, combinantes, emojis, banderas y CJK: offsets y features iguales."""
+    import random
+
+    from test_extractor import CONFIGS
+    from transformers import AutoModelForCausalLM
+
+    from vigia.backends.hf import HFBackend
+    from vigia.cli import _byte_tokenizer, make_tiny_backend
+
+    if arch == "gpt_oss":
+        be = make_tiny_backend("gpt_oss")
+        tok = be.tokenizer
+    else:
+        tok = _byte_tokenizer(["<|eos|>"])
+        cfg = CONFIGS[arch]()
+        cfg.vocab_size = len(tok)
+        torch.manual_seed(0)
+        model = AutoModelForCausalLM.from_config(cfg).eval()
+        model.generation_config.eos_token_id = None
+        be = HFBackend(model, tok, model_id=f"tiny/{arch}")
+    tiers = tuple(t for t in (Tier.F0, Tier.F1) if t in be.capabilities().tiers)
+    alphabet = list("abcñáéíóú ,.¿?¡!😀\n日本") + ["\u0301", "e\u0301", "🇦🇷"]
+    rnd = random.Random(arch)  # noqa: S311 - semilla fija para textos de prueba
+    messages = [{"role": "user", "content": "hola"}]
+    for _ in range(4):
+        text = "x" + "".join(rnd.choice(alphabet) for _ in range(rnd.randint(1, 12)))
+        resp = tok(text, add_special_tokens=False)["input_ids"]
+        forced = iter(resp)
+        monkeypatch.setattr("vigia.backends.hf._sample", lambda *a, _f=forced: next(_f))
+        stream = be.stream(messages, max_tokens=len(resp), tiers=tiers)
+        generated = list(stream)
+        teacher = be.teacher_force(messages, text, tiers=tiers)
+        assert stream.text == text
+        assert len(generated) == len(teacher) == len(resp)
+        assert "".join(text[e.start : e.end] for e in generated) == text
+        for a, b in zip(generated, teacher, strict=True):
+            assert (a.token_id, a.start, a.end, a.text) == (b.token_id, b.start, b.end, b.text)
+            assert a.features.keys() == b.features.keys()
+            for key, value in a.features.items():
+                assert value == pytest.approx(b.features[key], abs=1e-4, nan_ok=True), (text, key)
+
+
+def test_ranking_and_probability_metrics_fuzz_against_sklearn():
+    """3000 casos chicos con empates, pesos reales/enteros/nulos y prevalencias extremas."""
+    import warnings
+
+    rng = np.random.default_rng(4)
+    checked = 0
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        for _ in range(3000):
+            n = int(rng.integers(2, 60))
+            y = (rng.random(n) < rng.choice([0.02, 0.1, 0.5, 0.9])).astype(int)
+            if y.min() == y.max():
+                continue
+            s = [np.round(rng.random(n), 1), rng.random(n), rng.integers(0, 3, n) / 2][int(rng.integers(3))]
+            w = [None, rng.random(n), rng.integers(0, 4, n).astype(float)][int(rng.integers(3))]
+            if w is not None and (np.sum(w * y) == 0 or np.sum(w * (1 - y)) == 0):
+                continue
+            assert E.auroc(y, s, w) == pytest.approx(skm.roc_auc_score(y, s, sample_weight=w), abs=1e-9)
+            assert E.auprc(y, s, w) == pytest.approx(
+                skm.average_precision_score(y, s, sample_weight=w), abs=1e-9
+            )
+            assert E.brier(y, s, w) == pytest.approx(skm.brier_score_loss(y, s, sample_weight=w), abs=1e-9)
+            if w is None:
+                fpr, tpr, _ = skm.roc_curve(y, s, drop_intermediate=False)
+                assert E.recall_at_fpr(y, s) == pytest.approx(tpr[fpr <= 0.1 + 1e-12].max(), abs=1e-12)
+                prec, rec, _ = skm.precision_recall_curve(y, s, drop_intermediate=False)
+                assert E.precision_at_recall(y, s, 0.8) == pytest.approx(
+                    prec[rec >= 0.8 - 1e-12].max(), abs=1e-12
+                )
+            checked += 1
+    assert checked > 2000
+
+
+def test_gold_correct_dot_thousands_and_comma_decimal():
+    """Convención argentina: punto de miles y coma decimal, en la predicción y en el gold."""
+    from vigia.evidence import gold_correct
+
+    assert gold_correct("Son 1.234 km.", ["1234"], "number")[0]
+    assert gold_correct("Respuesta: 10.000", ["10000"], "number")[0]
+    assert gold_correct("Es 3,14", ["3.14"], "number")[0]
+    assert gold_correct("Cuesta $1.500", ["1500"], "number")[0]
+    assert gold_correct("Mide 0,5 m", ["0.5 m"])[0]
+    assert not gold_correct("Mide 5 m", ["0,5 m"])[0]
+    assert not gold_correct("La respuesta es -3", ["3"], "number")[0]
+    assert not gold_correct("Ocurrió el 2 de mayo de 1945", ["1 de mayo de 1945"])[0]
+    assert gold_correct("El 1° de mayo de 1945", ["1945-05-01"], "date")[0]
+
+
+# --- Ronda 5 (cierre posterior a la integración) ------------------------------------------------------
+
+
+def test_digamma_matches_scipy():
+    """La forma cerrada de E-AURC usa una digamma propia: error < 1e-12 contra scipy."""
+    from scipy.special import digamma
+
+    x = np.concatenate([np.arange(1.0, 60.0), np.linspace(1.0, 1e6, 500), [1.5, 2.5, 1.001]])
+    assert np.max(np.abs(E._digamma(x) - digamma(x))) < 1e-12
+
+
+def test_reliability_bins_reproduce_ece():
+    """sum_b (n_b / n) |frac_pos_b - mean_pred_b| de reliability_bins es el ECE publicado."""
+    rng = np.random.default_rng(50)
+    for _ in range(300):
+        n = int(rng.integers(5, 200))
+        p = np.round(rng.random(n), int(rng.integers(1, 4)))
+        y = (rng.random(n) < p).astype(int)
+        bins = E.reliability_bins(y, p)
+        assert sum(b["count"] for b in bins) == n
+        by_hand = sum(b["count"] / n * abs(b["frac_pos"] - b["mean_pred"]) for b in bins)
+        assert by_hand == pytest.approx(E.ece(y, p), abs=1e-12)
+
+
+def test_log_loss_and_threshold_metrics_match_sklearn_with_weights():
+    import warnings
+
+    rng = np.random.default_rng(51)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        for _ in range(300):
+            n = int(rng.integers(3, 80))
+            y = rng.integers(0, 2, n)
+            if y.min() == y.max():
+                continue
+            p = np.clip(rng.random(n), 1e-6, 1 - 1e-6)
+            w = rng.random(n)
+            assert E.log_loss(y, p, w) == pytest.approx(skm.log_loss(y, p, sample_weight=w), abs=1e-12)
+            tau = float(rng.random())
+            flags = (p >= tau).astype(int)
+            if 0 < flags.sum() < n:
+                tm = E.threshold_metrics(y, p, tau)
+                assert tm["precision"] == pytest.approx(skm.precision_score(y, flags), abs=1e-12)
+                assert tm["recall"] == pytest.approx(skm.recall_score(y, flags), abs=1e-12)
+                assert tm["f1"] == pytest.approx(skm.f1_score(y, flags), abs=1e-12)
+                assert tm["flag_rate"] == pytest.approx(flags.mean(), abs=1e-12)
+
+
+def test_psi_matches_independent_binning():
+    """PSI de vigia.drift contra un binning escrito a mano (bin i = (edges[i-1], edges[i]])."""
+    from vigia import drift as D
+
+    def oracle(ref: np.ndarray, act: np.ndarray, bins: int = 10) -> float:
+        d = np.unique(ref)
+        if len(d) <= bins:
+            edges = (d[:-1] + d[1:]) / 2
+        else:
+            edges = np.unique(np.quantile(ref, np.linspace(0, 1, bins + 1)[1:-1]))
+
+        def frac(v: np.ndarray) -> np.ndarray:
+            idx = np.array([sum(1 for e in edges if x > e) for x in v])
+            return np.bincount(idx, minlength=len(edges) + 1) / len(v)
+
+        e, a = np.maximum(frac(ref), D.EPS), np.maximum(frac(act), D.EPS)
+        return float(np.sum((a - e) * np.log(a / e)))
+
+    rng = np.random.default_rng(52)
+    for _ in range(100):
+        ref = np.round(rng.beta(2, 5, int(rng.integers(5, 300))), int(rng.integers(1, 4)))
+        act = np.round(rng.beta(2, 3, int(rng.integers(5, 300))), 2)
+        assert D.psi(ref, act) == pytest.approx(oracle(ref, act), abs=1e-12)
+    assert D.psi([0, 0, 1, 1], [0, 0, 1, 1]) == 0.0
+    # Referencia 90/10, tráfico 50/50: (0,5-0,9)·ln(0,5/0,9) + (0,5-0,1)·ln(0,5/0,1).
+    by_hand = (0.5 - 0.9) * math.log(0.5 / 0.9) + (0.5 - 0.1) * math.log(0.5 / 0.1)
+    assert D.psi([0] * 90 + [1] * 10, [0] * 50 + [1] * 50) == pytest.approx(by_hand, abs=1e-12)
+
+
+ROUTE_CONFIGS = {
+    "qwen2_moe_norm": lambda tf, base: tf.Qwen2MoeConfig(
+        **base, num_experts_per_tok=2, num_experts=4, moe_intermediate_size=32,
+        shared_expert_intermediate_size=32, norm_topk_prob=True,
+    ),
+    "qwen3_moe_k3_norm": lambda tf, base: tf.Qwen3MoeConfig(
+        **base, num_experts_per_tok=3, num_experts=8, moe_intermediate_size=32, head_dim=8,
+        norm_topk_prob=True,
+    ),
+    "olmoe_norm": lambda tf, base: tf.OlmoeConfig(
+        **base, num_experts_per_tok=2, num_experts=4, norm_topk_prob=True
+    ),
+    "granitemoe_k1": lambda tf, base: tf.GraniteMoeConfig(**base, num_experts_per_tok=1, num_local_experts=4),
+    "mixtral_k1": lambda tf, base: tf.MixtralConfig(**base, num_experts_per_tok=1, num_local_experts=4),
+    "deepseek_groups_scaled": lambda tf, base: tf.DeepseekV3Config(
+        vocab_size=256, hidden_size=32, intermediate_size=64, moe_intermediate_size=32,
+        num_hidden_layers=2, num_attention_heads=4, num_key_value_heads=4, n_routed_experts=8,
+        num_experts_per_tok=2, n_group=4, topk_group=2, first_k_dense_replace=0, q_lora_rank=None,
+        kv_lora_rank=16, qk_rope_head_dim=8, qk_nope_head_dim=8, v_head_dim=8,
+        routed_scaling_factor=2.5, norm_topk_prob=False,
+    ),
+}  # fmt: skip
+
+
+@pytest.mark.parametrize("name", sorted(ROUTE_CONFIGS))
+def test_reconstructed_routing_matches_hf_router_beyond_defaults(name):
+    """Selección y pesos reconstruidos = los del router de transformers con norm_topk_prob, k=1, k=3,
+    grupos y routed_scaling_factor (configuraciones que AT-S01 no cubre)."""
+    import transformers as tf
+    from test_extractor import BASE, ROUTER_OUTPUT, ids_of
+    from transformers import AutoModelForCausalLM
+
+    from vigia.adapters import find_moe_blocks, routing_params
+    from vigia.extractor import SignalExtractor
+
+    torch.manual_seed(0)
+    model = AutoModelForCausalLM.from_config(ROUTE_CONFIGS[name](tf, dict(BASE))).eval()
+    blocks = find_moe_blocks(model)
+    if model.config.model_type == "deepseek_v3":
+        with torch.no_grad():
+            for b in blocks:
+                b.router.e_score_correction_bias.copy_(torch.linspace(-0.3, 0.3, 8))
+    seen = {}
+    li, wi, ii = ROUTER_OUTPUT.get(model.config.model_type, (0, 1, 2))
+    hooks = [
+        b.router.register_forward_hook(lambda m, a, o, layer=b.layer: seen.__setitem__(layer, o))
+        for b in blocks
+    ]
+    try:
+        with torch.inference_mode(), SignalExtractor(model, (Tier.F1,), keep_router_logits=True) as ex:
+            ex.begin_step()
+            model(input_ids=ids_of(9))
+            recomputed = dict(ex.router_logits)
+            signals = ex.end_step()[0]
+    finally:
+        for h in hooks:
+            h.remove()
+    for j, b in enumerate(blocks):
+        ref_w, ref_idx = seen[b.layer][wi].float(), seen[b.layer][ii]
+        k = ref_idx.shape[-1]
+        z = recomputed[b.layer].reshape(-1, recomputed[b.layer].shape[-1]).numpy()
+        stats = fx.router_stats(z, b.spec.gating, k, **routing_params(b))
+        idx = np.array([s.expert_ids[j] for s in signals])
+        assert np.array_equal(stats["idx"], idx)
+        ri, rw = ref_idx.reshape(-1, k).numpy(), ref_w.reshape(-1, k).numpy()
+        assert np.array_equal(np.sort(idx, -1), np.sort(ri, -1))
+        o, ro = np.argsort(idx, -1), np.argsort(ri, -1)
+        assert np.allclose(np.take_along_axis(stats["w"], o, -1), np.take_along_axis(rw, ro, -1), atol=1e-5)
+
+
+@pytest.mark.parametrize("dtype", (torch.float32, torch.bfloat16, torch.float16))
+def test_sample_with_tiny_positive_temperature_is_greedy(dtype):
+    """Arreglo previo: temperature en (0, 1e-3] con logits de baja precisión equivale a argmax."""
+    from vigia.backends.hf import _sample
+
+    g = torch.Generator().manual_seed(0)
+    z = (torch.randn(50, generator=torch.Generator().manual_seed(3)) * 3).to(dtype)
+    best = int(torch.argmax(z))
+    for t in (1e-3, 1e-8, 1e-40, 1e-300, 5e-324):
+        for top_p in (1.0, 0.5, 1e-9):
+            assert {_sample(z, t, top_p, g) for _ in range(10)} == {best}
+    masked = torch.tensor([float("-inf"), 1.0, 0.5, float("-inf")])
+    assert {_sample(masked, 5e-324, 1.0, g) for _ in range(10)} == {1}
+    assert {_sample(masked, 1.0, 1.0, g) for _ in range(200)} <= {1, 2}
+
+
+def test_gold_correct_rejects_predictions_with_one_digit_changed():
+    """Propiedad: cambiar un dígito del gold en la respuesta la vuelve incorrecta (sin tipo y con
+    tipo numérico), con o sin texto antes."""
+    import re
+
+    from vigia.evidence import gold_correct
+
+    golds = [
+        "1945", "8 de mayo de 1945", "mayo de 1945", "1.234", "1 234", "12 345 habitantes", "3,5 km",
+        "0,5", "-3", "1945-05-08", "50 %", "US$ 1.500", "1,5 millones", "el 9 de julio de 1816",
+        "1.º de mayo de 1886", "año 1492", "en 1492", "2.000 años", "10 000 m²", "100 °C",
+        "1 de enero de 2000", "el año 2000", "3 horas", "1.000.000", "4,5 millones de km²",
+        "7.000 millones", "25 de diciembre", "Apolo 11", "la Ley 1420", "Fórmula 1 de 1950",
+    ]  # fmt: skip
+    for gold in golds:
+        for m in re.finditer(r"\d", gold):
+            pos = m.start()
+            digit = str((int(gold[pos]) + 1) % 10)
+            if pos == 0 and digit == "0":
+                digit = "2"
+            wrong = gold[:pos] + digit + gold[pos + 1 :]
+            for kind in (None, "number", "number_with_unit"):
+                for prefix in ("", "La respuesta es ", "Fue "):
+                    assert not gold_correct(prefix + wrong, [gold], kind)[0], (gold, kind, prefix + wrong)
+
+
+def test_split_groups_exact_sizes_and_strata_with_default_fractions():
+    """Split estratificado: tamaños exactos de test y cal, sin fuga y cada estrato de 3 o más
+    preguntas presente en train, cal y test (fracciones por defecto 0,2/0,2)."""
+    rng = np.random.default_rng(53)
+    for _ in range(1500):
+        n_q = int(rng.integers(6, 60))
+        sizes = rng.integers(1, 5, n_q)
+        g = np.repeat([f"q{i}" for i in range(n_q)], sizes)
+        lab = np.repeat((rng.random(n_q) < rng.choice([0.05, 0.2, 0.5, 0.8])).astype(int), sizes)
+        sp = split_groups(g, seed=int(rng.integers(1000)), labels=lab)
+        masks = split_masks(g, sp)
+        assert sum(int(m.sum()) for m in masks.values()) == len(g)
+        assert len(sp["test"]) == max(1, round(n_q * 0.2))
+        assert len(sp["cal"]) == max(1, round(n_q * 0.2))
+        pos = {q for q, y in zip(g, lab, strict=True) if y == 1}
+        big = [s for s in (set(g) - pos, pos) if len(s) >= 3]
+        for name in ("train", "cal", "test"):
+            if len(sp[name]) >= len(big):  # con un solo lugar no entran los dos estratos
+                for stratum in big:
+                    assert stratum & set(sp[name]), (name, n_q, len(stratum))

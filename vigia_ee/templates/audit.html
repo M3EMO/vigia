@@ -29,8 +29,10 @@
 {% endif %}
 
 {% if rows %}
+{# Objeto: el id de 32 caracteres se corta solo cada 16 (<wbr> no agrega caracteres al copiar).
+   La tabla entra a 1024 px; si igual desborda (zoom de 200 %), la región toma el foco. #}
 <p class="vg-hint">{{ total|count }} eventos en el rango{% if total > page_size %}; se muestran los {{ page_size }} más recientes (el export trae todos){% endif %}.</p>
-<div class="vg-table-wrap">
+<div class="vg-table-wrap" tabindex="0" role="region" aria-label="Eventos de auditoría, desplazable">
   <table class="vg-table vg-table-cards">
     <caption class="sr-only">Eventos de auditoría</caption>
     <thead><tr><th scope="col">#</th><th scope="col">Fecha</th><th scope="col">Actor</th><th scope="col">Acción</th><th scope="col">Objeto</th><th scope="col">Detalle</th></tr></thead>
@@ -41,7 +43,7 @@
         <td data-label="Fecha">{{ r.ts|dt }}</td>
         <td data-label="Actor">{% if r.actor_user_id %}{{ users.get(r.actor_user_id, "cuenta borrada") }}{% elif r.actor_key_id %}API key <code>{{ r.actor_key_id }}</code>{% else %}sistema{% endif %}</td>
         <td data-label="Acción"><code>{{ r.action }}</code></td>
-        <td data-label="Objeto" class="vg-break">{% if r.target %}<code>{{ r.target|clean }}</code>{% else %}s/d{% endif %}</td>
+        <td data-label="Objeto">{% if r.target %}{% set t = r.target|clean %}<code>{% for i in range(0, t|length, 16) %}{{ t[i:i + 16] }}{% if not loop.last %}<wbr>{% endif %}{% endfor %}</code>{% else %}s/d{% endif %}</td>
         <td data-label="Detalle" class="vg-break">{% if r.detail %}<code>{{ r.detail_json|clean }}</code>{% else %}s/d{% endif %}</td>
       </tr>
       {% endfor %}

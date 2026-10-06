@@ -9,7 +9,9 @@ Orden de los middlewares (de afuera hacia adentro): `SecurityHeadersMiddleware` 
 Así hasta un 500 lleva headers de seguridad y `X-Request-ID`.
 
 Formato de error (`error_payload`): bajo `/v1` va el sobre de OpenAI de `vigia.api`; en el panel,
-`{error, message, request_id}`.
+`{error, message, request_id}`. Con `set_html_error_page(app, page)`, una navegación del navegador
+(`Accept: text/html`) a una ruta del panel recibe en cambio la página HTML de `page`, también para los
+errores que no salen de un handler: 404 y 405 del ruteo y 413 del límite de tamaño.
 """
 
 from __future__ import annotations
@@ -26,13 +28,14 @@ import threading
 import time
 import traceback
 from collections import OrderedDict
-from collections.abc import Awaitable, Callable, MutableMapping
+from collections.abc import Awaitable, Callable, Mapping, MutableMapping
 from datetime import UTC, datetime
+from http import HTTPStatus
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 Scope = MutableMapping[str, Any]
@@ -260,6 +263,66 @@ def error_payload(
     return {"error": code, "message": message, "request_id": request_id}
 
 
+# --- página HTML de error del panel ---------------------------------------------------------------
+
+# `page(request, status, message)` devuelve la página de error del panel. La registra la app con
+# `set_html_error_page`; seguridad no conoce las plantillas.
+HtmlErrorPage = Callable[[Request, int, str], Awaitable[Response]]
+_HTML_ERROR_PAGE_ATTR = "vigia_html_error_page"
+# Rutas de máquinas fuera de `/v1`: siempre JSON, aunque el cliente acepte HTML.
+MACHINE_PATHS = frozenset({"/livez", "/readyz", "/startupz", "/healthz", "/metrics"})
+
+
+def set_html_error_page(app: FastAPI, page: HtmlErrorPage | None) -> None:
+    """Registra la página HTML de error para navegaciones del navegador a rutas del panel."""
+    setattr(app.state, _HTML_ERROR_PAGE_ATTR, page)
+
+
+def _html_error_page(app: Any) -> HtmlErrorPage | None:
+    state = getattr(app, "state", None)
+    return getattr(state, _HTML_ERROR_PAGE_ATTR, None) if state is not None else None
+
+
+def wants_html_page(scope: Scope) -> bool:
+    """True para una navegación del navegador a una ruta del panel: ni `/v1` ni health ni `/metrics`,
+    y `Accept` incluye `text/html`. Un `fetch` del JS propio o un cliente de API sigue recibiendo JSON."""
+    path = scope.get("path", "")
+    if is_openai_path(path) or path in MACHINE_PATHS:
+        return False
+    for name, value in scope.get("headers") or ():
+        if name == b"accept":
+            return b"text/html" in value.lower()
+    return False
+
+
+async def _render_html_error(
+    request: Request, status: int, message: str, headers: Mapping[str, str] | None = None
+) -> Response | None:
+    """Página HTML de error si corresponde, o None para responder JSON (sin página o si la página falla)."""
+    page = _html_error_page(request.scope.get("app"))
+    if page is None or not wants_html_page(request.scope):
+        return None
+    try:
+        response = await page(request, status, message)
+    except Exception as exc:  # noqa: BLE001 - la página de error nunca tapa el error original
+        log_event(
+            _log,
+            "html_error_page_failed",
+            level=logging.ERROR,
+            request_id=(request.scope.get("state") or {}).get("request_id"),
+            error_type=type(exc).__name__,
+            status=status,
+        )
+        return None
+    for key, value in (headers or {}).items():
+        response.headers[key] = value
+    return response
+
+
+async def _no_body() -> Message:
+    return {"type": "http.disconnect"}
+
+
 class RequestContextMiddleware:
     """Asigna `request_id`, loguea el acceso sin query string y convierte excepciones en 500 genérico.
 
@@ -398,6 +461,12 @@ class BodySizeLimitMiddleware:
         msg = (
             "El cuerpo del request supera el tamaño máximo." if status == 413 else "Content-Length inválido."
         )
+        if status == 413 and wants_html_page(scope):
+            html_msg = "El archivo o el formulario supera el máximo permitido. Elegí uno más chico."
+            response = await _render_html_error(Request(scope, _no_body), status, html_msg)
+            if response is not None:
+                await response(scope, _no_body, send)
+                return
         start, body = _json_body(status, error_payload(scope.get("path", ""), status, code, msg, rid))
         await send(start)
         await send(body)
@@ -543,9 +612,45 @@ def request_id_of(request: Request) -> str | None:
     return getattr(request.state, "request_id", None)
 
 
-async def _http_exception_handler(request: Request, exc: StarletteHTTPException) -> JSONResponse:
+# Starlette usa la frase en inglés del status como `detail` por defecto (404 "Not Found", 405 "Method
+# Not Allowed" del ruteo). El panel y la API hablan en español.
+_DEFAULT_MESSAGES = {
+    400: "Solicitud inválida.",
+    401: "Falta autenticación.",
+    403: "Sin permiso.",
+    404: "No encontrado.",
+    405: "Esta dirección no acepta ese método.",
+    409: "Conflicto con el estado actual.",
+    413: "El cuerpo del request supera el tamaño máximo.",
+    422: "Datos inválidos.",
+    429: "Demasiadas solicitudes. Reintentá más tarde.",
+    503: "Servicio no disponible. Reintentá más tarde.",
+}
+# 405 de una navegación: la URL de un POST quedó en la barra (Enter, marcador, recargar).
+_HTML_405_MESSAGE = "Esta dirección solo acepta envíos de formulario. Volvé al formulario para repetirlo."
+
+
+def _message(exc: StarletteHTTPException, code: str) -> str:
+    if not isinstance(exc.detail, str):
+        return code
+    try:
+        default_phrase = HTTPStatus(exc.status_code).phrase
+    except ValueError:
+        default_phrase = None
+    if exc.detail == default_phrase:
+        return _DEFAULT_MESSAGES.get(exc.status_code, "Error.")
+    return exc.detail
+
+
+async def _http_exception_handler(request: Request, exc: StarletteHTTPException) -> Response:
     code = getattr(exc, "code", None) or _ERROR_CODES.get(exc.status_code, "error")
-    detail = exc.detail if isinstance(exc.detail, str) else code
+    detail = _message(exc, code)
+    page_message = (
+        _HTML_405_MESSAGE if exc.status_code == 405 and request.method in ("GET", "HEAD") else detail
+    )
+    html = await _render_html_error(request, exc.status_code, page_message, getattr(exc, "headers", None))
+    if html is not None:
+        return html
     return JSONResponse(
         error_payload(request.url.path, exc.status_code, code, detail, request_id_of(request)),
         status_code=exc.status_code,
@@ -570,16 +675,29 @@ async def _validation_handler(request: Request, exc: RequestValidationError) -> 
 
 
 def install_error_handlers(app: FastAPI) -> None:
-    """Errores HTTP y de validación en JSON con `request_id`, sin eco del input (formato: `error_payload`)."""
+    """Errores HTTP y de validación en JSON con `request_id`, sin eco del input (formato: `error_payload`).
+
+    Con una página registrada (`set_html_error_page`), las navegaciones a rutas del panel reciben HTML.
+    """
     app.add_exception_handler(StarletteHTTPException, _http_exception_handler)  # type: ignore[arg-type]
     app.add_exception_handler(RequestValidationError, _validation_handler)  # type: ignore[arg-type]
 
 
 def install_security(
-    app: FastAPI, *, max_body_bytes: int = DEFAULT_MAX_BODY_BYTES, trust_incoming_request_id: bool = False
+    app: FastAPI,
+    *,
+    max_body_bytes: int = DEFAULT_MAX_BODY_BYTES,
+    trust_incoming_request_id: bool = False,
+    html_error_page: HtmlErrorPage | None = None,
 ) -> None:
-    """Instala middlewares (en el orden correcto) y manejadores de error."""
+    """Instala middlewares (en el orden correcto) y manejadores de error.
+
+    `html_error_page` es la página HTML de error del panel (ver `set_html_error_page`); sin ella,
+    todos los errores salen en JSON.
+    """
     install_error_handlers(app)
+    if html_error_page is not None:
+        set_html_error_page(app, html_error_page)
     app.add_middleware(BodySizeLimitMiddleware, max_bytes=max_body_bytes)
     app.add_middleware(RequestContextMiddleware, trust_incoming_id=trust_incoming_request_id)
     app.add_middleware(SecurityHeadersMiddleware)

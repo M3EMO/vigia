@@ -104,7 +104,10 @@ def token_f1(prediction: str, gold: str | Sequence[str], *, strip_accents: bool 
 
 # --- Números y fechas -------------------------------------------------------------------------------
 
-_NUMBER_RE = re.compile(r"(?<![\w.,])[-+−]?\d+(?:[.,]\d+)*")
+_GROUP_SPACES = " \u00a0\u202f"  # espacio, espacio duro y espacio fino: separadores de miles (RAE)
+_SPACED_INT = rf"\d{{1,3}}(?:[{_GROUP_SPACES}]\d{{3}})+(?!\d)"
+_NUMBER_RE = re.compile(rf"(?<![\w.,])[-+−]?(?:{_SPACED_INT}(?:[.,]\d+)?|\d+(?:[.,]\d+)*)")
+_SPACED_NUMBER = re.compile(rf"[-+]?{_SPACED_INT}(?:[.,]\d+)?")
 
 
 def parse_number_es(token: str) -> float | None:
@@ -113,9 +116,13 @@ def parse_number_es(token: str) -> float | None:
     Reglas: con `.` y `,` a la vez, el último separador es el decimal. Una sola `,` es decimal.
     Varias `,` son miles. Varios `.` son miles. Un solo `.` seguido de exactamente 3 dígitos con
     parte entera de 1 a 3 dígitos sin cero inicial es separador de miles ("1.234" = 1234); si no,
-    es decimal ("0.500" = 0,5).
+    es decimal ("0.500" = 0,5). Grupos de 3 dígitos separados por espacio, espacio duro o espacio
+    fino son miles (norma RAE: "12 345" = 12345); con ellos, un `.` o una `,` final es decimal.
     """
     s = token.strip().replace("−", "-")
+    if _SPACED_NUMBER.fullmatch(s):
+        s = re.sub(f"[{_GROUP_SPACES}]", "", s)
+        return float(s.replace(",", "."))
     if not re.fullmatch(r"[-+]?\d+(?:[.,]\d+)*", s):
         return None
     sign = -1.0 if s.startswith("-") else 1.0
@@ -158,9 +165,13 @@ MONTHS_ES = {
     "agosto": 8, "septiembre": 9, "setiembre": 9, "octubre": 10, "noviembre": 11, "diciembre": 12,
 }  # fmt: skip
 _MONTH_ALT = "|".join(MONTHS_ES)
+# "de 1492", "del 2000" y "del año 1492" (_strip_accents conserva la ñ).
+_YEAR_LINK = r"(?:del?\s+(?:a\u00f1o\s+)?)?"
 _DATE_PATTERNS = (
     (
-        re.compile(rf"\b(\d{{1,2}})(?:º|°|o)?\s+de\s+({_MONTH_ALT})\s+(?:de(?:l)?\s+)?(\d{{3,4}})\b"),
+        re.compile(
+            rf"\b(\d{{1,2}})(?:\.?(?:º|°|o|ro|ero|er))?\s+de\s+({_MONTH_ALT})\s+{_YEAR_LINK}(\d{{3,4}})\b"
+        ),
         "dmy_text",
     ),
     (re.compile(r"\b(\d{4})-(\d{1,2})-(\d{1,2})\b"), "iso"),
@@ -171,8 +182,10 @@ _DATE_PATTERNS = (
 def parse_dates_es(text: str) -> list[dt.date]:
     """Fechas completas del texto en orden de aparición.
 
-    Formatos: "12 de octubre de 1492", "1º de mayo del 2000", ISO "1492-10-12" y "12/10/1492"
-    (día/mes/año, orden argentino). Una fecha imposible (31 de febrero) se descarta.
+    Formatos: "12 de octubre de 1492", "1º de mayo del 2000", "1.º de mayo de 1945",
+    "1ro de mayo de 1886" (también "1ero" y "1er"), "12 de octubre del año 1492", ISO
+    "1492-10-12" y "12/10/1492" (día/mes/año, orden argentino). Una fecha imposible (31 de
+    febrero) se descarta.
     """
     lowered = _strip_accents(text.casefold())
     found: list[tuple[int, dt.date]] = []
@@ -195,7 +208,7 @@ def parse_dates_es(text: str) -> list[dt.date]:
     return [d for _, d in sorted(found, key=lambda item: item[0])]
 
 
-_MONTH_YEAR = re.compile(rf"\b({_MONTH_ALT})\s+(?:de(?:l)?\s+)?(\d{{3,4}})\b")
+_MONTH_YEAR = re.compile(rf"\b({_MONTH_ALT})\s+{_YEAR_LINK}(\d{{3,4}})\b")
 _BARE_YEAR = re.compile(r"(?<![\w.,/-])(\d{3,4})(?![\w]|[.,/-]\d)")
 DateParts = tuple[int, int | None, int | None]  # (año, mes o None, día o None)
 

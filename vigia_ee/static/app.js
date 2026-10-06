@@ -21,6 +21,19 @@
   }
   applyTheme(readTheme());
 
+  /* WCAG 2.1.4: los atajos de una tecla imprimible (j, k, ?, 1, 2, 3) se apagan desde «Mi cuenta».
+     Se lee en cada tecla: si el almacenamiento falla, los atajos quedan prendidos (el default). */
+  var KEYS_KEY = "vigia-shortcuts";
+  function charKeysOn() {
+    try { return window.localStorage.getItem(KEYS_KEY) !== "off"; } catch (e) { return true; }
+  }
+  function writeCharKeys(on) {
+    try {
+      if (on) { window.localStorage.removeItem(KEYS_KEY); } else { window.localStorage.setItem(KEYS_KEY, "off"); }
+      return true;
+    } catch (e) { return false; }
+  }
+
   var LEVELS = [[0.8, "high", "alto"], [0.5, "medium", "medio"], [0, "low", "bajo"]];
   function levelFor(score) {
     for (var i = 0; i < LEVELS.length; i++) { if (score >= LEVELS[i][0]) { return LEVELS[i]; } }
@@ -132,12 +145,13 @@
     if (document.body.getAttribute("data-page") === "detail") {
       document.addEventListener("keydown", function (ev) {
         if (ev.ctrlKey || ev.metaKey || ev.altKey || typing(ev.target) || document.querySelector("dialog[open]")) { return; }
-        if (ev.key === "j") { ev.preventDefault(); move(1); }
-        else if (ev.key === "k") { ev.preventDefault(); move(-1); }
+        var chars = charKeysOn();
+        if (chars && ev.key === "j") { ev.preventDefault(); move(1); }
+        else if (chars && ev.key === "k") { ev.preventDefault(); move(-1); }
         else if (ev.key === "Enter" && marks.indexOf(document.activeElement) !== -1) {
           ev.preventDefault();
           showSignals(document.activeElement.getAttribute("data-fragment"), true);
-        } else if (ev.key === "?") { ev.preventDefault(); openDialog("shortcuts"); }
+        } else if (chars && ev.key === "?") { ev.preventDefault(); openDialog("shortcuts"); }
       });
     }
 
@@ -183,14 +197,32 @@
         return;
       }
       if (ev.ctrlKey || ev.metaKey || ev.altKey || typing(ev.target) && ev.target.type !== "radio") { return; }
-      if (form && (ev.key === "1" || ev.key === "2" || ev.key === "3")) {
+      var chars = charKeysOn();
+      if (form && chars && (ev.key === "1" || ev.key === "2" || ev.key === "3")) {
         var radio = form.querySelector("input[data-key='" + ev.key + "']");
         if (radio) { ev.preventDefault(); radio.checked = true; radio.focus(); }
       } else if (ev.key === "ArrowLeft" || ev.key === "ArrowRight") {
         if (ev.target && ev.target.type === "radio") { return; }
         var link = document.querySelector(ev.key === "ArrowLeft" ? "[data-nav-prev]" : "[data-nav-next]");
         if (link) { ev.preventDefault(); window.location.assign(link.href); }
-      } else if (ev.key === "?") { ev.preventDefault(); openDialog("shortcuts"); }
+      } else if (chars && ev.key === "?") { ev.preventDefault(); openDialog("shortcuts"); }
+    });
+  }
+
+  /* --- Mi cuenta: preferencia de atajos de una tecla ------------------------------------------ */
+
+  function initShortcutsPref() {
+    var box = document.querySelector("[data-shortcuts-pref]");
+    var toggle = box && box.querySelector("[data-shortcuts-toggle]");
+    if (!box || !toggle) { return; }
+    var status = box.querySelector("[data-shortcuts-status]");
+    toggle.checked = charKeysOn();
+    box.hidden = false;
+    toggle.addEventListener("change", function () {
+      var saved = writeCharKeys(toggle.checked);
+      if (!status) { return; }
+      if (!saved) { toggle.checked = charKeysOn(); status.textContent = "Este navegador no deja guardar la preferencia."; }
+      else { status.textContent = toggle.checked ? "Atajos de una tecla prendidos." : "Atajos de una tecla apagados."; }
     });
   }
 
@@ -454,6 +486,7 @@
     initDialogs();
     initDetail();
     initReview();
+    initShortcutsPref();
     initPlayground();
     initJob();
   }

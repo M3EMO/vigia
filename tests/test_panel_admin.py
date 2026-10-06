@@ -590,7 +590,21 @@ def test_detector_report_charts_scroll_instead_of_shrinking(env):
     runtime.repo(org).insert_detector(det.id, det.to_json(), report_json=json.dumps(report))
     page = login(app, users["admin"]).get(f"/calibration/detectors/{det.id}").text
     regions = re.findall(
-        r'<div class="vg-chart-scroll" tabindex="0" role="region" aria-labelledby="([^"]+)">', page
+        r'<div class="vg-chart-scroll" tabindex="0" role="region" aria-label="Gráfico: ([^"]+)">', page
     )
     assert len(regions) >= 5
-    assert all(f'<title id="{rid}">' in page for rid in regions)
+    assert all(re.search(r'<title id="[^"]+">' + re.escape(t) + "</title>", page) for t in regions)
+
+
+def test_detector_report_regions_have_unique_names(env):
+    """Regresión: 'Gráficos con 'Ver datos' abierto: la región del SVG y la región de la tabla tienen
+    el mismo nombre accesible (axe landmark-unique)'. En el reporte del detector, la región de la
+    curva ROC y la de su tabla se llamaban las dos «Curva ROC»."""
+    runtime, org, users, app = env
+    det, report = _report_detector()
+    runtime.repo(org).insert_detector(det.id, det.to_json(), report_json=json.dumps(report))
+    page = login(app, users["admin"]).get(f"/calibration/detectors/{det.id}").text
+    names = re.findall(r'<div[^>]*role="region"[^>]*aria-label="([^"]+)"', page)
+    assert "Gráfico: Curva ROC" in names and "Curva ROC" in names, names
+    assert 'role="region" aria-labelledby=' not in page
+    assert len(names) == len(set(names)), names

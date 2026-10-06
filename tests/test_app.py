@@ -3,6 +3,7 @@
 import json
 import os
 import re
+import signal
 import stat
 
 import pytest
@@ -456,6 +457,57 @@ def test_cli_serve_bounds_shutdown_and_rejects_new_generations(tmp_path, monkeyp
         assert [e["type"] for e in events] == ["error"] and "cerrando" in events[0]["message"]
     finally:
         rt.close()
+
+
+_STOP_SIGNALS = [name for name in ("SIGINT", "SIGTERM", "SIGBREAK") if hasattr(signal, name)]
+
+
+@pytest.mark.parametrize("name", _STOP_SIGNALS)
+def test_cli_serve_exits_ok_after_an_orderly_stop_signal(tmp_path, monkeypatch, name):
+    """Regresión: 'Un cierre ordenado con Ctrl+C (SIGINT) termina 'serve' con código de salida 1, como
+    si fuera un error' y 'Un cierre ordenado por SIGTERM (STOPSIGNAL del Dockerfile) o Ctrl+Break no
+    sale con código 0: uvicorn vuelve a lanzar la señal y el proceso muere por el manejador por
+    defecto'. Corre el `capture_signals` real de uvicorn: la señal no se relanza al salir y `serve`
+    devuelve 0. Un manejador de prueba registra lo relanzado, así la señal nunca mata a pytest."""
+    import uvicorn
+
+    sig = getattr(signal, name)
+    relaunched = []
+    previous = signal.signal(sig, lambda s, f: relaunched.append(s))
+    seen = {}
+
+    def run(self, sockets=None):  # el ciclo real de señales de uvicorn, sin abrir el puerto
+        seen.update(server=self)
+        with self.capture_signals():
+            self.handle_exit(sig, None)  # llega la señal de parada
+
+    monkeypatch.setattr(uvicorn.Server, "run", run)
+    monkeypatch.setattr(appmod, "configure_json_logging", lambda: None)
+    try:
+        assert main(["serve", "--port", "8123"], environ=cli_env(tmp_path)) == 0
+        assert seen["server"].config.app.state.runtime.shutting_down
+        assert relaunched == []
+    finally:
+        signal.signal(sig, previous)
+        seen["server"].config.app.state.runtime.close()
+
+
+def test_cli_serve_keyboard_interrupt_without_shutdown_is_an_error(tmp_path, monkeypatch):
+    """Un KeyboardInterrupt que no viene de un cierre ordenado (runtime sin marcar) sigue siendo error."""
+    import uvicorn
+
+    seen = {}
+
+    def run(self, sockets=None):
+        seen.update(server=self)
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(uvicorn.Server, "run", run)
+    monkeypatch.setattr(appmod, "configure_json_logging", lambda: None)
+    try:
+        assert main(["serve", "--port", "8123"], environ=cli_env(tmp_path)) == 1
+    finally:
+        seen["server"].config.app.state.runtime.close()
 
 
 def test_cli_serve_routes_uvicorn_and_asyncio_logs_to_json(tmp_path, monkeypatch, capsys):

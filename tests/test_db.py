@@ -53,7 +53,10 @@ def test_migrations_apply_once_and_pragmas_are_set(tmp_path):
     assert first.schema_version() == len(MIGRATIONS)
     assert first.query_one("PRAGMA foreign_keys")["foreign_keys"] == 1
     assert first.query_one("PRAGMA journal_mode")["journal_mode"] == "wal"
-    assert int(first.query_one("PRAGMA busy_timeout")["timeout"]) == 5000
+    # La espera total ante un lock ajeno es 5 s; SQLite espera poco por intento y Database reintenta
+    # sin retener el RLock (ver test_locked_database_write_fails_within_busy_timeout...).
+    assert first.busy_timeout_s == 5.0
+    assert int(first.query_one("PRAGMA busy_timeout")["timeout"]) == dbm.BUSY_ATTEMPT_MS
     first.close()
     second = Database(path)
     assert second.migrate() == len(MIGRATIONS)
@@ -472,3 +475,104 @@ def test_database_closes_the_connection_when_opening_fails(tmp_path, monkeypatch
         Database(bad)
     assert closed == [True]
     bad.unlink()  # el archivo quedó libre
+
+
+def _locked_externally(path):
+    """Otro proceso (simulado con otra conexión) retiene el lock de escritura del archivo."""
+    import sqlite3
+
+    ext = sqlite3.connect(path, timeout=0.1, isolation_level=None, check_same_thread=False)
+    ext.execute("BEGIN EXCLUSIVE")
+    return ext
+
+
+def _timed_write(database):
+    import sqlite3
+    import time
+
+    t0 = time.monotonic()
+    with pytest.raises(sqlite3.OperationalError):
+        with database.transaction():
+            database.execute("UPDATE schema_migrations SET applied_at = applied_at WHERE 0")
+    return time.monotonic() - t0
+
+
+def test_locked_database_write_fails_within_busy_timeout_despite_background_writers(tmp_path):
+    """Regresión de «Con la base bloqueada, un request de la API tarda unos 57 s en devolver 503 en lugar
+    de unos 5 s: los workers de jobs retienen el RLock de Database durante cada busy_timeout».
+
+    Con cinco hilos de fondo reintentando (como los workers de jobs y webhooks), cada uno retenía el
+    RLock durante todo su busy_timeout y la escritura del request esperaba la suma de todos."""
+    busy_ms = 500
+    path = tmp_path / "vigia.db"
+    database = Database(path, busy_timeout_ms=busy_ms)
+    ext = _locked_externally(path)
+    stop = threading.Event()
+
+    def background() -> None:
+        while not stop.is_set():
+            try:
+                with database.transaction():
+                    database.execute("UPDATE schema_migrations SET applied_at = applied_at WHERE 0")
+            except Exception:  # noqa: BLE001, S110 - el worker reintenta como en jobs.py
+                pass
+            stop.wait(0.05)
+
+    threads = [threading.Thread(target=background, daemon=True) for _ in range(5)]
+    for t in threads:
+        t.start()
+    try:
+        threading.Event().wait(0.2)
+        elapsed = [_timed_write(database) for _ in range(2)]
+    finally:
+        stop.set()
+        for t in threads:
+            t.join(5)
+        ext.rollback()
+        ext.close()
+    assert max(elapsed) < 2.5 * busy_ms / 1000, elapsed
+    # La base sigue sana: nadie quedó con una transacción abierta ni con el RLock.
+    assert database.query_one("SELECT 1 AS one") == {"one": 1}
+    with database.transaction():
+        database.execute("UPDATE schema_migrations SET applied_at = applied_at WHERE 0")
+    database.close()
+
+
+def test_reads_do_not_wait_behind_a_write_blocked_by_another_process(tmp_path):
+    """Mientras una escritura espera el lock de archivo, el RLock queda libre entre intentos: una lectura
+    en WAL (que SQLite no bloquea) responde sin esperar el busy_timeout de la escritura."""
+    import time
+
+    path = tmp_path / "vigia.db"
+    database = Database(path, busy_timeout_ms=2000)
+    ext = _locked_externally(path)
+    writer = threading.Thread(target=_timed_write, args=(database,), daemon=True)
+    writer.start()
+    try:
+        threading.Event().wait(0.2)
+        t0 = time.monotonic()
+        assert database.query_one("SELECT 1 AS one") == {"one": 1}
+        assert time.monotonic() - t0 < 0.8
+    finally:
+        writer.join(5)
+        ext.rollback()
+        ext.close()
+        database.close()
+
+
+def test_a_write_waits_for_a_short_external_lock_and_then_succeeds(tmp_path):
+    """El tope de busy_timeout sigue siendo la espera total: un lock externo breve no hace fallar."""
+    path = tmp_path / "vigia.db"
+    database = Database(path, busy_timeout_ms=3000)
+    org = create_org(database, "Org A")
+    ext = _locked_externally(path)
+    timer = threading.Timer(0.4, ext.rollback)
+    timer.start()
+    try:
+        with database.transaction():
+            database.execute("UPDATE orgs SET name = ? WHERE id = ?", ("Org B", org))
+    finally:
+        timer.join()
+        ext.close()
+    assert database.query_one("SELECT name FROM orgs WHERE id = ?", (org,)) == {"name": "Org B"}
+    database.close()
