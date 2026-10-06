@@ -28,12 +28,14 @@ def env(tmp_path):
     runtime.close()
 
 
-def test_audit_table_region_is_focusable_and_object_ids_break_every_16_chars(env):
+def test_audit_table_region_is_focusable_and_object_ids_break_only_in_medium_widths(env):
     """Regresión: 'Auditoría: entre 640 y 1080 px de ancho la tabla desborda su contenedor, la columna
     Detalle queda fuera de vista y axe marca scrollable-region-focusable (serious)'.
 
-    La región desplazable tiene foco y nombre. El id de Objeto ofrece un corte cada 16 caracteres
-    con <wbr>: el texto copiado no cambia y el min-content de la columna baja a la mitad."""
+    La región desplazable tiene foco y nombre. El id de Objeto se corta por CSS solo bajo 1081 px
+    (overflow-wrap: anywhere); en pantallas anchas entra en una línea
+    (e2e test_audit_object_ids_fit_on_one_line).
+    Antes se usaba <wbr> cada 16 caracteres, que partía el id en dos fragmentos también a 1280 px."""
     runtime, org, owner, app = env
     target = "0123456789abcdef" * 2 + "&<x>"
     audit.append(runtime.db, org, None, "prueba_cierre", target)
@@ -45,9 +47,12 @@ def test_audit_table_region_is_focusable_and_object_ids_break_every_16_chars(env
     assert 'aria-label="Eventos de auditoría, desplazable"' in wrap.group(0)
 
     cells = re.findall(r'<td data-label="Objeto">(.*?)</td>', html)
-    assert "<code>0123456789abcdef<wbr>0123456789abcdef<wbr>&amp;&lt;x&gt;</code>" in cells, cells
-    # Los ids cortos (≤ 16) no llevan cortes.
-    assert all("<wbr><wbr>" not in c and not c.endswith("<wbr></code>") for c in cells), cells
+    assert "<code>0123456789abcdef0123456789abcdef&amp;&lt;x&gt;</code>" in cells, cells
+    assert all("<wbr>" not in c for c in cells), cells
+    css_path = Path(__file__).resolve().parents[1] / "vigia_ee" / "static" / "app.css"
+    css = css_path.read_text(encoding="utf-8")
+    rule = '.vg-table td[data-label="Objeto"] code { overflow-wrap: anywhere; }'
+    assert "@media (max-width: 1080px) { " + rule + " }" in css
 
 
 def test_char_key_shortcuts_are_gated_by_a_preference():
