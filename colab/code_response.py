@@ -96,6 +96,34 @@ def main(run: str) -> None:
             f"| CV con largo {cv_auc([length, sc]):.3f}"
         )
 
+    # Solo tokens de código (sin docstrings ni comentarios): hipótesis registrada antes de ver gpt-oss.
+    # En Granite: out_entropy 0,58 -> 0,79 y la entropía del router 0,74 -> 0,56 (señal de composición).
+    from best_of_n import code_mask
+
+    starts = {}
+    for line in open(f"{run}/rows.jsonl", encoding="utf-8"):
+        o = json.loads(line)
+        st = {t["i"]: t["start"] for t in o.get("tokens") or []}
+        starts[o["id"]] = (o.get("response") or "", st)
+    short = lens <= np.median(lens)
+    for f in FEATURES:
+        if f not in names:
+            continue
+        j = names.index(f)
+        sc = []
+        for i in ids:
+            m = r == i
+            resp, st = starts[i]
+            code = code_mask(resp, [st.get(int(t), 0) for t in ti[m]])
+            v = x[m, j]
+            sc.append(np.nanmean(v[code]) if code.sum() >= 3 else np.nanmean(v))
+        sc = np.array(sc)
+        lo, hi = ci(sc)
+        print(
+            f"{f:22s} media en código AUROC {auroc(lab, sc):.3f} [{lo:.3f}; {hi:.3f}] | cortas "
+            f"{auroc(lab[short], sc[short]):.3f} | largas {auroc(lab[~short], sc[~short]):.3f}"
+        )
+
     # Detector por respuesta con todas las señales del router (media por respuesta), L2 elegida
     # por CV interna. Responde si el 0,41 por token era la unidad equivocada o falta de datos.
     from sklearn.linear_model import LogisticRegressionCV
