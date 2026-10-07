@@ -120,6 +120,26 @@ Latencia en GPU (A/B intercalado, 20 unidades, 5.100 latencias por token): la me
 overhead de F0+F1 es **+3,0 %** [2,97 %; 3,03 %] y el del primer token es +0,6 %. Cumple la meta
 de < 5 % del plan.
 
+### 4.5 Generación de código (HumanEval, Granite 1B-A400M en CPU)
+
+Las 164 tareas de HumanEval se etiquetan ejecutando sus tests en un proceso aislado: la solución
+pasa o falla. Granite pasa el 35,4 % (58), falla el 61 % (100) y da error en 6.
+
+| Medición | AUROC | Nota |
+|---|---|---|
+| Por token, etiqueta de la respuesta copiada a todos sus tokens | 0,41 [0,24; 0,60] | Sin señal |
+| Por respuesta, entropía media del router (sin entrenar) | 0,74 [0,65; 0,82] | — |
+| Por respuesta, solo el largo de la solución | 0,70 | Las soluciones que fallan son más largas |
+| Por respuesta, largo + router (validación cruzada) | 0,735 | — |
+| Por respuesta, largo + router + entropía de salida | 0,77 | — |
+
+Dentro de tercios de largo parecido, la entropía del router da entre 0,61 y 0,76.
+
+Lectura: en código, la etiqueta por token no sirve, porque una solución que falla tiene casi todo
+el código bien y el error en pocas líneas. A nivel respuesta el router aporta, pero poco por encima
+del largo. Con 164 tareas y un modelo de 1B, el resultado es débil; la corrida con gpt-oss-20b en
+GPU decide si la señal sirve para código.
+
 ## 5. Latencia
 
 La meta del plan es < 5 % de latencia agregada. La medición limpia corrió en la misma laptop

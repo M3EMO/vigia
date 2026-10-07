@@ -1,0 +1,18 @@
+Vigía: experimento de evidencia
+Modelo: ibm-granite/granite-3.1-1b-a400m-instruct (granitemoe)
+Niveles: F0, F1; max_tokens 384; semilla 0
+Respuestas: 164 (generadas 164, teacher forcing 0, salteadas 0)
+Etiquetas: computable
+Exactitud del modelo: 35,4 % sobre 164 respuestas generadas
+  code: exactitud 35,4 %, alucinación 64,6 % (n=164)
+Tests de código: error 6, failed 100, passed 58
+Test: 5953 tokens, 33 respuestas, 33 preguntas; prevalencia por token 63,9 %
+AUROC por token (IC 95 % por pregunta):
+  Detector: 0,409 [0,239; 0,595]
+  Nivel F0: 0,518 [0,493; 0,544]
+  Nivel F1: 0,407 [0,237; 0,593]
+  Nivel F0+F1: 0,409 [0,239; 0,595]
+  Nivel todos: 0,409 [0,239; 0,595]
+  Baseline out_entropy: 0,504 [0,447; 0,561]
+  Baseline out_nll: 0,503 [0,447; 0,560]
+  Baseline h_probe: no disponible (sin features de este nivel en el dataset)
