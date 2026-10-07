@@ -229,6 +229,7 @@ def cmd_extract(args: argparse.Namespace) -> int:
         seed=args.seed,
         progress_cb=None if args.quiet else _progress,
         allow_code_exec=args.allow_code_exec,
+        temperature=args.temperature,
     )
     fs = build_features(args.out, rows)
     skipped = sum(1 for r in rows if r.get("skipped"))
@@ -505,6 +506,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--tiers", default="F0,F1,H", help="niveles de features (por defecto F0,F1,H)")
     p.add_argument("--max-tokens", type=_positive, default=24)
     p.add_argument("--seed", type=int, default=0)
+    p.add_argument(
+        "--temperature",
+        type=float,
+        default=0.0,
+        help="0 = greedy; > 0 muestrea (mejor de N con --seed distintos)",
+    )
     p.add_argument("--quiet", action="store_true", help="sin progreso por item")
     p.add_argument("--allow-code-exec", action="store_true", help=CODE_EXEC_HELP)
     p.set_defaults(func=cmd_extract)

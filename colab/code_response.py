@@ -91,8 +91,10 @@ def main(run: str) -> None:
             sc.append(np.nanmax(means) if means else np.nanmean(v))
         sc = np.array(sc)
         lo, hi = ci(sc)
-        print(f"{f:22s} peor bloque AUROC {auroc(lab, sc):.3f} [{lo:.3f}; {hi:.3f}] "
-              f"| CV con largo {cv_auc([length, sc]):.3f}")
+        print(
+            f"{f:22s} peor bloque AUROC {auroc(lab, sc):.3f} [{lo:.3f}; {hi:.3f}] "
+            f"| CV con largo {cv_auc([length, sc]):.3f}"
+        )
 
     # Detector por respuesta con todas las señales del router (media por respuesta), L2 elegida
     # por CV interna. Responde si el 0,41 por token era la unidad equivocada o falta de datos.
@@ -104,7 +106,7 @@ def main(run: str) -> None:
     z = (z - z.mean(0)) / np.where(z.std(0) > 0, z.std(0), 1)
     clf = LogisticRegressionCV(Cs=[1e-3, 1e-2, 1e-1, 1], cv=5, max_iter=2000)
     p = cross_val_predict(clf, z, lab, cv=cv, method="predict_proba")[:, 1]
-    print(f"CV AUROC detector por respuesta (router completo + largo, {len(cols)} señales) {auroc(lab, p):.3f}")
+    print(f"CV AUROC detector por respuesta (router + largo, {len(cols)} señales) {auroc(lab, p):.3f}")
 
 
 if __name__ == "__main__":

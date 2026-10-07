@@ -54,13 +54,20 @@ def main(run: str) -> None:
         rec_c, fa_c, _, _ = response_rates(pc, yc, rc, tau)
         rec_t, fa_t, nb, ng = response_rates(pt, yt, rt, tau)
         rows.append((a, tau, rec_c, fa_c, rec_t, fa_t))
-        print(f"alpha {a:.2f} tau {tau:.3f} | cal: detecta {rec_c:.0%} falsas {fa_c:.0%} "
-              f"| test: detecta {rec_t:.0%} falsas {fa_t:.0%} (malas {nb}, buenas {ng})")
+        print(
+            f"alpha {a:.2f} tau {tau:.3f} | cal: detecta {rec_c:.0%} falsas {fa_c:.0%} "
+            f"| test: detecta {rec_t:.0%} falsas {fa_t:.0%} (malas {nb}, buenas {ng})"
+        )
     best = max(rows, key=lambda t: (t[2] - t[3], -t[0]))
-    print(f"RECOMENDADO (elegido en cal): alpha {best[0]:.2f} -> test detecta {best[4]:.0%}, "
-          f"falsas {best[5]:.0%}")
-    front = [t for t in rows if not any(o[4] >= t[4] and o[5] <= t[5] and (o[4] > t[4] or o[5] < t[5])
-                                       for o in rows)]
+    print(
+        f"RECOMENDADO (elegido en cal): alpha {best[0]:.2f} -> test detecta {best[4]:.0%}, "
+        f"falsas {best[5]:.0%}"
+    )
+    front = [
+        t
+        for t in rows
+        if not any(o[4] >= t[4] and o[5] <= t[5] and (o[4] > t[4] or o[5] < t[5]) for o in rows)
+    ]
     print("PARETO (test):", [(t[0], f"{t[4]:.0%}", f"{t[5]:.0%}") for t in front])
 
 

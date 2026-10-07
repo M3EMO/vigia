@@ -408,7 +408,7 @@ class RunStore:
                 raise EvidenceError(f"{self.rows_path} existe sin {MANIFEST_FILE}: usá otro directorio")
             _atomic_write_text(self.manifest_path, json.dumps(dict(manifest), ensure_ascii=False, indent=2))
             return
-        keys = ("schema_version", "tiers", "max_tokens", "seed", "label_source", "judge")
+        keys = ("schema_version", "tiers", "max_tokens", "seed", "temperature", "label_source", "judge")
         diff = [k for k in keys if current.get(k) != manifest.get(k)]
         if not _same_model_info(current.get("model_info"), manifest.get("model_info")):
             diff.insert(1, "model_info")
@@ -517,8 +517,9 @@ def build_manifest(
     max_tokens: int,
     seed: int,
     judge: Judge | None,
+    temperature: float = 0.0,
 ) -> dict[str, Any]:
-    return {
+    manifest = {
         "schema_version": RUN_SCHEMA_VERSION,
         "model_info": _model_info_to_dict(backend.model_info()),
         "tiers": [t.value for t in tiers],
@@ -530,15 +531,24 @@ def build_manifest(
         "dataset_sha256": items_sha256(items),
         "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
     }
+    if temperature:  # solo con muestreo: las corridas greedy viejas siguen siendo reanudables
+        manifest["temperature"] = temperature
+    return manifest
 
 
 def _run_item(
-    backend: Backend, item: Mapping[str, Any], *, tiers: tuple[Tier, ...], max_tokens: int, seed: int
+    backend: Backend,
+    item: Mapping[str, Any],
+    *,
+    tiers: tuple[Tier, ...],
+    max_tokens: int,
+    seed: int,
+    temperature: float = 0.0,
 ) -> tuple[list[TokenEvent], dict[str, Any]]:
     t0 = time.perf_counter()
     if item["mode"] in GENERATED_MODES:
         stream = backend.stream(
-            item["messages"], max_tokens=max_tokens, temperature=0.0, seed=seed, tiers=tiers
+            item["messages"], max_tokens=max_tokens, temperature=temperature, seed=seed, tiers=tiers
         )
         try:
             events = list(stream)
@@ -577,6 +587,7 @@ def extract(
     judge: Judge | None = None,
     progress_cb: ProgressCallback | None = None,
     allow_code_exec: bool = False,
+    temperature: float = 0.0,
 ) -> list[dict[str, Any]]:
     """Genera o fuerza cada item, lo etiqueta y lo guarda. Reanudable: saltea los ids ya escritos.
 
@@ -597,7 +608,17 @@ def extract(
         raise ValueError("los items tienen ids repetidos")
     wanted = _check_tiers(backend, tiers)
     store = RunStore(out_dir)
-    store.open(build_manifest(backend, items, tiers=wanted, max_tokens=max_tokens, seed=seed, judge=judge))
+    store.open(
+        build_manifest(
+            backend,
+            items,
+            tiers=wanted,
+            max_tokens=max_tokens,
+            seed=seed,
+            judge=judge,
+            temperature=temperature,
+        )
+    )
     done = {r["id"]: r for r in store.load_rows()}
     hashes = {it["id"]: items_sha256([it]) for it in items}
     changed = [i for i in ids if i in done and done[i].get("item_sha256") != hashes[i]]
@@ -635,7 +656,9 @@ def extract(
             },
         }
         try:
-            events, info = _run_item(backend, item, tiers=wanted, max_tokens=max_tokens, seed=seed)
+            events, info = _run_item(
+                backend, item, tiers=wanted, max_tokens=max_tokens, seed=seed, temperature=temperature
+            )
         except (ValueError, VigiaError) as exc:
             if isinstance(exc, EvidenceError):
                 raise
