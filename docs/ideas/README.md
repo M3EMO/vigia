@@ -17,3 +17,6 @@ Cada idea tiene su texto original, su revisión crítica y su estado en el produ
 | Bits dinámicos por profundidad | `docs/ideas/mf-moe-v2-os-harness.md` | `docs/spec/mf-moe-v2-revision.md` | Investigación; ternario exige entrenar desde cero |
 | Contexto de 1M tokens en O(1) | `docs/ideas/mf-moe-v2-os-harness.md` | `docs/spec/mf-moe-v2-revision.md` | Investigación; la afirmación O(1) necesita medición |
 | Telemetría de gradientes de clientes | `docs/ideas/mf-moe-v2-os-harness.md` | `docs/spec/mf-moe-v2-revision.md` (riesgo 1) | **Rechazada**: un gradiente filtra datos del cliente |
+| Telemetría de metadatos del router | Conversación 2026-10-07 | Esta tabla | Solo histogramas agregados con privacidad diferencial; la secuencia de expertos por token filtra el texto |
+| Datos sintéticos de modelos 3D de enfermedades | Conversación 2026-10-07 | Esta tabla | Investigación; sirve como benchmark médico con etiqueta computable si el simulador es fiel |
+| Medir por bloques y elegir la mejor de N respuestas | Conversación 2026-10-07 | `colab/code_response.py` | **En curso**: peor bloque medido en Granite; mejor de N propuesto tras la corrida de gpt-oss |
