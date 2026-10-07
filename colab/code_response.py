@@ -6,6 +6,7 @@ token diluye la señal. Este script mide si las señales agregadas por respuesta
 solución falla sus tests, y controla el largo de la respuesta (las que fallan suelen ser más largas).
 """
 
+import json
 import sys
 
 import numpy as np
@@ -67,6 +68,31 @@ def main(run: str) -> None:
         print(f"CV AUROC largo+salida {cv_auc([length, output]):.3f}")
     if router is not None and output is not None:
         print(f"CV AUROC largo+router+salida {cv_auc([length, router, output]):.3f}")
+
+    # Peor bloque: media por bloque de 5 líneas (mínimo 3 tokens) y máximo sobre bloques.
+    # En Granite (n=164), out_entropy del peor bloque + largo dio la mejor CV (0,787).
+    token_line = {}
+    for line in open(f"{run}/rows.jsonl", encoding="utf-8"):
+        o = json.loads(line)
+        resp = o.get("response") or ""
+        for t in o.get("tokens") or []:
+            token_line[(o["id"], t["i"])] = resp.count("\n", 0, t["start"]) // 5
+    ti = d["token_index"][keep]
+    blk = np.array([token_line.get((rid, int(t)), -1) for rid, t in zip(r, ti, strict=True)])
+    for f in FEATURES:
+        if f not in names:
+            continue
+        j = names.index(f)
+        sc = []
+        for i in ids:
+            m = r == i
+            v, b = x[m, j], blk[m]
+            means = [np.nanmean(v[b == k]) for k in set(b) if k >= 0 and (b == k).sum() >= 3]
+            sc.append(np.nanmax(means) if means else np.nanmean(v))
+        sc = np.array(sc)
+        lo, hi = ci(sc)
+        print(f"{f:22s} peor bloque AUROC {auroc(lab, sc):.3f} [{lo:.3f}; {hi:.3f}] "
+              f"| CV con largo {cv_auc([length, sc]):.3f}")
 
     # Detector por respuesta con todas las señales del router (media por respuesta), L2 elegida
     # por CV interna. Responde si el 0,41 por token era la unidad equivocada o falta de datos.
