@@ -34,7 +34,7 @@ def main(run: str) -> None:
 
     def response_rates(p, yy, rr, tau):
         resp: dict[str, list] = {}
-        for rid, s, lab in zip(rr, p, yy):
+        for rid, s, lab in zip(rr, p, yy, strict=True):
             a = resp.setdefault(rid, [False, False])
             a[0] |= bool(s >= tau)
             a[1] |= bool(lab == 1)
