@@ -310,6 +310,7 @@ def test_activate_checks_tenant_model_and_policy_alpha(rt, org, owner, monkeypat
         rt.calibration.activate(owner, alien.id)
     strict = constant_detector(rt.model_info, 0.8, alphas=(0.2, 0.3), taus=(0.4, 0.5))
     repo.insert_detector(strict.id, strict.to_json())
+    rt.save_policy(owner, {"alpha": 0.1})  # solo un alpha fijado por la política bloquea la activación
     with pytest.raises(ActivationError, match="alpha"):
         rt.calibration.activate(owner, strict.id)
     good = constant_detector(rt.model_info, 0.7)

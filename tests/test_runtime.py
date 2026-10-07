@@ -341,7 +341,11 @@ def test_save_policy_merges_validates_versions_and_audits(rt, org, owner):
     )
     assert rt.policy_for(org) == again
     change = [r for r in audit_rows(rt, org) if r["action"] == "policy_change"]
-    assert json.loads(change[0]["detail_json"]) == {"changed": ["alpha", "human_review_at"], "version": 2}
+    assert json.loads(change[0]["detail_json"]) == {
+        "changed": ["alpha", "human_review_at"],
+        "version": 2,
+        "alpha_source": "policy",  # el alpha pasó de seguir al detector a quedar fijado
+    }
     for bad in ({"alpha": 1.5}, {"rag_retry_at": 0.5}, {"campo": 1}, {"rag_url": "http://169.254.169.254/x"}):
         with pytest.raises(PolicyError):
             rt.save_policy(owner, bad)
@@ -349,6 +353,38 @@ def test_save_policy_merges_validates_versions_and_audits(rt, org, owner):
     with pytest.raises(PolicyError, match="mínimo calibrado"):
         rt.save_policy(owner, {"alpha": 0.1})
     assert rt.policy_for(org).version == 3
+
+
+def test_effective_alpha_is_policy_if_fixed_else_detector_default(rt, org, owner):
+    """alpha efectivo: el de la política si el owner lo fijó; si no, default_alpha del detector activo
+    (el recomendado en calibración); sin detector, Policy.alpha = 0,1."""
+    assert rt.policy_for(org).alpha == 0.1 and not rt.policy_alpha_explicit(org)
+    install_detector(rt, org, constant_detector(rt.model_info, alphas=(0.15, 0.3), taus=(0.4, 0.5)))
+    assert rt.policy_for(org).alpha == 0.15 and rt.context_for(owner).policy.alpha == 0.15
+    # Cambiar otro campo no fija alpha: la política guardada no lleva la clave.
+    rt.save_policy(owner, {"gap_max": 2})
+    assert "alpha" not in rt.repo(org).get_policy() and not rt.policy_alpha_explicit(org)
+    # Recalibrar mueve el alpha de una política que no lo fijó.
+    install_detector(rt, org, constant_detector(rt.model_info, alphas=(0.2, 0.4), taus=(0.4, 0.5)))
+    assert rt.policy_for(org).alpha == 0.2 and rt.policy_for(org).gap_max == 2
+    # Fijado por el owner: no se mueve al recalibrar.
+    rt.save_policy(owner, {"alpha": 0.3})
+    assert rt.policy_alpha_explicit(org) and rt.repo(org).get_policy()["alpha"] == 0.3
+    install_detector(rt, org, constant_detector(rt.model_info, alphas=(0.25, 0.4), taus=(0.4, 0.5)))
+    assert rt.policy_for(org).alpha == 0.3
+    # alpha None lo suelta: vuelve a seguir al detector.
+    released = rt.save_policy(owner, {"alpha": None})
+    assert released.alpha == 0.25 and not rt.policy_alpha_explicit(org)
+    details = [json.loads(r["detail_json"]) for r in audit_rows(rt, org) if r["action"] == "policy_change"]
+    assert [d.get("alpha_source") for d in details] == [None, "policy", "detector"]
+
+
+def test_activation_checks_only_a_fixed_alpha(rt, org, owner):
+    """Un alpha que sigue al detector no bloquea activar uno calibrado desde un alpha mayor."""
+    high = constant_detector(rt.model_info, alphas=(0.2, 0.4), taus=(0.4, 0.5))
+    rt.repo(org).insert_detector(high.id, high.to_json())
+    rt.calibration.activate(owner, high.id)
+    assert rt.policy_for(org).alpha == 0.2
 
 
 def test_invalid_stored_policy_falls_back_to_safe_defaults(rt, org):

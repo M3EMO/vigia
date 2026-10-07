@@ -21,12 +21,13 @@ from vigia.calibrate import (
     DEFAULT_C_GRID,
     CalibrationError,
     build_dataset,
+    response_rates,
     split_groups,
     split_masks,
     train_detector,
 )
 from vigia.contracts import ModelInfo, Tier, feature_tier
-from vigia.detector import Detector
+from vigia.detector import RESPONSE_FALSE_ALARM_KEY, RESPONSE_RECALL_KEY, Detector, pareto_front
 
 REPORT_SCHEMA_VERSION = "1"
 N_BINS = 15
@@ -628,6 +629,8 @@ def evaluate_report(
             "n_features": len(det.feature_names),
             "missing_features": missing,
             "p": p,
+            "resp_max": m,
+            "resp_label": lab,
         }
 
     assert resp_level is not None and resp_labels is not None
@@ -679,11 +682,15 @@ def evaluate_report(
         },
     }
 
-    # Validación de CRC en test: FNR por respuesta (respuestas con errores) y por token.
+    # Validación de CRC en test: FNR por respuesta (respuestas con errores) y por token. Además,
+    # detección y falsas alarmas por respuesta en test contra lo esperado en calibración.
     crc = []
     pos = test.y == 1
+    resp_max, resp_label = per_entry["detector"]["resp_max"], per_entry["detector"]["resp_label"]
+    test_points = []
     for th in main.thresholds:
         flagged = p_main >= th["tau"]
+        observed_recall, observed_false_alarm = response_rates(resp_max, resp_label, th["tau"])
         uniq, inv = np.unique(test.responses[pos], return_inverse=True)
         missed = np.bincount(inv, weights=~flagged[pos], minlength=len(uniq)) / np.bincount(
             inv, minlength=len(uniq)
@@ -698,8 +705,27 @@ def evaluate_report(
                 "precision": _num(test.y[flagged].mean()) if flagged.any() else None,
                 "expected_flag_rate": th["expected_flag_rate"],
                 "expected_precision": th["expected_precision"],
+                "observed_response_recall": observed_recall,
+                "observed_response_false_alarm": observed_false_alarm,
+                "expected_response_recall": th.get(RESPONSE_RECALL_KEY),
+                "expected_response_false_alarm": th.get(RESPONSE_FALSE_ALARM_KEY),
             }
         )
+        test_points.append(
+            {
+                "alpha": th["alpha"],
+                "tau": th["tau"],
+                "recall": observed_recall,
+                "false_alarm": observed_false_alarm,
+            }
+        )
+    # Frontera detección / falsas alarmas por respuesta. `cal` es la que eligió el alpha recomendado;
+    # `test` sirve para auditarla (nunca para elegir).
+    curves["pareto"] = {
+        "cal": main.pareto(),
+        "test": pareto_front(test_points),
+        "recommended_alpha": main.recommended_alpha,
+    }
 
     report: dict[str, Any] = {
         "schema_version": REPORT_SCHEMA_VERSION,
@@ -865,18 +891,30 @@ def render_report_html(report: Mapping[str, Any]) -> str:
         ],
         rows,
     )
+    rec_alpha = (report["curves"].get("pareto") or {}).get("recommended_alpha")
+
+    def pair(c: Mapping[str, Any], what: str) -> str:
+        """Observado en test / esperado en calibración."""
+        observed, expected = c.get(f"observed_response_{what}"), c.get(f"expected_response_{what}")
+        return f"{charts.fmt_pct(observed)} / {charts.fmt_pct(expected)}"
+
     crc_rows = "".join(
-        f'<tr><th scope="row">{_e(charts.fmt_num(c["alpha"], 2))}</th><td>{_e(charts.fmt_num(c["tau"]))}</td>'
+        f'<tr><th scope="row">{_e(charts.fmt_num(c["alpha"], 2))}'
+        f"{' (recomendado)' if rec_alpha is not None and c['alpha'] == rec_alpha else ''}</th>"
+        f"<td>{_e(charts.fmt_num(c['tau']))}</td>"
         f"<td>{_e(charts.fmt_num(c['observed_fnr_response']))}</td><td>{_e(charts.fmt_num(c['observed_fnr_token']))}</td>"
         f"<td>{_e(charts.fmt_pct(c['flag_rate']))}</td><td>{_e(charts.fmt_pct(c['expected_flag_rate']))}</td>"
-        f"<td>{_e(charts.fmt_num(c['precision']))}</td></tr>"
+        f"<td>{_e(charts.fmt_num(c['precision']))}</td><td>{_e(pair(c, 'recall'))}</td>"
+        f"<td>{_e(pair(c, 'false_alarm'))}</td></tr>"
         for c in report["crc"]
     )
     crc_table = (
         '<table class="vg-metrics"><caption>Tabla 4. Validación del umbral CRC en test</caption><thead><tr>'
         '<th scope="col">alpha</th><th scope="col">tau</th><th scope="col">FNR por respuesta</th>'
         '<th scope="col">FNR por token</th><th scope="col">Tasa de marcado</th>'
-        '<th scope="col">Tasa esperada</th><th scope="col">Precisión</th></tr></thead>'
+        '<th scope="col">Tasa esperada</th><th scope="col">Precisión</th>'
+        '<th scope="col">Detección de respuestas malas (test / cal)</th>'
+        '<th scope="col">Falsas alarmas en respuestas buenas (test / cal)</th></tr></thead>'
         f"<tbody>{crc_rows}</tbody></table>"
     )
     for c in report["crc"]:
@@ -915,6 +953,20 @@ def render_report_html(report: Mapping[str, Any]) -> str:
             ),
         ),
     ]
+    pareto = cv.get("pareto")
+    if isinstance(pareto, Mapping):
+        rec = pareto.get("recommended_alpha")
+        for key, title in (
+            ("cal", "Frontera en calibración (elige el alpha recomendado)"),
+            ("test", "Frontera en test (auditoría)"),
+        ):
+            pts = pareto.get(key) or []
+            figures.append(
+                charts.figure(
+                    charts.pareto_svg(pts, recommended_alpha=rec, title=title),
+                    charts.pareto_table(pts, recommended_alpha=rec, title=title),
+                )
+            )
     latency = report.get("latency")
     if isinstance(latency, Mapping) and "baseline" in latency and "vigia" in latency:
         target = latency.get("target", 0.05)

@@ -49,6 +49,14 @@ _ARTIFACT_KEYS = (
     "training",
     "sha256",
 )
+# Claves opcionales: un artefacto previo a ellas sigue cargando y su hash sigue validando.
+RECOMMENDED_ALPHA_KEY = "recommended_alpha"
+_OPTIONAL_ARTIFACT_KEYS = (RECOMMENDED_ALPHA_KEY,)
+_THRESHOLD_KEYS = ("alpha", "tau", "expected_flag_rate", "expected_precision")
+# Métricas por respuesta en calibración (una respuesta queda marcada si algún token supera tau).
+RESPONSE_RECALL_KEY = "expected_response_recall"
+RESPONSE_FALSE_ALARM_KEY = "expected_response_false_alarm"
+_OPTIONAL_THRESHOLD_KEYS = (RESPONSE_RECALL_KEY, RESPONSE_FALSE_ALARM_KEY)
 _LOGIT_CLIP = 1e-12
 
 
@@ -105,22 +113,22 @@ def _ab(artifact: Mapping[str, Any], key: str) -> tuple[float, float]:
 def _validate_thresholds(raw: Any) -> list[dict[str, Any]]:
     if not isinstance(raw, list) or not raw:
         raise _fail("`thresholds` debe ser una lista no vacía")
-    keys = {"alpha", "tau", "expected_flag_rate", "expected_precision"}
+    required, optional = set(_THRESHOLD_KEYS), set(_OPTIONAL_THRESHOLD_KEYS)
     out = []
     for entry in raw:
-        if not isinstance(entry, dict) or set(entry) != keys:
-            raise _fail(f"cada umbral lleva exactamente {sorted(keys)}")
-        alpha, tau, rate, precision = (
-            entry[k] for k in ("alpha", "tau", "expected_flag_rate", "expected_precision")
-        )
+        if not isinstance(entry, dict) or not required <= set(entry) <= required | optional:
+            raise _fail(f"cada umbral lleva {sorted(required)} y opcionalmente {sorted(optional)}")
+        alpha, tau, rate = (entry[k] for k in ("alpha", "tau", "expected_flag_rate"))
         if not (_is_number(alpha) and 0 < alpha < 1):
             raise _fail(f"alpha fuera de (0, 1): {alpha!r}")
         if not (_is_number(tau) and 0 <= tau <= 1):
             raise _fail(f"tau fuera de [0, 1]: {tau!r}")
         if not (_is_number(rate) and 0 <= rate <= 1):
             raise _fail(f"expected_flag_rate fuera de [0, 1]: {rate!r}")
-        if precision is not None and not (_is_number(precision) and 0 <= precision <= 1):
-            raise _fail(f"expected_precision fuera de [0, 1]: {precision!r}")
+        for key in ("expected_precision", *_OPTIONAL_THRESHOLD_KEYS):
+            value = entry.get(key)
+            if value is not None and not (_is_number(value) and 0 <= value <= 1):
+                raise _fail(f"{key} fuera de [0, 1]: {value!r}")
         out.append(entry)
     alphas = [e["alpha"] for e in out]
     taus = [e["tau"] for e in out]
@@ -135,9 +143,10 @@ def validate_artifact(artifact: Mapping[str, Any]) -> None:
     """Valida forma, tipos, consistencia y hash. Lanza DetectorMismatchError ante cualquier falla."""
     if not isinstance(artifact, Mapping):
         raise _fail("se esperaba un objeto JSON")
-    if set(artifact) != set(_ARTIFACT_KEYS):
+    allowed = set(_ARTIFACT_KEYS) | set(_OPTIONAL_ARTIFACT_KEYS)
+    if not set(_ARTIFACT_KEYS) <= set(artifact) <= allowed:
         missing = sorted(set(_ARTIFACT_KEYS) - set(artifact))
-        extra = sorted(set(artifact) - set(_ARTIFACT_KEYS))
+        extra = sorted(set(artifact) - allowed)
         raise _fail(f"claves faltantes {missing}, sobrantes {extra}")
     if artifact["schema_version"] != DETECTOR_SCHEMA_VERSION:
         raise _fail(f"schema_version {artifact['schema_version']!r}, se esperaba {DETECTOR_SCHEMA_VERSION!r}")
@@ -179,6 +188,11 @@ def validate_artifact(artifact: Mapping[str, Any]) -> None:
     default_alpha = artifact["default_alpha"]
     if not (_is_number(default_alpha) and thresholds[0]["alpha"] <= default_alpha < 1):
         raise _fail("`default_alpha` debe estar en [min alpha guardado, 1)")
+    recommended = artifact.get(RECOMMENDED_ALPHA_KEY)
+    if recommended is not None and not (
+        _is_number(recommended) and recommended in {t["alpha"] for t in thresholds}
+    ):
+        raise _fail(f"`{RECOMMENDED_ALPHA_KEY}` debe ser null o uno de los alphas de `thresholds`")
     if not isinstance(artifact["metrics"], dict):
         raise _fail("`metrics` debe ser un objeto")
     if DRIFT_REFERENCE_KEY in artifact["metrics"]:
@@ -226,6 +240,49 @@ def _validate_drift_reference(raw: Any) -> None:
             raise _fail(f"{where}.tau debe estar en [0, 1]")
 
 
+def threshold_points(thresholds: Sequence[Mapping[str, Any]]) -> list[dict[str, float]]:
+    """Puntos {alpha, tau, recall, false_alarm} de los umbrales con las dos métricas por respuesta.
+
+    Un artefacto previo a esas métricas, o una calibración sin respuestas buenas (falsa alarma
+    null), no aporta puntos.
+    """
+    out = []
+    for t in thresholds:
+        recall, false_alarm = t.get(RESPONSE_RECALL_KEY), t.get(RESPONSE_FALSE_ALARM_KEY)
+        if _is_number(recall) and _is_number(false_alarm):
+            out.append(
+                {
+                    "alpha": float(t["alpha"]),
+                    "tau": float(t["tau"]),
+                    "recall": float(recall),
+                    "false_alarm": float(false_alarm),
+                }
+            )
+    return out
+
+
+def pareto_front(points: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    """Puntos no dominados en (más `recall`, menos `false_alarm`), ordenados por falsa alarma.
+
+    Un punto domina a otro si no es peor en ninguna de las dos y es mejor en alguna. Entre puntos
+    idénticos (alphas con el mismo tau) queda el de alpha menor: su garantía es la más fuerte.
+    Los puntos sin las dos métricas finitas se ignoran.
+    """
+    best: dict[tuple[float, float], Mapping[str, Any]] = {}
+    for p in points:
+        if not (_is_number(p.get("recall")) and _is_number(p.get("false_alarm"))):
+            continue
+        key = (float(p["recall"]), float(p["false_alarm"]))
+        if key not in best or p["alpha"] < best[key]["alpha"]:
+            best[key] = p
+    front = [
+        dict(p)
+        for (r, f), p in best.items()
+        if not any(r2 >= r and f2 <= f and (r2, f2) != (r, f) for r2, f2 in best)
+    ]
+    return sorted(front, key=lambda p: (p["false_alarm"], p["recall"], p["alpha"]))
+
+
 def _reject_constant(name: str) -> Any:
     raise DetectorMismatchError(f"artefacto de detector inválido: constante no JSON {name}")
 
@@ -253,6 +310,9 @@ class Detector:
         self._alphas = np.asarray([t["alpha"] for t in a["thresholds"]], dtype=np.float64)
         self._taus = np.asarray([t["tau"] for t in a["thresholds"]], dtype=np.float64)
         self.default_alpha: float = float(a["default_alpha"])
+        rec = a.get(RECOMMENDED_ALPHA_KEY)
+        # Alpha que maximiza detección - falsas alarmas por respuesta en calibración; None si falta.
+        self.recommended_alpha: float | None = float(rec) if rec is not None else None
         self.imputed_counts: Counter[str] = Counter()  # features faltantes imputadas con la media
 
     # -- construcción y serialización --
@@ -273,8 +333,12 @@ class Detector:
         default_alpha: float,
         metrics: Mapping[str, Any],
         training: Mapping[str, Any],
+        recommended_alpha: float | None = None,
     ) -> Detector:
-        """Arma el artefacto, calcula su hash y lo valida. Las features se reordenan por nombre."""
+        """Arma el artefacto, calcula su hash y lo valida. Las features se reordenan por nombre.
+
+        El artefacto nuevo siempre lleva `recommended_alpha` (null si no se pudo calcular).
+        """
         order = sorted(range(len(feature_names)), key=lambda i: feature_names[i])
 
         def pick(values: Sequence[float]) -> list[float]:
@@ -299,6 +363,7 @@ class Detector:
             "default_alpha": float(default_alpha),
             "metrics": json.loads(canonical_json(dict(metrics))),
             "training": json.loads(canonical_json(dict(training))),
+            RECOMMENDED_ALPHA_KEY: None if recommended_alpha is None else float(recommended_alpha),
         }
         artifact["sha256"] = artifact_sha256(artifact)
         return cls(artifact)
@@ -337,6 +402,14 @@ class Detector:
     @property
     def model(self) -> dict[str, Any]:
         return dict(self._artifact["model"])
+
+    def pareto(self) -> list[dict[str, float]]:
+        """Frontera medida en calibración: puntos no dominados {alpha, tau, recall, false_alarm}.
+
+        `recall` es la fracción de respuestas con errores que quedan marcadas y `false_alarm` la de
+        respuestas sin errores marcadas. Lista vacía en artefactos previos a esas métricas.
+        """
+        return pareto_front(threshold_points(self._artifact["thresholds"]))
 
     def to_json(self, *, indent: int | None = None) -> str:
         if indent is None:

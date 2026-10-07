@@ -18,6 +18,12 @@ ROC = [
     {"name": "Baseline out_entropy", "fpr": [0, 0.3, 1], "tpr": [0, 0.5, 1], "auc": 0.64},
 ]
 PR = [{"name": "Detector", "recall": [0, 0.5, 1], "precision": [1, 0.8, 0.2], "ap": 0.7}]
+# Frontera medida con Granite (barrido fino de alpha): 0,10 marca demasiadas buenas, 0,14 es el codo.
+PARETO = [
+    {"alpha": 0.1, "tau": 0.2, "recall": 0.99, "false_alarm": 0.6, "flag_rate": 0.5},
+    {"alpha": 0.14, "tau": 0.3, "recall": 0.96, "false_alarm": 0.2, "flag_rate": 0.3},
+    {"alpha": 0.32, "tau": 0.5, "recall": 0.85, "false_alarm": 0.15, "flag_rate": 0.2},
+]
 
 
 def _all_charts():
@@ -35,6 +41,7 @@ def _all_charts():
             ["01-10", "02-10", "03-10", "04-10"], [0.04, 0.05, 0.07, 0.06], recalibrations=[2]
         ),
         "heatmap": charts.heatmap_svg([[0.1, 0.5, 0.2], [0.9, 0.0, 0.3]], [0, 1], [0, 1, 2]),
+        "pareto": charts.pareto_svg(PARETO, recommended_alpha=0.14),
     }
 
 
@@ -354,3 +361,45 @@ def test_reliability_bars_encode_density_not_equal_mass_counts():
     # 0,2 y 0,7): la barra más alta es la del bin más angosto.
     hb = _rect_heights(charts.reliability_svg(BINS, 0.031))
     assert hb[0] == pytest.approx(50.0) and hb[1] == pytest.approx(50.0 * 0.2 / 0.5, abs=0.15)
+
+
+def test_pareto_marks_recommended_alpha_and_states_the_tradeoff():
+    svg = charts.pareto_svg(PARETO, recommended_alpha=0.14)
+    desc = _parse(svg)[2].text
+    assert "3 alphas en la frontera" in desc
+    assert "El alpha recomendado, 0,14, detecta el 96,0 % de las respuestas malas" in desc
+    assert "marca el 20,0 % de las buenas" in desc
+    texts = [t.text for t in _texts(svg)[1]]
+    assert "Recomendado: alpha 0,14" in texts and "0,10" in texts and "0,32" in texts
+    assert "Falsas alarmas en respuestas buenas" in texts and "Detección de respuestas malas" in texts
+    assert svg.count("<path ") == 1  # rombo del recomendado
+    root = ET.fromstring(svg)  # noqa: S314 - SVG generado por el propio módulo
+    boxes = [
+        _box(t)
+        for t in root.iter("{http://www.w3.org/2000/svg}text")
+        if t.get("font-size") in ("10", "11")
+        and (t.text or "").startswith(("0,", "Recomendado"))
+        and "%" not in (t.text or "")
+    ]
+    for i, a in enumerate(boxes):  # las etiquetas de alpha no se pisan
+        for b in boxes[i + 1 :]:
+            assert not (a[0] < b[2] and b[0] < a[2] and a[1] < b[3] and b[1] < a[3])
+    other = _parse(charts.pareto_svg(PARETO[:1], recommended_alpha=0.14))[2].text
+    assert "no está en esta frontera" in other
+    assert "Sin datos" in charts.pareto_svg([{"alpha": 0.1, "recall": None, "false_alarm": 0.2}])
+
+
+def test_pareto_table_lists_alpha_detection_false_alarms_and_flag_rate():
+    table = charts.pareto_table(PARETO, recommended_alpha=0.14)
+    assert table.startswith('<details class="vg-data">')
+    for header in (
+        "alpha",
+        "Detección de respuestas malas",
+        "Falsas alarmas en respuestas buenas",
+        "Tasa de marcado de tokens",
+    ):
+        assert f'<th scope="col">{header}</th>' in table
+    assert '<th scope="row">0,14 (recomendado)</th>' in table and "96,0 %" in table
+    assert "Tasa de marcado" not in charts.pareto_table(
+        [{k: v for k, v in PARETO[0].items() if k != "flag_rate"}]
+    )

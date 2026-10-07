@@ -6,7 +6,7 @@ import pytest
 from sklearn.metrics import average_precision_score, brier_score_loss, roc_auc_score
 from sklearn.metrics import log_loss as sk_log_loss
 
-from vigia.calibrate import train_detector
+from vigia.calibrate import DEFAULT_ALPHAS, train_detector
 from vigia.contracts import ModelInfo
 from vigia.evaluate import (
     SingleClassError,
@@ -148,7 +148,18 @@ def test_at_m09_report_has_metrics_cis_and_baselines(report):
     assert all(t["available"] for t in report["tiers"].values())
     assert report["detector_id"] == report["tiers"]["F0+F1"]["id"]
     assert 0 < report["dataset"]["prevalence_token"] < 1
-    assert [c["alpha"] for c in report["crc"]] == [0.05, 0.1, 0.2, 0.3]
+    assert [c["alpha"] for c in report["crc"]] == list(DEFAULT_ALPHAS)
+    # Frontera por respuesta: cal (la que eligió el alpha recomendado) y test (auditoría).
+    pareto = report["curves"]["pareto"]
+    rec = pareto["recommended_alpha"]
+    assert rec is not None and report["alpha"] == rec  # default_alpha del detector = recomendado
+    assert rec in {p["alpha"] for p in pareto["cal"]} and pareto["test"]
+    for front in (pareto["cal"], pareto["test"]):
+        assert all(set(p) == {"alpha", "tau", "recall", "false_alarm"} for p in front)
+        assert [p["false_alarm"] for p in front] == sorted(p["false_alarm"] for p in front)
+    for c in report["crc"]:
+        assert 0 <= c["observed_response_recall"] <= 1 and 0 <= c["observed_response_false_alarm"] <= 1
+        assert c["expected_response_recall"] is not None
     json.dumps(report, allow_nan=False)
 
 
@@ -161,6 +172,9 @@ def test_at_m09_report_html_is_self_contained_with_charts(report):
     assert "<script" not in page
     assert not re.search(r'(?:src|href)\s*=\s*"(?:https?:)?//', page)
     assert "&lt;b&gt;tiny&lt;/b&gt;" in page and "<b>tiny</b>" not in page
+    assert "Frontera en calibración (elige el alpha recomendado)" in page
+    assert "Frontera en test (auditoría)" in page and "(recomendado)" in page
+    assert "Detección de respuestas malas (test / cal)" in page
     with_latency = render_report_html(
         dict(
             report,

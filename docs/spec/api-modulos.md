@@ -163,9 +163,9 @@ artifact_sha256(artifact: Mapping) -> str   # sha256 de canonical_json(artifact 
 sigmoid(z) -> np.ndarray ; logit(p) -> np.ndarray
 validate_artifact(artifact: Mapping) -> None   # DetectorMismatchError ante cualquier falla
 class Detector:   # implementa contracts.Scorer
-  id: str (= sha256[:16]); sha256: str; feature_names: tuple[str, ...]; default_alpha: float; imputed_counts: Counter[str]
+  id: str (= sha256[:16]); sha256: str; feature_names: tuple[str, ...]; default_alpha: float; recommended_alpha: float | None (None en artefactos previos o sin respuestas buenas en cal); imputed_counts: Counter[str]
   Detector(artifact: Mapping)                          # valida
-  Detector.build(*, model, feature_names, mean, std, weights, bias, platt={a,b}, response_calibrator={a,b}, thresholds=[{alpha,tau,expected_flag_rate,expected_precision}], default_alpha, metrics, training={dataset_sha256,n_tokens,n_responses,label_source,judge,created_at}) -> Detector
+  Detector.build(*, model, feature_names, mean, std, weights, bias, platt={a,b}, response_calibrator={a,b}, thresholds=[{alpha,tau,expected_flag_rate,expected_precision,expected_response_recall?,expected_response_false_alarm?}], default_alpha, metrics, training={dataset_sha256,n_tokens,n_responses,label_source,judge,created_at}, recommended_alpha=None) -> Detector   # el artefacto nuevo siempre lleva recommended_alpha (null si no se calculó)
   Detector.load(source: str | PathLike | Mapping) -> Detector
   Detector.loads(text: str) -> Detector               # para la columna detectors.artifact_json
   .artifact -> dict (copia) ; .thresholds -> list[dict] ; .model -> dict
@@ -177,12 +177,15 @@ class Detector:   # implementa contracts.Scorer
   .tau(alpha: float) -> float      # escalón: tau del mayor alpha guardado <= alpha (no interpola: conserva FNR <= alpha); alpha < min guardado -> ValueError; alpha > max -> tau del max
   .check_model(info: ModelInfo) -> None   # DetectorMismatchError; router_sha256 se compara solo si los dos lo tienen
   .drift_reference -> dict | None  # metrics.drift_reference (vigia.drift); None en artefactos previos
-DRIFT_REFERENCE_KEY = "drift_reference"
+  .pareto() -> list[{alpha, tau, recall, false_alarm}]   # frontera no dominada medida en calibración (más recall, menos false_alarm), ordenada por false_alarm; [] en artefactos previos
+DRIFT_REFERENCE_KEY = "drift_reference"; RECOMMENDED_ALPHA_KEY = "recommended_alpha"; RESPONSE_RECALL_KEY = "expected_response_recall"; RESPONSE_FALSE_ALARM_KEY = "expected_response_false_alarm"
+threshold_points(thresholds) -> list[{alpha, tau, recall, false_alarm}]   # solo umbrales con las dos métricas por respuesta numéricas
+pareto_front(points) -> list[dict]   # no dominados; entre puntos idénticos queda el alpha menor; ignora puntos sin recall o false_alarm finitos
 
-Artefacto JSON (claves exactas): schema_version, model (= ModelInfo.fingerprint(): 5 claves + router_sha256 opcional, 64 hex), feature_names (ordenadas), mean, std, weights, bias, platt{a,b}, response_calibrator{a,b}, thresholds[{alpha,tau,expected_flag_rate,expected_precision|null}], default_alpha, metrics, training{dataset_sha256,n_tokens,n_responses,label_source,judge,created_at}, sha256. metrics.drift_reference es opcional y se valida si existe: {feature: {edges (estrictamente crecientes), fractions (len(edges)+1, suman 1), n >= 1, tau? (solo flag)}}. Token: p = sigmoid(platt.a * (((x-mean)/std)·weights + bias) + platt.b). Respuesta: sigmoid(rc.a * logit(max p) + rc.b). Flag: p >= tau.
+Artefacto JSON (claves exactas): schema_version, model (= ModelInfo.fingerprint(): 5 claves + router_sha256 opcional, 64 hex), feature_names (ordenadas), mean, std, weights, bias, platt{a,b}, response_calibrator{a,b}, thresholds[{alpha,tau,expected_flag_rate,expected_precision|null,expected_response_recall?|null,expected_response_false_alarm?|null}], default_alpha, metrics, training{dataset_sha256,n_tokens,n_responses,label_source,judge,created_at}, recommended_alpha? (null o uno de los alphas de thresholds), sha256. Las claves con ? son opcionales: un artefacto previo a ellas (por ejemplo detectors/*.json) carga y su hash valida igual. expected_response_recall = fracción de respuestas de cal con algún token alucinado que quedan marcadas (algún token con p >= tau); expected_response_false_alarm = fracción de respuestas de cal sin tokens alucinados marcadas (null si cal no tiene respuestas buenas). metrics.drift_reference es opcional y se valida si existe: {feature: {edges (estrictamente crecientes), fractions (len(edges)+1, suman 1), n >= 1, tau? (solo flag)}}. Token: p = sigmoid(platt.a * (((x-mean)/std)·weights + bias) + platt.b). Respuesta: sigmoid(rc.a * logit(max p) + rc.b). Flag: p >= tau.
 
 ## vigia.calibrate
-DEFAULT_ALPHAS = (0.05, 0.1, 0.2, 0.3); DEFAULT_C_GRID = (0.01, 0.1, 1.0, 10.0)
+DEFAULT_ALPHAS = (0.02, 0.04, …, 0.5)   # 25 valores redondeados a 2 decimales; DEFAULT_C_GRID = (0.01, 0.1, 1.0, 10.0); FALLBACK_DEFAULT_ALPHA = 0.1
 class CalibrationError(ValueError)
 build_dataset(features, labels, groups, response_ids) -> Dataset   # descarta labels == IGNORE_LABEL (-100)
 dataset_sha256(data: Dataset) -> str
@@ -191,10 +194,13 @@ split_masks(groups, split: Mapping[str, Sequence[str]]) -> dict[str, np.ndarray]
 fit_logistic(X, y, *, l2=1.0, sample_weight=None, max_iter=100, tol=1e-10) -> tuple[np.ndarray, float]
 fit_platt(scores, y) -> tuple[float, float]
 crc_threshold(p, y, response_ids, alpha) -> CRCResult(alpha, tau, n, feasible)
-crc_thresholds(p, y, response_ids, alphas) -> tuple[list[dict], list[CRCResult]]
-train_detector(features: Mapping[str, array], labels, groups, response_ids, model_info: ModelInfo, *, alphas=DEFAULT_ALPHAS, default_alpha=0.1, cal_frac=0.2, test_frac=0.2, seed=0, c_grid=DEFAULT_C_GRID, split=None, label_source='computable', judge=None, dataset_sha=None, created_at=None) -> tuple[Detector, dict]
+crc_thresholds(p, y, response_ids, alphas) -> tuple[list[dict], list[CRCResult]]   # cada entrada suma expected_response_recall y expected_response_false_alarm (response_rates sobre el máximo por respuesta)
+response_rates(resp_max, resp_label, tau) -> (recall | None, false_alarm | None)   # por respuesta: marcada si max p >= tau
+recommend_alpha(thresholds) -> float | None   # argmax de recall - false_alarm (Youden) con las métricas guardadas (cal); empate: el alpha menor; None si ningún umbral tiene las dos
+train_detector(features: Mapping[str, array], labels, groups, response_ids, model_info: ModelInfo, *, alphas=DEFAULT_ALPHAS, default_alpha=None, cal_frac=0.2, test_frac=0.2, seed=0, c_grid=DEFAULT_C_GRID, split=None, label_source='computable', judge=None, dataset_sha=None, created_at=None) -> tuple[Detector, dict]
+  recommended_alpha = recommend_alpha(thresholds de cal): el set de test nunca participa. default_alpha=None -> recommended_alpha, o max(0,1, min(alphas)) si es None; un default_alpha explícito se respeta
   el artefacto guarda metrics.drift_reference = vigia.drift.build_reference(p_cal, tau(default_alpha), features crudas de DRIFT_FEATURES en cal)
-  split_report = {seed, groups{train,cal,test: [str]}, counts{split: {n_groups,n_responses,n_tokens,positive_rate}}, c_selected, cv_auroc, dropped_features{name: motivo}, response_calibrator, crc[{alpha,tau,n_responses,feasible}], detector_id}
+  split_report = {seed, groups{train,cal,test: [str]}, counts{split: {n_groups,n_responses,n_tokens,positive_rate}}, c_selected, cv_auroc, dropped_features{name: motivo}, response_calibrator, crc[{alpha,tau,n_responses,feasible}], recommended_alpha, default_alpha, detector_id}
 
 ## vigia.labels
 IGNORE_LABEL = -100; ARTICLES_ES; MONTHS_ES; JUDGE_SCHEMA; JUDGE_SYSTEM_PROMPT; JUDGE_PROMPT_SHA256; REJECTION_REASONS
@@ -224,10 +230,12 @@ brier(y, p, w=None) -> float ; log_loss(y, p, w=None) -> float ; threshold_metri
 span_iou_per_response(flags, labels, response_ids) -> (ids, iou) ; span_iou(flags, labels, response_ids) -> float ; aurc(y, p) -> {aurc, e_aurc}
 cluster_bootstrap_ci(metric, y, s, clusters, *, n_boot=2000, seed=0, level=0.95) -> (lo, hi)
 evaluate_report(features, labels, groups, response_ids, model_info, *, detector: Detector | None = None, split=None, alpha=None, n_boot=2000, seed=0, level=0.95, cal_frac=0.2, test_frac=0.2, c_grid=DEFAULT_C_GRID) -> dict
-  report = {schema_version, created_at, model, detector_id, alpha, tau, bootstrap{n_boot,level,seed,cluster}, dataset{n_tokens_test,n_responses_test,n_groups_test,prevalence_token,prevalence_response,n_groups,response_note?}, detector, tiers{F0,F1,'F0+F1',todos}, baselines{out_entropy,out_nll,h_probe}, crc[...], curves{roc[{name,fpr,tpr,auc}], pr{recall,precision,ap,threshold_point}, reliability[...], histogram{edges,correct,error}}}
+  report = {schema_version, created_at, model, detector_id, alpha, tau, bootstrap{n_boot,level,seed,cluster}, dataset{n_tokens_test,n_responses_test,n_groups_test,prevalence_token,prevalence_response,n_groups,response_note?}, detector, tiers{F0,F1,'F0+F1',todos}, baselines{out_entropy,out_nll,h_probe}, crc[...], curves{roc[{name,fpr,tpr,auc}], pr{recall,precision,ap,threshold_point}, reliability[...], histogram{edges,correct,error}, pareto{cal, test, recommended_alpha}}}
+  crc[i] = {alpha, tau, observed_fnr_response, observed_fnr_token, flag_rate, precision, expected_flag_rate, expected_precision, observed_response_recall, observed_response_false_alarm (test), expected_response_recall, expected_response_false_alarm (cal)}
+  curves.pareto.cal = detector.pareto() (eligió el alpha recomendado); curves.pareto.test = pareto_front de los umbrales medidos en test, solo para auditar
   entrada = {available, id, n_features, missing_features, alpha, tau, token{metric: {value, ci:[lo,hi], n_boot_valid}}, response{...}} o {available: False, reason}
   métricas token/response: auroc, auprc, recall_at_fpr, precision_at_recall_0.8, precision_at_recall_0.9, ece, brier, log_loss, precision, recall, fnr, f1, flag_rate, prevalence, delta_auroc_vs_detector, delta_auprc_vs_detector (+ response: span_iou, aurc, e_aurc)
-render_report_html(report: Mapping) -> str   # usa report['latency'] = {baseline:{p50,p95,p99}, vigia:{...}, target?} si existe; agrega un aviso bajo la Tabla 4 por cada alpha saturado
+render_report_html(report: Mapping) -> str   # suma las figuras de frontera en cal y en test (curves.pareto) y las columnas de detección / falsas alarmas por respuesta (test / cal) en la Tabla 4; usa report['latency'] = {baseline:{p50,p95,p99}, vigia:{...}, target?} si existe; agrega un aviso bajo la Tabla 4 por cada alpha saturado
 SATURATED_FLAG_RATE = 0.95
 saturation_warning(alpha, expected_flag_rate, n_cal_responses=None) -> str|None
   aviso en español si expected_flag_rate >= 0,95. Con pocas respuestas de calibración el CRC solo cumple la garantía con tau = 0 y marca casi todo, aunque el AUROC sea alto. Texto: 'Con N respuestas de calibración, la garantía de alpha A obliga a marcar casi todo (...). Sumá datos de calibración o subí alpha.' Sin N dice 'Con estos datos de calibración'.
@@ -243,6 +251,7 @@ score_histogram_svg(edges, counts_correct, counts_error, *, tau=None, title=...)
 latency_svg(baseline{p50,p95,p99}, vigia{p50,p95,p99}, *, target=0.05, unit='ms', title=...) / latency_table(...)
 flag_trend_svg(labels, rates, *, recalibrations: Sequence[int]=(), title=...) / flag_trend_table(...)
 heatmap_svg(matrix, row_labels, col_labels, *, value_label='uso', title=...) / heatmap_table(...)
+pareto_svg(points[{alpha,recall,false_alarm,tau?,flag_rate?}], *, recommended_alpha=None, title=...) / pareto_table(...)   # x: falsas alarmas en respuestas buenas, y: detección de respuestas malas; etiqueta cada punto con su alpha (las que se pisan se omiten, la del recomendado nunca), rombo en el recomendado y diagonal de azar; la tabla suma 'Tasa de marcado de tokens' si algún punto trae flag_rate
 ```
 
 ```text
@@ -370,7 +379,7 @@ vigia.evidence:
   build_features(out_dir, rows=None) -> FeatureSet (writes features.npz)
   relabel(out_dir, *, judge=None) -> dict (rewrites rows, manifest and features.npz; writes labels_report.json with judge_vs_gold)
   detector_feature_names(names) -> F0+F1 names
-  calibrate_features(fs, *, seed=0, alphas=DEFAULT_ALPHAS, default_alpha=0.1, feature_names=None) -> (Detector, split_report)
+  calibrate_features(fs, *, seed=0, alphas=DEFAULT_ALPHAS, default_alpha=None, feature_names=None) -> (Detector, split_report)   # None: el alpha recomendado
   save_calibration(out_dir, detector, split_report) -> (detector.json, split.json)
   evaluate_features(fs, *, detector=None, split=None, n_boot=2000, seed=0, alpha=None) -> report
   model_quality(rows) -> {generated:{n,correct,accuracy,hallucination_rate,by_type}, teacher_forced, all}
@@ -419,7 +428,8 @@ vigia_ee.runtime:
     Atributos del contrato: settings, db, auth (rate limiters por key y tenant), backend, model_info, jobs (con el handler webhook registrado), metrics, calibration.
     Atributos extra: base_detector, startup_complete, startup_errors, started_at.
     Métodos del contrato: repo, detector_for, policy_for, save_policy, context_for, playground_stream, close.
-    save_policy hace merge sobre la política vigente, sube version, audita {changed, version} y rechaza un alpha menor que el mínimo del detector activo. Relee al actor con require_current dentro de la transacción (StaleActor -> 401).
+    policy_for(org_id) devuelve la política efectiva. alpha efectivo: el de la política si el owner lo fijó (la política guardada tiene la clave alpha); si no, default_alpha del detector activo (el recomendado al calibrar); sin detector, Policy.alpha = 0,1. Contracts.Policy no cambia. policy_alpha_explicit(org_id) -> bool dice cuál de los dos rige. context_for, el playground y las trazas usan el alpha efectivo.
+    save_policy hace merge sobre la política vigente, sube version, audita {changed, version, alpha_source?} y rechaza un alpha menor que el mínimo del detector activo. alpha numérico en data lo fija; alpha None lo suelta (vuelve a seguir al detector); sin alpha se conserva lo que había. La política guardada lleva la clave alpha solo si está fijado. alpha_source ('policy' | 'detector') aparece en la auditoría cuando cambia quién rige el alpha. Relee al actor con require_current dentro de la transacción (StaleActor -> 401).
     Métodos extra (el panel puede usarlos):
       now()
       create_org(name, *, store_text, retention_days): audita org_create e instala el detector base
@@ -452,7 +462,7 @@ vigia_ee.calibration:
     start(principal, dataset_id, *, alphas=None, seed=0) -> job_id (max_attempts=1)
     job(org_id, job_id) / list_jobs(org_id, limit=20) -> dicts {id, state, created_at, updated_at, dataset_id, alphas, seed, result, error}
       error es el mensaje para el usuario, o uno genérico ante una falla interna
-    activate(principal, detector_id): verifica modelo y alpha de la política, audita, invalida la cache y emite calibration.activated
+    activate(principal, detector_id): verifica modelo y, si la política fija alpha, que no quede debajo del mínimo calibrado; audita, invalida la cache y emite calibration.activated. Con alpha sin fijar, la política pasa al default_alpha del detector nuevo
     dataset_from_reviews(principal, name) -> dataset_id
     upload_dataset, dataset_from_reviews, start y activate releen al actor con require_current(..., 'calibration:write') dentro de la transacción de la escritura y su auditoría (StaleActor -> 401).
   El reporte guardado es evaluate_report + report['calibration'] (job_id, dataset_id, dataset_name, n_items, n_responses, n_questions, n_tokens, positive_rate, skipped, split).
@@ -499,7 +509,7 @@ vigia_ee.panel_admin.register(router, runtime) agrega:
 - GET /calibration, POST /calibration/datasets (multipart), POST /calibration/start
 - GET /calibration/jobs/{id}, GET /calibration/jobs/{id}/status (JSON)
 - GET /calibration/detectors/{id}, POST /calibration/detectors/{id}/activate
-- GET /policies, POST /policies
+- GET /policies, POST /policies, POST /policies/recommended-alpha (fija el recommended_alpha del detector activo vía Runtime.save_policy: CSRF y policy:write en la dependencia, require_current y auditoría policy_change; 422 si el detector no lo tiene; redirige con ok=recommended_alpha_saved)
 - GET /settings, POST /settings/org
 - POST /settings/users, POST /settings/users/{id}/role, POST /settings/users/{id}/disable
 - POST /settings/keys, POST /settings/keys/{id}/revoke
@@ -509,6 +519,7 @@ vigia_ee.panel_admin.register(router, runtime) agrega:
 
 Cada POST que muta sin pasar por una función de auth (review reserve/decide, settings/org, settings/users/{id}/disable, webhooks create/delete/test, data/delete) llama require_current(runtime.auth, p, '<permiso de la ruta>') como primera línea de la transacción que abarca la escritura y el audit.append. Las decisiones de rol usan el principal devuelto. Calibración y políticas lo hacen dentro de CalibrationService y Runtime.save_policy. Un StaleActor sin capturar sale como 401.
 Aviso de garantía saturada (evaluate.saturation_warning con N = report['calibration']['split']['counts']['cal']['n_responses']): el reporte del detector lista cada alpha con tasa esperada >= 0,95. La tarjeta Activar, Calibración (detector activo) y Políticas avisan si el alpha de la política usa un umbral saturado (atributo data-saturation).
+Frontera detección / falsas alarmas (panel_admin.frontier_view(thresholds, recommended_alpha, *, title) -> {figure, status: ok|no_good|old, recommended_alpha, recommended}): Políticas muestra la del detector activo (charts.pareto_svg + tabla alternativa) con el alpha recomendado destacado, la tabla de umbrales con detección esperada, falsas alarmas esperadas, tasa de marcado y precisión, y el botón 'Usar el alpha recomendado' para policy:write si la política no lo usa ya. El detalle del detector muestra la frontera de cal (artefacto) y, entre los gráficos del reporte, la de test (curves.pareto.test). Un artefacto sin métricas por respuesta muestra un aviso para recalibrar (data-frontier-missing) y la tabla con lo que tiene. El formulario de Políticas no fija alpha si la política lo sigue del detector y el valor enviado no cambió.
 Del Runtime consumo: settings, db, auth, repo, detector_for, policy_for, save_policy, playground_stream, calibration.*, model_info, backend.capabilities(), jobs.list/enqueue/now, emit_event e invalidate_detector (a través de calibration), forget_org (POST /data/delete) y drift_for (GET /performance).
 ```
 

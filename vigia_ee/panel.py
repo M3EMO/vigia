@@ -110,6 +110,7 @@ OK_MESSAGES = {
     "queue_empty": "No quedan items disponibles en la cola.",
     "trace_deleted": "La generación se borró.",
     "policy_saved": "La política se guardó y aplica a los requests siguientes.",
+    "recommended_alpha_saved": "La política usa el alpha recomendado del detector activo.",
     "calibration_started": "La calibración quedó en cola.",
     "detector_activated": "El detector quedó activo para los requests siguientes.",
     "dataset_uploaded": "El dataset se validó y quedó guardado.",

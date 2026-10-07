@@ -23,6 +23,7 @@ from markupsafe import Markup
 from starlette.datastructures import UploadFile
 
 from vigia import charts
+from vigia.detector import RECOMMENDED_ALPHA_KEY, RESPONSE_RECALL_KEY, pareto_front, threshold_points
 from vigia.evaluate import saturation_warning
 from vigia.policy import PolicyError, UnsafeURLError
 from vigia_ee import audit, retention, webhooks
@@ -225,6 +226,17 @@ def _report_figures(report: Mapping[str, Any]) -> list[Markup]:
             add(charts.score_histogram_svg(*args, tau=tau), charts.score_histogram_table(*args, tau=tau))
         except (KeyError, TypeError, ValueError):
             pass
+    pareto = curves.get("pareto")
+    if isinstance(pareto, Mapping) and pareto.get("test"):
+        try:
+            rec = pareto.get("recommended_alpha")
+            title = "Frontera en test (auditoría)"
+            add(
+                charts.pareto_svg(pareto["test"], recommended_alpha=rec, title=title),
+                charts.pareto_table(pareto["test"], recommended_alpha=rec, title=title),
+            )
+        except (KeyError, TypeError, ValueError):
+            pass
     lat = report.get("latency")
     if isinstance(lat, Mapping) and "baseline" in lat and "vigia" in lat:
         try:
@@ -236,6 +248,38 @@ def _report_figures(report: Mapping[str, Any]) -> list[Markup]:
         except (KeyError, TypeError, ValueError):
             pass
     return figures
+
+
+def frontier_view(
+    thresholds: Sequence[Mapping[str, Any]], recommended_alpha: float | None, *, title: str
+) -> dict[str, Any]:
+    """Frontera detección / falsas alarmas por respuesta medida en calibración (Políticas y Detector).
+
+    `status`: "ok" (hay frontera), "no_good" (la calibración no tuvo respuestas sin errores: no hay
+    falsas alarmas medibles) u "old" (artefacto previo a las métricas por respuesta: recalibrar).
+    """
+    points = pareto_front(threshold_points(thresholds))
+    rates = {t.get("alpha"): t.get("expected_flag_rate") for t in thresholds}
+    for point in points:
+        point["flag_rate"] = rates.get(point["alpha"])
+    figure = None
+    if points:
+        svg = charts.pareto_svg(points, recommended_alpha=recommended_alpha, title=title)
+        table = charts.pareto_table(points, recommended_alpha=recommended_alpha, title=title)
+        figure = Markup(charts.figure(scrollable_chart(svg), table))  # noqa: S704 - SVG generado y escapado
+    if points:
+        status = "ok"
+    elif any(t.get(RESPONSE_RECALL_KEY) is not None for t in thresholds):
+        status = "no_good"
+    else:
+        status = "old"
+    recommended = next((t for t in thresholds if t.get("alpha") == recommended_alpha), None)
+    return {
+        "figure": figure,
+        "status": status,
+        "recommended_alpha": recommended_alpha,
+        "recommended": recommended,
+    }
 
 
 def _report_metrics(report: Mapping[str, Any]) -> list[dict[str, Any]]:
@@ -669,7 +713,12 @@ def register(router: APIRouter, runtime: Any) -> None:  # noqa: C901 - registro 
         saturated = [
             w for t in thresholds if (w := saturation_warning(t["alpha"], t.get("expected_flag_rate"), n_cal))
         ]
+        # Con alpha sin fijar, la política usaría el default_alpha de este detector al activarlo.
         policy_alpha = runtime.policy_for(p.org_id).alpha
+        default_alpha = artifact.get("default_alpha")
+        if not runtime.policy_alpha_explicit(p.org_id) and isinstance(default_alpha, int | float):
+            policy_alpha = float(default_alpha)
+        recommended_alpha = artifact.get(RECOMMENDED_ALPHA_KEY)
         return render(
             request,
             "detector.html",
@@ -682,6 +731,9 @@ def register(router: APIRouter, runtime: Any) -> None:  # noqa: C901 - registro 
             saturated=saturated,
             activation_saturation=saturation_notice(thresholds, policy_alpha, n_cal),
             policy_alpha=policy_alpha,
+            frontier=frontier_view(
+                thresholds, recommended_alpha, title="Frontera en calibración (elige el alpha recomendado)"
+            ),
             model=artifact.get("model") or {},
             training=artifact.get("training") or {},
             summary=report.get("calibration") or {},
@@ -722,6 +774,13 @@ def register(router: APIRouter, runtime: Any) -> None:  # noqa: C901 - registro 
         policy = runtime.policy_for(p.org_id)
         detector = runtime.detector_for(p.org_id)
         thresholds = list(detector.thresholds) if detector is not None else []
+        frontier = (
+            frontier_view(
+                thresholds, detector.recommended_alpha, title="Frontera del detector activo (calibración)"
+            )
+            if detector is not None
+            else None
+        )
         saturation = None
         if detector is not None:
             row = runtime.repo(p.org_id).get_detector(detector.id) or {}
@@ -741,6 +800,8 @@ def register(router: APIRouter, runtime: Any) -> None:  # noqa: C901 - registro 
             thresholds=thresholds,
             saturation=saturation,
             detector_id=getattr(detector, "id", None),
+            frontier=frontier,
+            alpha_explicit=runtime.policy_alpha_explicit(p.org_id),
         )
 
     @router.get("/policies", response_class=HTMLResponse)
@@ -790,12 +851,36 @@ def register(router: APIRouter, runtime: Any) -> None:  # noqa: C901 - registro 
         shown = {**raw, "annotate": data["annotate"], "abstain_message": data["abstain_message"]}
         if errors:
             return policy_page(request, p, values=shown, errors=errors, status=422)
+        # Si la política no fija alpha y el formulario trae el mismo que ya usa (el del detector), la
+        # política lo sigue sin fijarlo: al recalibrar, pasa al alpha recomendado del detector nuevo.
+        if not runtime.policy_alpha_explicit(p.org_id) and (
+            abs(data["alpha"] - runtime.policy_for(p.org_id).alpha) < 1e-12
+        ):
+            del data["alpha"]
         try:
             await run_in_threadpool(runtime.save_policy, p, data)
         except PolicyError as exc:
             field = _policy_error_field(str(exc)) or "_form"
             return policy_page(request, p, values=shown, errors={field: str(exc)}, status=422)
         return redirect("/policies", "policy_saved")
+
+    @router.post("/policies/recommended-alpha", response_class=HTMLResponse)
+    async def policies_recommended_alpha(request: Request, p: PolicyWriteP) -> Response:
+        """Fija en la política el alpha recomendado del detector activo. Misma vía que el formulario:
+        CSRF y permiso policy:write en la dependencia; require_current y auditoría en save_policy."""
+        detector = runtime.detector_for(p.org_id)
+        recommended = detector.recommended_alpha if detector is not None else None
+        if recommended is None:
+            message = (
+                "El detector activo no tiene alpha recomendado. Recalibralo para medir la detección "
+                "y las falsas alarmas por respuesta."
+            )
+            return policy_page(request, p, errors={"_form": message}, status=422)
+        try:
+            await run_in_threadpool(runtime.save_policy, p, {"alpha": recommended})
+        except PolicyError as exc:
+            return policy_page(request, p, errors={"_form": str(exc)}, status=422)
+        return redirect("/policies", "recommended_alpha_saved")
 
     # ==== configuración ===========================================================================
 

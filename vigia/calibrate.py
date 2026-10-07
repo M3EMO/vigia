@@ -9,6 +9,12 @@ la fracción de Y_i que queda sin marcar, `L_i(tau) = |{t in Y_i : p_t < tau}| /
 por B = 1 y monótona. `tau_hat` es el mayor tau con `(n/(n+1)) R_n(tau) + B/(n+1) <= alpha`.
 Garantía: la FNR esperada de una respuesta nueva con errores es <= alpha (intercambiabilidad).
 Las respuestas sin tokens alucinados tienen pérdida 0 y no entran en n.
+
+Elección del alpha: CRC garantiza la FNR por token, pero no dice cuántas respuestas buenas se
+marcan. Cada umbral guarda además, medido en calibración a nivel respuesta (marcada si algún token
+supera tau), la detección de respuestas malas y las falsas alarmas en respuestas buenas. El alpha
+recomendado maximiza detección - falsas alarmas (índice de Youden) sobre la grilla, solo con
+calibración: el set de test queda para auditar.
 """
 
 from __future__ import annotations
@@ -22,11 +28,21 @@ from typing import Any
 import numpy as np
 
 from vigia.contracts import ModelInfo, feature_tier
-from vigia.detector import DRIFT_REFERENCE_KEY, Detector, logit, sigmoid
+from vigia.detector import (
+    DRIFT_REFERENCE_KEY,
+    RESPONSE_FALSE_ALARM_KEY,
+    RESPONSE_RECALL_KEY,
+    Detector,
+    logit,
+    sigmoid,
+)
 from vigia.drift import DRIFT_FEATURES, build_reference
 from vigia.labels import IGNORE_LABEL
 
-DEFAULT_ALPHAS = (0.05, 0.1, 0.2, 0.3)
+# Grilla fina 0,02; 0,04; …; 0,50. Con Granite la grilla gruesa (0,05; 0,1; 0,2; 0,3) salteaba el
+# codo de la curva detección / falsas alarmas (alpha 0,14). round() evita 0.06000000000000001.
+DEFAULT_ALPHAS = tuple(round(0.02 * k, 2) for k in range(1, 26))
+FALLBACK_DEFAULT_ALPHA = 0.1  # default_alpha si no hay alpha recomendado
 DEFAULT_C_GRID = (0.01, 0.1, 1.0, 10.0)
 SPLITS = ("train", "cal", "test")
 
@@ -346,22 +362,62 @@ def crc_threshold(p: np.ndarray, y: np.ndarray, response_ids: np.ndarray, alpha:
 def crc_thresholds(
     p: np.ndarray, y: np.ndarray, response_ids: np.ndarray, alphas: Sequence[float]
 ) -> tuple[list[dict[str, Any]], list[CRCResult]]:
-    """Entradas `thresholds` del artefacto con tasa de marcado y precisión esperadas."""
+    """Entradas `thresholds` del artefacto con tasa de marcado y precisión esperadas por token, y
+    detección y falsas alarmas esperadas por respuesta (`response_rates`)."""
+    p = np.asarray(p, dtype=np.float64)
+    y = np.asarray(y)
+    resp_max, resp_label = _response_max(p, y, np.asarray(response_ids).astype(str))
     entries, results = [], []
     for alpha in sorted(alphas):
         res = crc_threshold(p, y, response_ids, alpha)
         flagged = p >= res.tau
         precision = float(y[flagged].mean()) if flagged.any() else None
+        recall, false_alarm = response_rates(resp_max, resp_label, res.tau)
         entries.append(
             {
                 "alpha": float(alpha),
                 "tau": res.tau,
                 "expected_flag_rate": float(flagged.mean()),
                 "expected_precision": precision,
+                RESPONSE_RECALL_KEY: recall,
+                RESPONSE_FALSE_ALARM_KEY: false_alarm,
             }
         )
         results.append(res)
     return entries, results
+
+
+def response_rates(
+    resp_max: np.ndarray, resp_label: np.ndarray, tau: float
+) -> tuple[float | None, float | None]:
+    """(detección, falsas alarmas) por respuesta con el umbral tau. Una respuesta queda marcada si
+    su p_error máximo por token es >= tau.
+
+    Detección: fracción de respuestas con algún token alucinado que quedan marcadas. Falsas alarmas:
+    fracción de respuestas sin tokens alucinados que quedan marcadas. None si no hay de esa clase.
+    """
+    flagged = np.asarray(resp_max) >= tau
+    bad = np.asarray(resp_label) == 1
+    recall = float(flagged[bad].mean()) if bad.any() else None
+    false_alarm = float(flagged[~bad].mean()) if (~bad).any() else None
+    return recall, false_alarm
+
+
+def recommend_alpha(thresholds: Sequence[Mapping[str, Any]]) -> float | None:
+    """Alpha que maximiza detección - falsas alarmas por respuesta (Youden); empate: el menor.
+
+    Usa solo las métricas guardadas en `thresholds` (medidas en calibración). None si ningún
+    umbral tiene las dos (por ejemplo, calibración sin respuestas buenas).
+    """
+    scored = [
+        (float(t[RESPONSE_RECALL_KEY]) - float(t[RESPONSE_FALSE_ALARM_KEY]), float(t["alpha"]))
+        for t in thresholds
+        if t.get(RESPONSE_RECALL_KEY) is not None and t.get(RESPONSE_FALSE_ALARM_KEY) is not None
+    ]
+    if not scored:
+        return None
+    best = max(score for score, _ in scored)
+    return min(alpha for score, alpha in scored if score >= best - 1e-12)
 
 
 def _response_max(p: np.ndarray, y: np.ndarray, responses: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -384,7 +440,7 @@ def train_detector(
     model_info: ModelInfo,
     *,
     alphas: Sequence[float] = DEFAULT_ALPHAS,
-    default_alpha: float = 0.1,
+    default_alpha: float | None = None,
     cal_frac: float = 0.2,
     test_frac: float = 0.2,
     seed: int = 0,
@@ -400,12 +456,15 @@ def train_detector(
     `features` mapea nombre canónico -> valor por token (NaN = faltante). `groups` es el id de
     pregunta y define el split sin fuga. `split` reutiliza un split previo (`split_report["groups"]`).
     Features sin valores finitos o constantes en train se descartan y se informan.
+
+    `default_alpha=None` usa el alpha recomendado (`recommend_alpha`, medido en calibración); sin
+    recomendación, 0,1 (o el menor alpha calibrado si es mayor). Un valor explícito se respeta.
     """
     from vigia.evaluate import SingleClassError, auroc, brier, ece  # import diferido (ver _select_c)
 
     if not alphas or not all(0 < a < 1 for a in alphas):
         raise ValueError("alphas debe ser una lista de valores en (0, 1)")
-    if not min(alphas) <= default_alpha < 1:
+    if default_alpha is not None and not min(alphas) <= default_alpha < 1:
         raise ValueError("default_alpha debe ser >= al menor alpha calibrado")
     data = build_dataset(features, labels, groups, response_ids)
     if split is None:
@@ -451,6 +510,9 @@ def train_detector(
     p_cal = sigmoid(a * z_cal + b)
 
     thresholds, crc_results = crc_thresholds(p_cal, cal.y, cal.responses, alphas)
+    recommended = recommend_alpha(thresholds)  # solo calibración: test no participa
+    if default_alpha is None:
+        default_alpha = recommended if recommended is not None else max(FALLBACK_DEFAULT_ALPHA, min(alphas))
 
     m_cal, y_resp_cal = _response_max(p_cal, cal.y, cal.responses)
     resp_note = "platt"
@@ -506,6 +568,7 @@ def train_detector(
         default_alpha=default_alpha,
         metrics=metrics,
         training=training,
+        recommended_alpha=recommended,
     )
 
     def count(part: Dataset) -> dict[str, Any]:
@@ -527,6 +590,8 @@ def train_detector(
         "crc": [
             {"alpha": r.alpha, "tau": r.tau, "n_responses": r.n, "feasible": r.feasible} for r in crc_results
         ],
+        "recommended_alpha": recommended,
+        "default_alpha": default_alpha,
         "detector_id": detector.id,
     }
     return detector, split_report

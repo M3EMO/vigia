@@ -843,10 +843,13 @@ def calibrate_features(
     *,
     seed: int = 0,
     alphas: Sequence[float] = DEFAULT_ALPHAS,
-    default_alpha: float = 0.1,
+    default_alpha: float | None = None,
     feature_names: Sequence[str] | None = None,
 ) -> tuple[Detector, dict[str, Any]]:
-    """Entrena el detector (F0+F1 por defecto) con split agrupado por pregunta."""
+    """Entrena el detector (F0+F1 por defecto) con split agrupado por pregunta.
+
+    `default_alpha=None` deja el alpha recomendado en calibración (ver `train_detector`).
+    """
     names = list(feature_names) if feature_names is not None else detector_feature_names(fs.names)
     unknown = sorted(set(names) - set(fs.names))
     if unknown:

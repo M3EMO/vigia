@@ -45,7 +45,7 @@ Reglas del contrato:
 | P-02 | Backend HF con streaming | genera token a token con hooks, separa prefill de decode, respeta `attention_mask` | `output_router_logits` falla con cache KV | P0 |
 | P-03 | Canal `final` de gpt-oss | parseo de harmony; `analysis` nunca se muestra ni se puntúa | — | P0 |
 | P-04 | Detector JSON | LR + z-score + Platt + τ por alpha, hash SHA-256, runtime numpy | El repo del paper usa pickle | P0 |
-| P-05 | Calibración | splits agrupados por pregunta, Platt (A-04; isotónica pendiente, ver P-41), CRC sobre FNR; aviso si la garantía obliga a marcar ≥ 95 % de los tokens | Umbral F1 no transfiere | P0 |
+| P-05 | Calibración | splits agrupados por pregunta, Platt (A-04; isotónica pendiente, ver P-41), CRC sobre FNR; aviso si la garantía obliga a marcar ≥ 95 % de los tokens; grilla fina de alpha (0,02 a 0,50) con detección y falsas alarmas por respuesta en cal y recommended_alpha elegido solo con cal | Umbral F1 no transfiere | P0 |
 | P-06 | Etiquetas computables | EM y F1 de tokens con normalización española; aritmética | CI sin LLM | P0 |
 | P-07 | Juez LLM | endpoint OpenAI-compatible, schema `{label, hallucinated_spans}`, spans substring exacto, mapeo por offsets | Juez con sesgo a falso positivo | P1 |
 | P-08 | Reporte de evaluación | AUROC, AUPRC, ECE, Brier, recall@FPR 0,1, IoU de span; bootstrap por cluster; 3 baselines | Competencia no publica métricas en español | P0 |
@@ -64,7 +64,7 @@ Reglas del contrato:
 | P-21 | Panel: Generaciones y Detalle | lista filtrable (querystring sin PII), detalle con fragmentos codificados 3 veces y aviso "texto sin marcar no está verificado" | Galileo usa logprobs crudos | P0 |
 | P-22 | Panel: Cola de revisión | estados pendiente/reservado/necesita otro/completado; teclado 1/2/3, Ctrl+Enter; etiquetas realimentan calibración | — | P0 |
 | P-23 | Panel: Calibración | subir JSONL, job de entrenamiento, reporte con 7 gráficos, activar versión | — | P0 |
-| P-24 | Panel: Políticas | alpha con input numérico, tasa de marcado y precisión esperadas, acciones; aviso si el alpha elegido marca casi todo | — | P0 |
+| P-24 | Panel: Políticas | alpha con input numérico, tasa de marcado y precisión esperadas, acciones; aviso si el alpha elegido marca casi todo; frontera detección de respuestas malas / falsas alarmas en buenas medida en calibración (gráfico + tabla), alpha recomendado (máximo de detección - falsas alarmas en cal, grilla 0,02 a 0,50) con botón 'Usar el alpha recomendado'; sin alpha fijado por el owner rige el default_alpha del detector activo (= recomendado); aviso para recalibrar si el artefacto es previo | — | P0 |
 | P-25 | Panel: Modelo | heatmap capa × experto del uso | Diferenciador frente al mercado | P1 |
 | P-26 | Panel: Playground | prompt → respuesta en streaming con fragmentos marcados | Demo de 2 minutos del plan | P0 |
 | P-27 | Panel: Configuración | retención, `store_text`, webhooks, keys, usuarios | — | P0 |

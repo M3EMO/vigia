@@ -49,7 +49,7 @@
       <div class="vg-field">
         <label for="alphas">Alphas (opcional)</label>
         <input id="alphas" name="alphas" type="text" maxlength="200" placeholder="0,05; 0,1; 0,2; 0,3" aria-describedby="alphas-hint"{% if error_field == "alphas" %} aria-invalid="true"{% endif %}>
-        <p class="vg-hint" id="alphas-hint">FNR objetivo por token para los umbrales CRC, separados por punto y coma. Vacío usa 0,05; 0,1; 0,2; 0,3.</p>
+        <p class="vg-hint" id="alphas-hint">FNR objetivo por token para los umbrales CRC, separados por punto y coma. Vacío usa la grilla de 0,02 a 0,50 cada 0,02 y deja como alpha por defecto el recomendado.</p>
       </div>
       <div class="vg-field">
         <label for="seed">Semilla</label>

@@ -13,13 +13,41 @@
   <h2 id="alpha-title">Alphas del detector activo</h2>
   {% if thresholds %}
   <p class="vg-hint">alpha es la tasa de errores por token que se acepta dejar sin marcar (FNR, garantizada por CRC). Menor alpha marca más texto. Detector <code>{{ detector_id }}</code>.</p>
+  <p data-alpha-source>{% if alpha_explicit %}La política fija alpha {{ policy.alpha|num(2) }}.{% else %}La política no fija alpha: usa el del detector activo ({{ policy.alpha|num(2) }}) y lo sigue cuando se recalibra.{% endif %}</p>
+
+  <h3 id="frontier-title">Detección y falsas alarmas por respuesta</h3>
+  {% if frontier and frontier.status == "ok" %}
+  <p class="vg-hint">Cada punto es un alpha medido en el set de calibración: qué parte de las respuestas con errores queda marcada (detección) y qué parte de las respuestas sin errores también (falsas alarmas). Solo se muestran los alphas que no empeoran a otro en las dos cosas.</p>
+  {{ frontier.figure }}
+  {% if frontier.recommended %}
+  <div class="vg-alert vg-alert-info" role="note" data-recommended-alpha>
+    <p><strong>alpha recomendado: {{ frontier.recommended_alpha|num(2) }}.</strong> En calibración detecta el {{ frontier.recommended.expected_response_recall|pct }} de las respuestas con errores y marca el {{ frontier.recommended.expected_response_false_alarm|pct }} de las respuestas sin errores: es la mayor diferencia entre las dos.</p>
+    {% if can("policy:write") %}
+    {% if policy.alpha != frontier.recommended_alpha %}
+    <form method="post" action="/policies/recommended-alpha" class="vg-form">
+      {{ csrf() }}
+      <div class="vg-actions"><button type="submit" class="vg-btn">Usar el alpha recomendado</button></div>
+    </form>
+    {% else %}
+    <p>La política ya usa el alpha recomendado.</p>
+    {% endif %}
+    {% endif %}
+  </div>
+  {% endif %}
+  {% elif frontier and frontier.status == "no_good" %}
+  <div class="vg-alert vg-alert-warn" role="status" data-frontier-missing><p>La calibración no tuvo respuestas sin errores: no se pueden medir las falsas alarmas ni recomendar un alpha. Recalibrá con un dataset que tenga respuestas correctas.</p></div>
+  {% else %}
+  <div class="vg-alert vg-alert-warn" role="status" data-frontier-missing><p>Este detector se calibró antes de que Vigía midiera la detección y las falsas alarmas por respuesta. <a href="/calibration">Recalibralo</a> para ver la frontera y el alpha recomendado. Mientras tanto, la tabla muestra lo que tiene.</p></div>
+  {% endif %}
+
   <div class="vg-table-wrap">
     <table class="vg-table vg-table-cards">
-      <caption class="sr-only">Umbrales guardados del detector activo</caption>
-      <thead><tr><th scope="col">alpha</th><th scope="col" class="vg-num">τ</th><th scope="col" class="vg-num">Tasa de marcado esperada</th><th scope="col" class="vg-num">Precisión esperada</th></tr></thead>
+      <caption class="sr-only">Umbrales guardados del detector activo, con detección y falsas alarmas esperadas por respuesta</caption>
+      <thead><tr><th scope="col">alpha</th><th scope="col" class="vg-num">τ</th><th scope="col" class="vg-num">Detección esperada</th><th scope="col" class="vg-num">Falsas alarmas esperadas</th><th scope="col" class="vg-num">Tasa de marcado esperada</th><th scope="col" class="vg-num">Precisión esperada</th></tr></thead>
       <tbody>
         {% for t in thresholds %}
-        <tr{% if t.alpha == policy.alpha %} aria-current="true"{% endif %}><th scope="row" data-label="alpha">{{ t.alpha|num(2) }}{% if t.alpha == policy.alpha %} (actual){% endif %}</th><td class="vg-num" data-label="τ">{{ t.tau|num(3) }}</td><td class="vg-num" data-label="Tasa de marcado esperada">{{ t.expected_flag_rate|pct }}</td><td class="vg-num" data-label="Precisión esperada">{{ t.expected_precision|num(3) }}</td></tr>
+        {% set is_rec = frontier and t.alpha == frontier.recommended_alpha %}
+        <tr{% if t.alpha == policy.alpha %} aria-current="true"{% endif %}><th scope="row" data-label="alpha">{{ t.alpha|num(2) }}{% if t.alpha == policy.alpha %} (actual){% endif %}{% if is_rec %} <span class="vg-badge vg-badge-info">recomendado</span>{% endif %}</th><td class="vg-num" data-label="τ">{{ t.tau|num(3) }}</td><td class="vg-num" data-label="Detección esperada">{{ t.expected_response_recall|pct }}</td><td class="vg-num" data-label="Falsas alarmas esperadas">{{ t.expected_response_false_alarm|pct }}</td><td class="vg-num" data-label="Tasa de marcado esperada">{{ t.expected_flag_rate|pct }}</td><td class="vg-num" data-label="Precisión esperada">{{ t.expected_precision|num(3) }}</td></tr>
         {% endfor %}
       </tbody>
     </table>
@@ -42,8 +70,9 @@
     <div class="vg-form-inline">
       <div class="vg-field">
         <label for="alpha">alpha (FNR por token)</label>
-        <input id="alpha" name="alpha" type="number" min="0.001" max="0.999" step="0.001" inputmode="decimal" required value="{{ values.alpha }}"{{ invalid(errors, "alpha") }}>
+        <input id="alpha" name="alpha" type="number" min="0.001" max="0.999" step="0.001" inputmode="decimal" required value="{{ values.alpha }}"{{ invalid(errors, "alpha", none if alpha_explicit else "alpha-hint") }}>
         {{ field_error(errors, "alpha") }}
+        {% if not alpha_explicit %}<p class="vg-hint" id="alpha-hint">Si lo dejás igual, la política sigue al alpha del detector activo.</p>{% endif %}
       </div>
       <div class="vg-field">
         <label for="gap_max">Palabras de hueco en un fragmento</label>

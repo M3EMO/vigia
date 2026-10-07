@@ -959,3 +959,140 @@ def heatmap_table(
     headers = ["Capa"] + [f"Experto {c}" for c in col_labels]
     rows = [[f"Capa {lab}"] + [fmt_num(v) for v in r] for lab, r in zip(row_labels, matrix, strict=True)]
     return data_table(f"{title} ({value_label})", headers, rows)
+
+
+# --- frontera detección / falsas alarmas por respuesta ----------------------------------------------
+
+
+def _pareto_points(points: Sequence[Mapping[str, Any]]) -> list[Mapping[str, Any]]:
+    """Puntos con alpha, recall y false_alarm finitos (recall y false_alarm en [0, 1]), por falsa alarma."""
+    clean = [
+        p
+        for p in points
+        if all(_finite(p.get(k)) for k in ("alpha", "recall", "false_alarm"))
+        and 0 <= p["recall"] <= 1
+        and 0 <= p["false_alarm"] <= 1
+    ]
+    return sorted(clean, key=lambda p: (p["false_alarm"], p["recall"], p["alpha"]))
+
+
+def _is_recommended(p: Mapping[str, Any], recommended_alpha: Any) -> bool:
+    return _finite(recommended_alpha) and abs(p["alpha"] - recommended_alpha) < 1e-9
+
+
+def pareto_svg(
+    points: Sequence[Mapping[str, Any]],
+    *,
+    recommended_alpha: float | None = None,
+    title: str = "Detección y falsas alarmas por respuesta",
+) -> str:
+    """Frontera por respuesta: falsas alarmas en respuestas buenas (x) contra detección de respuestas
+    malas (y). Cada punto lleva su alpha; el recomendado va con un rombo.
+
+    `points`: dicts con `alpha`, `recall`, `false_alarm` y opcionalmente `tau` y `flag_rate`.
+    """
+    pts = _pareto_points(points)
+    if not pts:
+        return _empty("pareto", title)
+    first, last = pts[0], pts[-1]
+    desc = (
+        f"{len(pts)} alphas en la frontera. Va de {fmt_pct(first['false_alarm'])} de falsas alarmas "
+        f"con {fmt_pct(first['recall'])} de detección (alpha {fmt_num(first['alpha'], 2)}) a "
+        f"{fmt_pct(last['false_alarm'])} con {fmt_pct(last['recall'])} (alpha {fmt_num(last['alpha'], 2)})."
+    )
+    rec = next((p for p in pts if _is_recommended(p, recommended_alpha)), None)
+    if rec is not None:
+        desc += (
+            f" El alpha recomendado, {fmt_num(rec['alpha'], 2)}, detecta el {fmt_pct(rec['recall'])} de "
+            f"las respuestas malas y marca el {fmt_pct(rec['false_alarm'])} de las buenas: es la mayor "
+            "diferencia entre las dos."
+        )
+    elif _finite(recommended_alpha):
+        desc += f" El alpha recomendado, {fmt_num(recommended_alpha, 2)}, no está en esta frontera."
+    frame = _unit_frame()
+    parts = [
+        _open(
+            "pareto",
+            ([(p["alpha"], p["recall"], p["false_alarm"]) for p in pts], recommended_alpha),
+            title,
+            desc,
+        )
+    ]
+    parts.append(
+        frame.axes(
+            UNIT_TICKS,
+            UNIT_TICKS,
+            "Falsas alarmas en respuestas buenas",
+            "Detección de respuestas malas",
+            lambda t: fmt_pct(t, 0),
+            lambda t: fmt_pct(t, 0),
+        )
+    )
+    parts.append(_line(frame.x(0), frame.y(0), frame.x(1), frame.y(1), "vg-ref", MUTED, "4 4"))
+    parts.append(frame.polyline([p["false_alarm"] for p in pts], [p["recall"] for p in pts], 0))
+    k, color, _ = _cat(0)
+    for p in pts:
+        if p is not rec:
+            parts.append(
+                f'<circle cx="{frame.x(p["false_alarm"]):.1f}" cy="{frame.y(p["recall"]):.1f}" r="3.5" '
+                f'class="vg-f{k}" fill="{color}"/>'
+            )
+    note = "Número junto a cada punto: alpha. Diagonal: azar."
+    obstacles = [_text_box(frame.x0 + frame.w - 4, frame.y0 + frame.h - 8, note, "end", 10)]
+    labels: list[str] = []
+    # El recomendado se etiqueta primero; los demás, solo si no pisan una etiqueta ya puesta.
+    for p in sorted(pts, key=lambda p: (p is not rec, p["alpha"])):
+        x, y = frame.x(p["false_alarm"]), frame.y(p["recall"])
+        text = f"Recomendado: alpha {fmt_num(p['alpha'], 2)}" if p is rec else fmt_num(p["alpha"], 2)
+        size = 11 if p is rec else 10
+        candidates = [(x + 7, y + 14, "start"), (x + 7, y - 7, "start"), (x - 7, y + 14, "end")]
+        for lx, ly, anchor in candidates:
+            box = _text_box(lx, ly, text, anchor, size)
+            inside = frame.x0 <= box[0] and box[2] <= frame.x0 + frame.w and frame.y0 <= box[1]
+            if inside and box[3] <= frame.y0 + frame.h and not any(_overlaps(box, o) for o in obstacles):
+                break
+        else:
+            if p is not rec:
+                continue
+            lx, ly, anchor = candidates[0] if x < frame.x0 + frame.w / 2 else candidates[2]
+            box = _text_box(lx, ly, text, anchor, size)
+        obstacles.append(box)
+        labels.append(_text(lx, ly, text, anchor=anchor, size=size))
+    if rec is not None:
+        x, y = frame.x(rec["false_alarm"]), frame.y(rec["recall"])
+        k2, color2, _ = _cat(1)
+        parts.append(
+            f'<path d="M{x:.1f} {y - 7:.1f} L{x + 7:.1f} {y:.1f} L{x:.1f} {y + 7:.1f} '
+            f'L{x - 7:.1f} {y:.1f} Z" class="vg-s3 vg-f{k2}" stroke="{INK}" fill="{color2}" '
+            'stroke-width="1.5"/>'
+        )
+    parts += labels
+    parts.append(
+        _text(frame.x0 + frame.w - 4, frame.y0 + frame.h - 8, note, anchor="end", cls="vg-muted", size=10)
+    )
+    return "".join(parts) + "</svg>"
+
+
+def pareto_table(
+    points: Sequence[Mapping[str, Any]],
+    *,
+    recommended_alpha: float | None = None,
+    title: str = "Detección y falsas alarmas por respuesta",
+) -> str:
+    pts = _pareto_points(points)
+    with_rate = any(_finite(p.get("flag_rate")) for p in pts)
+    headers = ["alpha", "τ", "Detección de respuestas malas", "Falsas alarmas en respuestas buenas"]
+    if with_rate:
+        headers.append("Tasa de marcado de tokens")
+    rows = []
+    for p in pts:
+        row = [
+            fmt_num(p["alpha"], 2) + (" (recomendado)" if _is_recommended(p, recommended_alpha) else ""),
+            fmt_num(p.get("tau")),
+            fmt_pct(p["recall"]),
+            fmt_pct(p["false_alarm"]),
+        ]
+        if with_rate:
+            row.append(fmt_pct(p.get("flag_rate")))
+        rows.append(row)
+    return data_table(title, headers, rows)

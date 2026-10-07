@@ -3,10 +3,15 @@ import pytest
 from sklearn.linear_model import LogisticRegression
 
 from vigia.calibrate import (
+    DEFAULT_ALPHAS,
     CalibrationError,
+    _response_max,
     build_dataset,
     crc_threshold,
+    crc_thresholds,
     fit_logistic,
+    recommend_alpha,
+    response_rates,
     split_groups,
     split_masks,
     train_detector,
@@ -136,11 +141,14 @@ def test_artifact_thresholds_are_monotone_and_report_flag_rate():
     feats, y, groups, responses = _synthetic(seed=4, n_q=200)
     det, report = train_detector(feats, y, groups, responses, INFO, c_grid=(1.0,))
     th = det.thresholds
-    assert [t["alpha"] for t in th] == [0.05, 0.1, 0.2, 0.3]
+    assert [t["alpha"] for t in th] == list(DEFAULT_ALPHAS)
     assert all(a["tau"] <= b["tau"] for a, b in zip(th, th[1:], strict=False))
     assert all(a["expected_flag_rate"] >= b["expected_flag_rate"] for a, b in zip(th, th[1:], strict=False))
     assert all(r["feasible"] for r in report["crc"])
-    assert det.default_alpha == 0.1
+    # Con 15 tokens por respuesta y prevalencia ~0,4 todas las respuestas de cal tienen errores: sin
+    # respuestas buenas la falsa alarma es null, no hay recomendación y default_alpha cae a 0,1.
+    assert all(t["expected_response_false_alarm"] is None for t in th)
+    assert det.recommended_alpha is None and det.default_alpha == 0.1 and det.pareto() == []
 
 
 def test_ignore_labels_dropped_and_bad_features_reported():
@@ -221,3 +229,87 @@ def test_single_class_split_message_suggests_another_seed():
     split = {"cal": neg[:5], "test": pos[:3] + neg[5:7], "train": neg[7:] + pos[3:]}
     with pytest.raises(CalibrationError, match="otra semilla"):
         train_detector(feats, y, groups, responses, INFO, split=split, c_grid=(1.0,))
+
+
+# --- grilla fina y alpha recomendado ----------------------------------------------------------------
+
+
+def test_default_alpha_grid_is_fine_and_without_float_noise():
+    assert len(DEFAULT_ALPHAS) == 25 and DEFAULT_ALPHAS[0] == 0.02 and DEFAULT_ALPHAS[-1] == 0.5
+    assert all(repr(a) == f"{a:.2f}".rstrip("0") for a in DEFAULT_ALPHAS)  # 0.06, no 0.06000000000000001
+    assert all(round(b - a, 10) == 0.02 for a, b in zip(DEFAULT_ALPHAS, DEFAULT_ALPHAS[1:], strict=False))
+    assert 0.1 in DEFAULT_ALPHAS and 0.14 in DEFAULT_ALPHAS and 0.32 in DEFAULT_ALPHAS
+
+
+def test_response_rates_and_recommendation_hand_values():
+    # Respuestas: r0 mala (máx 0,9), r1 mala (máx 0,4), r2 buena (máx 0,6), r3 buena (máx 0,2).
+    p = np.array([0.9, 0.1, 0.4, 0.3, 0.6, 0.2])
+    y = np.array([1, 0, 1, 0, 0, 0])
+    resp = np.array(["r0", "r0", "r1", "r1", "r2", "r3"])
+    m, lab = _response_max(p, y, resp)
+    assert response_rates(m, lab, 0.5) == (0.5, 0.5)
+    assert response_rates(m, lab, 0.3) == (1.0, 0.5)
+    assert response_rates(m, lab, 0.95) == (0.0, 0.0)
+    assert response_rates(m[lab == 1], lab[lab == 1], 0.5) == (0.5, None)
+    entries, _ = crc_thresholds(p, y, resp, [0.6, 0.8])
+    for e in entries:
+        assert (e["expected_response_recall"], e["expected_response_false_alarm"]) == response_rates(
+            m, lab, e["tau"]
+        )
+
+    def th(alpha, recall, false_alarm):
+        return {
+            "alpha": alpha,
+            "expected_response_recall": recall,
+            "expected_response_false_alarm": false_alarm,
+        }
+
+    # Youden: 0,99-0,60 = 0,39; 0,96-0,20 = 0,76; 0,85-0,15 = 0,70 -> 0,14 (el codo medido con Granite).
+    assert recommend_alpha([th(0.1, 0.99, 0.6), th(0.14, 0.96, 0.2), th(0.32, 0.85, 0.15)]) == 0.14
+    assert recommend_alpha([th(0.2, 0.9, 0.1), th(0.1, 0.9, 0.1), th(0.3, 0.5, 0.0)]) == 0.1  # empate: menor
+    assert recommend_alpha([th(0.1, 1.0, None)]) is None
+    assert recommend_alpha([{"alpha": 0.1, "tau": 0.5}]) is None  # umbrales de un artefacto viejo
+
+
+def _mixed_dataset(seed=11, n_q=200, resp_per_q=2, tok=10):
+    """Respuestas limpias y con errores (sesgo por respuesta), para que haya falsas alarmas medibles."""
+    rng = np.random.default_rng(seed)
+    n_resp = n_q * resp_per_q
+    n = n_resp * tok
+    groups = np.repeat([f"q{i}" for i in range(n_q)], resp_per_q * tok)
+    responses = np.repeat([f"r{i}" for i in range(n_resp)], tok)
+    offset = np.repeat(rng.normal(scale=2.0, size=n_resp), tok)
+    a, b = rng.normal(size=n), rng.normal(size=n)
+    y = (rng.random(n) < 1 / (1 + np.exp(-(2.5 * a - 1.5 * b - 4.0 + offset)))).astype(int)
+    return {"out_entropy": a, "r_ent_n@0": b}, y, groups, responses
+
+
+def test_recommended_alpha_is_chosen_only_with_calibration_data():
+    """Cambiar las etiquetas de test no cambia el alpha recomendado ni los umbrales: test no elige."""
+    feats, y, groups, responses = _mixed_dataset()
+    det, report = train_detector(feats, y, groups, responses, INFO, c_grid=(1.0,))
+    assert det.recommended_alpha is not None and det.recommended_alpha in DEFAULT_ALPHAS
+    assert det.default_alpha == det.recommended_alpha == report["recommended_alpha"]
+    th = det.thresholds
+    assert det.recommended_alpha == recommend_alpha(th)
+    best = max(t["expected_response_recall"] - t["expected_response_false_alarm"] for t in th)
+    winner = next(t for t in th if t["alpha"] == det.recommended_alpha)
+    assert winner["expected_response_recall"] - winner["expected_response_false_alarm"] == pytest.approx(best)
+    assert all(0 <= t["expected_response_false_alarm"] <= 1 for t in th)
+    assert det.pareto() and det.recommended_alpha in {p["alpha"] for p in det.pareto()}
+
+    test_mask = split_masks(groups, report["groups"])["test"]
+    flipped = y.copy()
+    flipped[test_mask] = 1 - flipped[test_mask]
+    det2, report2 = train_detector(
+        feats, flipped, groups, responses, INFO, c_grid=(1.0,), split=report["groups"]
+    )
+    assert det2.recommended_alpha == det.recommended_alpha and det2.default_alpha == det.default_alpha
+    assert det2.thresholds == th
+    assert det2.artifact["metrics"]["test"] != det.artifact["metrics"]["test"]  # test sí cambió
+
+
+def test_explicit_default_alpha_is_kept_and_recommendation_still_stored():
+    feats, y, groups, responses = _mixed_dataset(seed=12, n_q=120)
+    det, _ = train_detector(feats, y, groups, responses, INFO, c_grid=(1.0,), default_alpha=0.3)
+    assert det.default_alpha == 0.3 and det.recommended_alpha is not None

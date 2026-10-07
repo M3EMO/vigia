@@ -804,3 +804,138 @@ def test_detector_report_policies_and_activation_warn_when_crc_marks_almost_ever
     assert post(admin, "/policies", form).status_code == 303
     assert "data-saturation" not in admin.get("/policies").text
     assert "data-saturation" not in admin.get("/calibration").text
+
+
+# --- frontera detección / falsas alarmas y alpha recomendado ---------------------------------------
+
+
+def _frontier_detector(*, recommended: float | None = 0.14):
+    """Detector con métricas por respuesta (los números del barrido fino con Granite) y alpha
+    recomendado 0,14; default_alpha 0,1 como un artefacto calibrado con default explícito."""
+    from vigia.detector import Detector
+
+    base = make_detector().artifact
+    rows = [(0.1, 0.2, 0.99, 0.6, 0.5), (0.14, 0.3, 0.96, 0.2, 0.3), (0.32, 0.5, 0.85, 0.15, 0.2)]
+    return Detector.build(
+        model=base["model"],
+        feature_names=base["feature_names"],
+        mean=base["mean"],
+        std=base["std"],
+        weights=base["weights"],
+        bias=base["bias"],
+        platt=base["platt"],
+        response_calibrator=base["response_calibrator"],
+        thresholds=[
+            {
+                "alpha": a,
+                "tau": tau,
+                "expected_flag_rate": rate,
+                "expected_precision": 0.6,
+                "expected_response_recall": recall,
+                "expected_response_false_alarm": false_alarm,
+            }
+            for a, tau, recall, false_alarm, rate in rows
+        ],
+        default_alpha=0.1,
+        metrics={},
+        training=base["training"],
+        recommended_alpha=recommended,
+    )
+
+
+def test_policies_show_frontier_and_recommended_alpha_button_saves_with_csrf_and_audit(env):
+    runtime, org, users, app = env
+    activate_detector(runtime, org, _frontier_detector())
+    admin = login(app, users["admin"])
+    page = admin.get("/policies").text
+    assert 'class="vg-chart vg-pareto"' in page and 'role="img"' in page
+    assert "Ver datos: Frontera del detector activo (calibración)" in page  # tabla alternativa
+    for header in ("Detección esperada", "Falsas alarmas esperadas", "Tasa de marcado esperada"):
+        assert f">{header}</th>" in page
+    assert "alpha recomendado: 0,14." in page and "96,0 %" in page and "20,0 %" in page
+    assert '<span class="vg-badge vg-badge-info">recomendado</span>' in page
+    assert "data-frontier-missing" not in page and "style=" not in page.split("<main")[1]
+    assert "La política no fija alpha: usa el del detector activo (0,10)" in page
+    assert 'action="/policies/recommended-alpha"' in page and "Usar el alpha recomendado" in page
+
+    # Lectura: ve la frontera y el recomendado, pero no el botón; el POST da 403 aun con CSRF.
+    viewer = login(app, users["viewer"])
+    seen = viewer.get("/policies").text
+    assert "vg-pareto" in seen and "alpha recomendado: 0,14." in seen
+    assert 'action="/policies/recommended-alpha"' not in seen
+    assert post(viewer, "/policies/recommended-alpha").status_code == 403
+    # Sin token CSRF: rechazado y la política no cambia.
+    bare = admin.post("/policies/recommended-alpha", data={}, follow_redirects=False)
+    assert bare.status_code == 403
+    assert runtime.policy_for(org).alpha == 0.1 and runtime.policy_for(org).version == 1
+
+    resp = post(admin, "/policies/recommended-alpha")
+    assert resp.status_code == 303 and resp.headers["location"] == "/policies?ok=recommended_alpha_saved"
+    policy = runtime.policy_for(org)
+    assert policy.alpha == 0.14 and policy.version == 2 and runtime.policy_alpha_explicit(org)
+    last = audit.export_range(runtime.db, org)[-1]
+    assert last["action"] == "policy_change"
+    detail = json.loads(last["detail_json"]) if "detail_json" in last else last["detail"]
+    assert detail["changed"] == ["alpha"] and detail["alpha_source"] == "policy"
+    after = admin.get(resp.headers["location"]).text
+    assert "La política usa el alpha recomendado del detector activo." in after
+    assert "La política ya usa el alpha recomendado." in after
+    assert 'action="/policies/recommended-alpha"' not in after and "La política fija alpha 0,14." in after
+
+
+def test_policies_with_old_detector_warn_to_recalibrate_and_keep_the_table(env):
+    runtime, org, users, app = env
+    activate_detector(runtime, org)  # artefacto sin métricas por respuesta ni recommended_alpha
+    admin = login(app, users["admin"])
+    page = admin.get("/policies").text
+    assert "data-frontier-missing" in page and "Recalibralo" in page
+    assert "vg-pareto" not in page and "Usar el alpha recomendado" not in page
+    assert "Falsas alarmas esperadas" in page and "25,0 %" in page  # la tabla con lo que hay
+    resp = post(admin, "/policies/recommended-alpha")
+    assert resp.status_code == 422 and "no tiene alpha recomendado" in resp.text
+    assert runtime.policy_for(org).version == 1
+
+
+def test_policy_form_keeps_following_the_detector_when_alpha_is_unchanged(env):
+    runtime, org, users, app = env
+    activate_detector(runtime, org, _frontier_detector())
+    admin = login(app, users["admin"])
+    assert post(admin, "/policies", {**POLICY_FORM, "alpha": "0,1"}).status_code == 303
+    assert not runtime.policy_alpha_explicit(org) and runtime.policy_for(org).gap_max == 2
+    assert post(admin, "/policies", {**POLICY_FORM, "alpha": "0,32"}).status_code == 303
+    assert runtime.policy_alpha_explicit(org) and runtime.policy_for(org).alpha == 0.32
+
+
+def test_detector_page_shows_frontier_or_recalibration_notice(env):
+    runtime, org, users, app = env
+    new, old = _frontier_detector(), make_detector()
+    for det in (new, old):
+        runtime.repo(org).insert_detector(det.id, det.to_json())
+    admin = login(app, users["admin"])
+    page = admin.get(f"/calibration/detectors/{new.id}").text
+    assert "vg-pareto" in page and "Frontera en calibración (elige el alpha recomendado)" in page
+    assert (
+        '<span class="vg-badge vg-badge-info">recomendado</span>' in page
+        and "data-frontier-missing" not in page
+    )
+    assert "<dt>alpha recomendado</dt><dd>0,14</dd>" in page
+    legacy = admin.get(f"/calibration/detectors/{old.id}").text
+    assert "data-frontier-missing" in legacy and "Recalibralo" in legacy and "vg-pareto" not in legacy
+    assert "<dt>alpha recomendado</dt><dd>s/d</dd>" in legacy
+
+
+def test_detector_page_shows_test_frontier_from_the_report(env):
+    runtime, org, users, app = env
+    det = _frontier_detector()
+    report = {
+        "curves": {
+            "pareto": {
+                "cal": det.pareto(),
+                "test": [{"alpha": 0.14, "tau": 0.3, "recall": 0.9, "false_alarm": 0.25}],
+                "recommended_alpha": 0.14,
+            }
+        }
+    }
+    runtime.repo(org).insert_detector(det.id, det.to_json(), report_json=json.dumps(report))
+    page = login(app, users["admin"]).get(f"/calibration/detectors/{det.id}").text
+    assert "Frontera en test (auditoría)" in page and page.count('class="vg-chart vg-pareto"') == 2

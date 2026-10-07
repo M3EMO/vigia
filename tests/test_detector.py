@@ -260,3 +260,96 @@ def test_check_model_compares_router_hash_only_when_both_have_it():
     with pytest.raises(DetectorMismatchError, match="router"):
         det.check_model(with_hash)
     _hand_detector().check_model(with_hash)  # detector previo al campo: sigue valiendo
+
+
+# --- frontera detección / falsas alarmas y alpha recomendado ----------------------------------------
+
+
+@pytest.mark.parametrize("path", sorted((ROOT / "detectors").glob("*.json")), ids=lambda p: p.name)
+def test_shipped_detectors_without_new_keys_still_load_and_validate_hash(path):
+    """Los artefactos previos a recommended_alpha y a las métricas por respuesta siguen cargando: el
+    hash valida porque las claves nuevas son opcionales y no se agregan al cargar."""
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    assert "recommended_alpha" not in raw
+    assert all("expected_response_recall" not in t for t in raw["thresholds"])
+    det = Detector.load(path)
+    assert det.sha256 == raw["sha256"] == artifact_sha256(raw)
+    assert det.recommended_alpha is None and det.pareto() == []
+    assert det.tau(det.default_alpha) == pytest.approx(
+        next(t["tau"] for t in raw["thresholds"] if t["alpha"] == det.default_alpha)
+    )
+    assert "recommended_alpha" not in det.artifact  # cargar no reescribe el artefacto
+
+
+def _with_response_metrics(rows):
+    """rows: (alpha, tau, recall, false_alarm) -> thresholds con métricas por respuesta."""
+    return [
+        {
+            "alpha": a,
+            "tau": tau,
+            "expected_flag_rate": 0.5 - tau / 4,
+            "expected_precision": 0.5,
+            "expected_response_recall": r,
+            "expected_response_false_alarm": f,
+        }
+        for a, tau, r, f in rows
+    ]
+
+
+def test_pareto_keeps_only_non_dominated_points_and_smaller_alpha_on_ties():
+    rows = [
+        (0.02, 0.10, 1.00, 0.90),
+        (0.04, 0.20, 0.99, 0.60),
+        (0.06, 0.20, 0.99, 0.60),  # mismo tau que 0,04: queda el alpha menor
+        (0.08, 0.30, 0.95, 0.65),  # dominado por 0,04 (más falsas alarmas y menos detección)
+        (0.10, 0.40, 0.96, 0.20),
+        (0.12, 0.50, 0.90, 0.20),  # dominado por 0,10 (misma falsa alarma, menos detección)
+        (0.14, 0.60, 0.85, 0.15),
+    ]
+    det = _hand_detector(thresholds=_with_response_metrics(rows), recommended_alpha=0.1, default_alpha=0.1)
+    front = det.pareto()
+    assert [p["alpha"] for p in front] == [0.14, 0.1, 0.04, 0.02]
+    assert set(front[0]) == {"alpha", "tau", "recall", "false_alarm"}
+    points = [{"recall": r, "false_alarm": f} for _, _, r, f in rows]
+    for p in front:  # ningún punto de la grilla domina a uno de la frontera
+        assert not any(
+            q["recall"] >= p["recall"]
+            and q["false_alarm"] <= p["false_alarm"]
+            and q != {"recall": p["recall"], "false_alarm": p["false_alarm"]}
+            for q in points
+        )
+    assert det.recommended_alpha == 0.1
+    # tau(alpha) sigue siendo escalón: el alpha guardado inferior.
+    assert det.tau(0.11) == 0.4 and det.tau(0.5) == 0.6
+
+
+def test_pareto_ignores_thresholds_without_false_alarm():
+    rows = [(0.1, 0.2, 1.0, None), (0.3, 0.6, 0.9, None)]
+    det = _hand_detector(thresholds=_with_response_metrics(rows))
+    assert det.pareto() == [] and det.recommended_alpha is None
+
+
+@pytest.mark.parametrize(
+    "mutate, message",
+    [
+        (lambda a: a.update(recommended_alpha=0.2), "recommended_alpha"),
+        (lambda a: a.update(recommended_alpha="0.1"), "recommended_alpha"),
+        (lambda a: a["thresholds"][0].update(expected_response_recall=1.5), "expected_response_recall"),
+        (lambda a: a["thresholds"][0].update(expected_response_false_alarm=-0.1), "false_alarm"),
+        (lambda a: a["thresholds"][0].update(otra=1), "opcionalmente"),
+    ],
+)
+def test_new_optional_keys_are_validated(mutate, message):
+    art = _hand_detector().artifact
+    mutate(art)
+    art["sha256"] = artifact_sha256(art)
+    with pytest.raises(DetectorMismatchError, match=message):
+        Detector.load(art)
+
+
+def test_recommended_alpha_is_covered_by_the_hash():
+    art = _hand_detector(recommended_alpha=0.1).artifact
+    assert art["recommended_alpha"] == 0.1
+    art["recommended_alpha"] = 0.3
+    with pytest.raises(DetectorMismatchError, match="hash"):
+        Detector.load(art)

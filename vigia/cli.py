@@ -249,6 +249,7 @@ def cmd_label(args: argparse.Namespace) -> int:
 
 
 def cmd_calibrate(args: argparse.Namespace) -> int:
+    from vigia.calibrate import DEFAULT_ALPHAS
     from vigia.contracts import feature_tier
     from vigia.evidence import FeatureSet, calibrate_features, save_calibration
 
@@ -261,7 +262,7 @@ def cmd_calibrate(args: argparse.Namespace) -> int:
     detector, split_report = calibrate_features(
         fs,
         seed=args.seed,
-        alphas=_parse_floats(args.alphas),
+        alphas=_parse_floats(args.alphas) if args.alphas else DEFAULT_ALPHAS,
         default_alpha=args.default_alpha,
         feature_names=names,
     )
@@ -518,8 +519,17 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--features", required=True, help="features.npz o la carpeta de la corrida")
     p.add_argument("--out", help="carpeta de salida (por defecto la de features.npz)")
     p.add_argument("--tiers", default="F0,F1", help="niveles de features del detector (por defecto F0,F1)")
-    p.add_argument("--alphas", default="0.05,0.1,0.2,0.3", help="alphas de CRC")
-    p.add_argument("--default-alpha", type=_alpha, default=0.1)
+    p.add_argument(
+        "--alphas",
+        default=None,
+        help="alphas de CRC separados por coma (por defecto la grilla 0.02 a 0.50 cada 0.02)",
+    )
+    p.add_argument(
+        "--default-alpha",
+        type=_alpha,
+        default=None,
+        help="alpha por defecto del detector (por defecto, el recomendado en calibración)",
+    )
     p.add_argument("--seed", type=int, default=0)
     p.set_defaults(func=cmd_calibrate)
 

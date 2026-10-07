@@ -505,7 +505,7 @@ class Runtime:
             self._lock = threading.RLock()
             self._detectors: dict[str, tuple[str, Detector | None]] = {}
             self._detector_alerts: dict[str, str] = {}
-            self._policies: dict[str, tuple[str, Policy]] = {}
+            self._policies: dict[str, tuple[str, Policy, bool]] = {}
             self._policy_alerts: dict[str, str] = {}
             self._retrievers: dict[str, tuple[str, HttpRetriever | None]] = {}
             self._base_checked: set[str] = set()
@@ -703,16 +703,19 @@ class Runtime:
 
     # -- política --
 
-    def policy_for(self, org_id: str) -> Policy:
-        """Política del tenant (copia). Una política guardada inválida cae a los defaults seguros."""
+    def _stored_policy(self, org_id: str) -> tuple[Policy, bool]:
+        """(política guardada validada, alpha fijado por la política). Cacheada por contenido.
+
+        Una política guardada inválida cae a los defaults seguros y su alpha no cuenta como fijado.
+        """
         raw = self.repo(org_id).get_policy()
         if not raw:
-            return Policy()
+            return Policy(), False
         key = json.dumps(raw, sort_keys=True)
         with self._lock:
             cached = self._policies.get(org_id)
         if cached is not None and cached[0] == key:
-            return replace(cached[1])
+            return replace(cached[1]), cached[2]
         try:
             policy = policy_from_dict(dict(raw), rag_allowed_hosts=self.settings.rag_allowed_hosts)
             alert = None
@@ -720,32 +723,69 @@ class Runtime:
             policy = Policy()
             alert = f"La política guardada es inválida y se usan los valores por defecto: {exc}"
             log_event(_log, "policy_invalid", level=logging.WARNING, org_id=org_id)
+        explicit = alert is None and "alpha" in raw
         with self._lock:
-            self._policies[org_id] = (key, policy)
+            self._policies[org_id] = (key, policy, explicit)
             if alert:
                 self._policy_alerts[org_id] = alert
             else:
                 self._policy_alerts.pop(org_id, None)
-        return replace(policy)
+        return replace(policy), explicit
+
+    def _detector_alpha(self, org_id: str) -> float:
+        """Alpha por defecto del detector activo (el recomendado al calibrar); sin detector, Policy.alpha."""
+        alpha = getattr(self.detector_for(org_id), "default_alpha", None)  # un Scorer puede no tenerlo
+        if isinstance(alpha, int | float) and not isinstance(alpha, bool) and 0 < alpha < 1:
+            return float(alpha)
+        return Policy().alpha
+
+    def policy_for(self, org_id: str) -> Policy:
+        """Política efectiva del tenant (copia).
+
+        alpha efectivo: el de la política si el owner lo fijó (la política guardada tiene la clave
+        `alpha`); si no, `default_alpha` del detector activo, que es el alpha recomendado en
+        calibración; sin detector, `Policy.alpha` (0,1). Así una org que no eligió alpha sigue al
+        detector cuando se recalibra.
+        """
+        policy, explicit = self._stored_policy(org_id)
+        if explicit:
+            return policy
+        return replace(policy, alpha=self._detector_alpha(org_id))
+
+    def policy_alpha_explicit(self, org_id: str) -> bool:
+        """True si la política guardada fija alpha; False si el alpha sale del detector activo."""
+        return self._stored_policy(org_id)[1]
 
     def policy_alert(self, org_id: str) -> str | None:
         with self._lock:
             return self._policy_alerts.get(org_id)
 
     def save_policy(self, principal: Principal, data: dict[str, Any]) -> Policy:
-        """Valida y guarda la política (merge sobre la vigente), sube la versión y audita."""
+        """Valida y guarda la política (merge sobre la vigente), sube la versión y audita.
+
+        Un `alpha` numérico en `data` queda fijado por la política. `alpha: None` lo suelta: vuelve a
+        seguir el `default_alpha` del detector activo. Sin `alpha` en `data`, se conserva lo que había
+        (fijado o del detector). La política guardada solo lleva la clave `alpha` si está fijado.
+        """
         if not principal.can("policy:write"):
             raise PermissionError("Tu rol no tiene permiso para cambiar la política.")
         if not isinstance(data, dict):
             raise PolicyError("la política debe ser un objeto JSON")
         org_id = principal.org_id
+        explicit_before = self.policy_alpha_explicit(org_id)
         current = self.policy_for(org_id)
         before = current.to_dict()
         known = {f.name for f in fields(Policy)}
         unknown = sorted(set(data) - known)
         if unknown:
             raise PolicyError(f"campos desconocidos en la política: {', '.join(unknown)}")
-        merged = {**before, **{k: v for k, v in data.items() if k != "version"}}
+        changes = {k: v for k, v in data.items() if k != "version"}
+        explicit = explicit_before
+        if "alpha" in changes:
+            explicit = changes["alpha"] is not None
+            if not explicit:
+                changes["alpha"] = self._detector_alpha(org_id)
+        merged = {**before, **changes}
         merged["version"] = current.version + 1
         policy = policy_from_dict(merged, rag_allowed_hosts=self.settings.rag_allowed_hosts)
         detector = self.detector_for(org_id)
@@ -758,21 +798,18 @@ class Runtime:
                 )
         after = policy.to_dict()
         changed = sorted(k for k in after if k != "version" and before.get(k) != after[k])
+        stored = after if explicit else {k: v for k, v in after.items() if k != "alpha"}
+        detail: dict[str, Any] = {"changed": changed, "version": policy.version}
+        if explicit != explicit_before:
+            detail["alpha_source"] = "policy" if explicit else "detector"
         repo = self.repo(org_id)
         with self.db.transaction():
             # El actor se relee en la transacción: un rol degradado después de resolver el request no
             # confirma el cambio de política.
             actor = require_current(self.auth, principal, "policy:write") or principal
-            if not repo.set_policy(after):
+            if not repo.set_policy(stored):
                 raise LookupError("organización inexistente")
-            audit.append(
-                self.db,
-                org_id,
-                actor,
-                "policy_change",
-                None,
-                {"changed": changed, "version": policy.version},
-            )
+            audit.append(self.db, org_id, actor, "policy_change", None, detail)
         with self._lock:
             self._policies.pop(org_id, None)
             self._policy_alerts.pop(org_id, None)

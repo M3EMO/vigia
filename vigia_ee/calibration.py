@@ -528,9 +528,11 @@ class CalibrationService:
             detector.check_model(self.runtime.model_info)
         except DetectorMismatchError as exc:
             raise ActivationError(f"No se puede activar: {exc}") from None
+        # Solo un alpha fijado por la política puede quedar debajo de lo calibrado: si no está
+        # fijado, la política pasa a usar el default_alpha del detector nuevo.
         policy = self.runtime.policy_for(org_id)
         min_alpha = min(t["alpha"] for t in detector.thresholds)
-        if policy.alpha < min_alpha:
+        if self.runtime.policy_alpha_explicit(org_id) and policy.alpha < min_alpha:
             raise ActivationError(
                 f"La política usa alpha {policy.alpha:g} y el detector solo tiene umbrales desde "
                 f"{min_alpha:g}. Subí el alpha de la política o recalibrá con un alpha menor."
@@ -575,7 +577,6 @@ class CalibrationService:
         g = np.asarray(groups, dtype=object)  # pregunta: define el split sin fuga (AT-M04, P-05)
         r = np.asarray(response_ids, dtype=object)
         alphas = [float(a) for a in payload.get("alphas") or DEFAULT_ALPHAS]
-        default_alpha = 0.1 if min(alphas) <= 0.1 else min(alphas)
         seed = int(payload.get("seed", 0))
         info = self.runtime.model_info
         try:
@@ -585,8 +586,7 @@ class CalibrationService:
                 g,
                 r,
                 info,
-                alphas=alphas,
-                default_alpha=default_alpha,
+                alphas=alphas,  # default_alpha queda en el recomendado (calibración)
                 seed=seed,
                 label_source="computable" if kinds == {"answers"} else "dataset",
                 dataset_sha=dataset["sha256"],
