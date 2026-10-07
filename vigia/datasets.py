@@ -26,6 +26,7 @@ import json
 import keyword
 import os
 import random
+import re
 import urllib.request
 from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
@@ -461,6 +462,50 @@ def humaneval_item(raw: Mapping[str, Any], *, where: str = "HumanEval") -> dict[
     )
 
 
+def mbpp_item(raw: Mapping[str, Any], *, where: str = "MBPP") -> dict[str, Any]:
+    """Item de código a partir de una línea de MBPP (`text`, `test_list`, `test_setup_code`).
+
+    La función a implementar es la que llaman los asserts. La pregunta muestra el primer assert
+    como ejemplo de firma, igual que el protocolo original de MBPP.
+    """
+    if not isinstance(raw, Mapping):
+        raise DatasetError(f"{where}: se esperaba un objeto")
+    text, tests = raw.get("text"), raw.get("test_list")
+    if not isinstance(text, str) or not text.strip() or not isinstance(tests, list) or not tests:
+        raise DatasetError(f"{where}: faltan 'text' o 'test_list'")
+    match = re.match(r"\s*assert\s+(?:not\s+)?\(?\s*(?:set\()?\s*([A-Za-z_]\w*)\s*\(", str(tests[0]))
+    if not match:
+        raise DatasetError(f"{where}: no se encuentra la función en el primer assert")
+    entry = _entry_point(match.group(1), where)
+    return validate_item(
+        {
+            "id": f"MBPP/{raw.get('task_id')}",
+            "question": (
+                f"Implementá en Python la función `{entry}`. {text.strip()}\n\n"
+                f"Tiene que pasar este test:\n```python\n{tests[0]}\n```\n\n"
+                "Respondé SOLO con un bloque ```python``` que contenga la función completa, con los "
+                "imports que necesite, sin explicaciones."
+            ),
+            "tests": "\n".join([str(raw.get("test_setup_code") or ""), *map(str, tests)]) + "\n",
+            "entry_point": entry,
+            "type": "code",
+        },
+        where=where,
+    )
+
+
+def load_mbpp(path: str | Path) -> list[dict[str, Any]]:
+    """Lee el mbpp.jsonl oficial (licencia CC BY 4.0) y arma items de código. Omite líneas inválidas."""
+    items = []
+    for line_no, line in enumerate(Path(path).read_text(encoding="utf-8").splitlines(), start=1):
+        if line.strip():
+            try:
+                items.append(mbpp_item(json.loads(line), where=f"MBPP línea {line_no}"))
+            except DatasetError:
+                continue  # ponytail: unas pocas tareas tienen asserts raros; se omiten
+    return items
+
+
 def load_humaneval(
     path: str | Path = DEFAULT_HUMANEVAL_RAW, n: int | None = None, seed: int = 0
 ) -> list[dict[str, Any]]:
@@ -538,6 +583,8 @@ __all__ = [
     "item_to_json",
     "items_sha256",
     "load_humaneval",
+    "load_mbpp",
+    "mbpp_item",
     "load_mkqa_es",
     "prepare_humaneval",
     "parse_jsonl",

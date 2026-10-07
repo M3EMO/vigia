@@ -68,6 +68,18 @@ def main(run: str) -> None:
     if router is not None and output is not None:
         print(f"CV AUROC largo+router+salida {cv_auc([length, router, output]):.3f}")
 
+    # Detector por respuesta con todas las señales del router (media por respuesta), L2 elegida
+    # por CV interna. Responde si el 0,41 por token era la unidad equivocada o falta de datos.
+    from sklearn.linear_model import LogisticRegressionCV
+
+    cols = [j for j, n in enumerate(names) if n.startswith(("r_", "u_", "agg_"))]
+    z = np.array([np.nanmean(x[r == i][:, cols], axis=0) for i in ids])
+    z = np.column_stack([np.nan_to_num(z), length])
+    z = (z - z.mean(0)) / np.where(z.std(0) > 0, z.std(0), 1)
+    clf = LogisticRegressionCV(Cs=[1e-3, 1e-2, 1e-1, 1], cv=5, max_iter=2000)
+    p = cross_val_predict(clf, z, lab, cv=cv, method="predict_proba")[:, 1]
+    print(f"CV AUROC detector por respuesta (router completo + largo, {len(cols)} señales) {auroc(lab, p):.3f}")
+
 
 if __name__ == "__main__":
     main(sys.argv[1])
