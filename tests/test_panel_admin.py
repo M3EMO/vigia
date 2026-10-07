@@ -855,8 +855,13 @@ def test_policies_show_frontier_and_recommended_alpha_button_saves_with_csrf_and
     assert "alpha recomendado: 0,14." in page and "96,0 %" in page and "20,0 %" in page
     assert '<span class="vg-badge vg-badge-info">recomendado</span>' in page
     assert "data-frontier-missing" not in page and "style=" not in page.split("<main")[1]
-    assert "La política no fija alpha: usa el del detector activo (0,10)" in page
-    assert 'action="/policies/recommended-alpha"' in page and "Usar el alpha recomendado" in page
+    # Sin alpha fijado, la política ya sigue al recomendado: no hace falta el botón.
+    assert "La política no fija alpha: usa el del detector activo (0,14)" in page
+    assert 'action="/policies/recommended-alpha"' not in page
+    assert "La política sigue el alpha recomendado del detector activo." in page
+    runtime.save_policy(Principal(org_id=org, role="owner"), {"alpha": 0.1})  # alguien fijó alpha
+    page = admin.get("/policies").text
+    assert 'action="/policies/recommended-alpha"' in page and "Seguir el alpha recomendado" in page
 
     # Lectura: ve la frontera y el recomendado, pero no el botón; el POST da 403 aun con CSRF.
     viewer = login(app, users["viewer"])
@@ -867,20 +872,20 @@ def test_policies_show_frontier_and_recommended_alpha_button_saves_with_csrf_and
     # Sin token CSRF: rechazado y la política no cambia.
     bare = admin.post("/policies/recommended-alpha", data={}, follow_redirects=False)
     assert bare.status_code == 403
-    assert runtime.policy_for(org).alpha == 0.1 and runtime.policy_for(org).version == 1
+    assert runtime.policy_for(org).alpha == 0.1 and runtime.policy_for(org).version == 2
 
     resp = post(admin, "/policies/recommended-alpha")
     assert resp.status_code == 303 and resp.headers["location"] == "/policies?ok=recommended_alpha_saved"
     policy = runtime.policy_for(org)
-    assert policy.alpha == 0.14 and policy.version == 2 and runtime.policy_alpha_explicit(org)
+    # La política deja de fijar alpha y sigue al recomendado: una recalibración lo mueve sola.
+    assert policy.alpha == 0.14 and policy.version == 3 and not runtime.policy_alpha_explicit(org)
     last = audit.export_range(runtime.db, org)[-1]
     assert last["action"] == "policy_change"
     detail = json.loads(last["detail_json"]) if "detail_json" in last else last["detail"]
-    assert detail["changed"] == ["alpha"] and detail["alpha_source"] == "policy"
+    assert detail["changed"] == ["alpha"] and detail["alpha_source"] == "detector"
     after = admin.get(resp.headers["location"]).text
-    assert "La política usa el alpha recomendado del detector activo." in after
-    assert "La política ya usa el alpha recomendado." in after
-    assert 'action="/policies/recommended-alpha"' not in after and "La política fija alpha 0,14." in after
+    assert "La política sigue el alpha recomendado del detector activo." in after
+    assert 'action="/policies/recommended-alpha"' not in after
 
 
 def test_policies_with_old_detector_warn_to_recalibrate_and_keep_the_table(env):
@@ -900,7 +905,8 @@ def test_policy_form_keeps_following_the_detector_when_alpha_is_unchanged(env):
     runtime, org, users, app = env
     activate_detector(runtime, org, _frontier_detector())
     admin = login(app, users["admin"])
-    assert post(admin, "/policies", {**POLICY_FORM, "alpha": "0,1"}).status_code == 303
+    # El alpha efectivo sin fijar es el recomendado del detector (0,14): mandarlo igual no lo fija.
+    assert post(admin, "/policies", {**POLICY_FORM, "alpha": "0,14"}).status_code == 303
     assert not runtime.policy_alpha_explicit(org) and runtime.policy_for(org).gap_max == 2
     assert post(admin, "/policies", {**POLICY_FORM, "alpha": "0,32"}).status_code == 303
     assert runtime.policy_alpha_explicit(org) and runtime.policy_for(org).alpha == 0.32

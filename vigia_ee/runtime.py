@@ -733,8 +733,11 @@ class Runtime:
         return replace(policy), explicit
 
     def _detector_alpha(self, org_id: str) -> float:
-        """Alpha por defecto del detector activo (el recomendado al calibrar); sin detector, Policy.alpha."""
-        alpha = getattr(self.detector_for(org_id), "default_alpha", None)  # un Scorer puede no tenerlo
+        """Alpha recomendado del detector activo; si falta, su default_alpha; sin detector, Policy.alpha."""
+        detector = self.detector_for(org_id)
+        alpha = getattr(detector, "recommended_alpha", None)  # un Scorer puede no tenerlo
+        if alpha is None:
+            alpha = getattr(detector, "default_alpha", None)
         if isinstance(alpha, int | float) and not isinstance(alpha, bool) and 0 < alpha < 1:
             return float(alpha)
         return Policy().alpha

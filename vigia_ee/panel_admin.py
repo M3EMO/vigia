@@ -866,8 +866,9 @@ def register(router: APIRouter, runtime: Any) -> None:  # noqa: C901 - registro 
 
     @router.post("/policies/recommended-alpha", response_class=HTMLResponse)
     async def policies_recommended_alpha(request: Request, p: PolicyWriteP) -> Response:
-        """Fija en la política el alpha recomendado del detector activo. Misma vía que el formulario:
-        CSRF y permiso policy:write en la dependencia; require_current y auditoría en save_policy."""
+        """La política pasa a seguir el alpha recomendado del detector activo (alpha sin fijar): una
+        recalibración futura mueve el alpha sola. Misma vía que el formulario: CSRF y permiso
+        policy:write en la dependencia; require_current y auditoría en save_policy."""
         detector = runtime.detector_for(p.org_id)
         recommended = detector.recommended_alpha if detector is not None else None
         if recommended is None:
@@ -877,7 +878,7 @@ def register(router: APIRouter, runtime: Any) -> None:  # noqa: C901 - registro 
             )
             return policy_page(request, p, errors={"_form": message}, status=422)
         try:
-            await run_in_threadpool(runtime.save_policy, p, {"alpha": recommended})
+            await run_in_threadpool(runtime.save_policy, p, {"alpha": None})
         except PolicyError as exc:
             return policy_page(request, p, errors={"_form": str(exc)}, status=422)
         return redirect("/policies", "recommended_alpha_saved")

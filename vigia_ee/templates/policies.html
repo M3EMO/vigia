@@ -23,13 +23,14 @@
   <div class="vg-alert vg-alert-info" role="note" data-recommended-alpha>
     <p><strong>alpha recomendado: {{ frontier.recommended_alpha|num(2) }}.</strong> En calibración detecta el {{ frontier.recommended.expected_response_recall|pct }} de las respuestas con errores y marca el {{ frontier.recommended.expected_response_false_alarm|pct }} de las respuestas sin errores: es la mayor diferencia entre las dos.</p>
     {% if can("policy:write") %}
-    {% if policy.alpha != frontier.recommended_alpha %}
+    {% if alpha_explicit %}
     <form method="post" action="/policies/recommended-alpha" class="vg-form">
       {{ csrf() }}
-      <div class="vg-actions"><button type="submit" class="vg-btn">Usar el alpha recomendado</button></div>
+      <p>La política fija hoy alpha {{ policy.alpha|num(2) }}. Si pasa a seguir al detector, cada recalibración activada actualiza el alpha sola.</p>
+      <div class="vg-actions"><button type="submit" class="vg-btn">Seguir el alpha recomendado</button></div>
     </form>
     {% else %}
-    <p>La política ya usa el alpha recomendado.</p>
+    <p>La política sigue el alpha recomendado del detector activo.</p>
     {% endif %}
     {% endif %}
   </div>
