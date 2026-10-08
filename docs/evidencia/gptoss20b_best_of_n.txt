@@ -1,0 +1,17 @@
+=== best_of_n.txt
+puntaje: 887 tareas greedy; prueba: 213 tareas x 5 muestras
+tareas con ejemplos visibles: 190/213
+azar (esperado)            pasan 85.5%
+la más corta               pasan 84.5%
+menor entropía en código   pasan 85.4%
+Vigía (puntaje entrenado)  pasan 86.9%
+ejemplos + azar            pasan 89.1%
+ejemplos + la más corta    pasan 87.8%
+ejemplos + menor entropía  pasan 88.3%
+ejemplos + Vigía           pasan 89.7%
+techo (alguna pasa)        pasan 93.0%
+menor entropía en código - azar (esperado): -0.1% [IC 95 %: -2.6%; +2.3%]
+menor entropía en código - la más corta: +0.9% [IC 95 %: -1.9%; +4.2%]
+Vigía (puntaje entrenado) - la más corta: +2.3% [IC 95 %: +0.0%; +5.2%]
+ejemplos + azar - azar (esperado): +3.5% [IC 95 %: +2.0%; +5.3%]
+ejemplos + menor entropía - ejemplos + la más corta: +0.5% [IC 95 %: -2.3%; +3.3%]

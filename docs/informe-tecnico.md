@@ -166,6 +166,33 @@ Lectura:
   soluciones que fallan con 45 % de falsas alarmas (alpha 0,48, `pareto_code.txt`). Para código,
   el uso que corresponde es ordenar respuestas (mejor de N), no bloquear una sola.
 
+### 4.7 Mejor de N en código (gpt-oss-20b, 213 tareas de test × 5 muestras, temperatura 0,8)
+
+El puntaje de Vigía se entrenó con las respuestas greedy de las 887 tareas de train+cal y eligió una
+de cinco muestras por tarea de test. Los tests ocultos solo califican la elección. Datos crudos:
+`docs/evidencia/gptoss20b_best_of_n.txt`.
+
+| Política de elección | Pasan los tests |
+|---|---|
+| Azar (esperado) | 85,5 % |
+| La más corta | 84,5 % |
+| Menor entropía de salida en líneas de código | 85,4 % |
+| Vigía (puntaje entrenado) | 86,9 % |
+| Ejemplos visibles + azar | 89,1 % |
+| Ejemplos visibles + Vigía | **89,7 %** |
+| Techo: alguna de las 5 pasa | 93,0 % |
+
+Diferencias con IC 95 % por bootstrap de tareas:
+
+- Vigía contra la más corta: +2,3 puntos [0,0; +5,2], en el borde de la significancia.
+- Ejemplos visibles + azar contra azar: +3,5 puntos [+2,0; +5,3], significativo.
+- Ejemplos visibles + Vigía contra ejemplos visibles + azar: +0,6 puntos, no significativo.
+
+Lectura: de los 7,5 puntos que separan el azar del techo, el chequeo gratis con los ejemplos del
+enunciado recupera 3,5 y Vigía suma poco encima. En MBPP el ejemplo visible es además uno de los
+tests ocultos, así que parte de esa ganancia es mecánica; falta separar HumanEval de MBPP. En código
+con ejemplos ejecutables, el chequeo de ejemplos es la acción principal y Vigía, un desempate.
+
 ## 5. Latencia
 
 La meta del plan es < 5 % de latencia agregada. La medición limpia corrió en la misma laptop
