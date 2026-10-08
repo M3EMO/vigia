@@ -229,6 +229,21 @@ corrida de 600 preguntas. Frase corta (187 tokens) da 0,27 y número con unidad 
 Por respuesta, el alpha recomendado (0,26, elegido en calibración) detecta el 86 % de las respuestas
 malas con 27 % de falsas alarmas; con alpha 0,42, 76 % y 16 %.
 
+Por respuesta, sin aritmética (1.792 respuestas, 67 % fallan; `colab/factual_response.py`):
+
+| Señal o detector | Global | Fecha | Entidad | Número |
+|---|---|---|---|---|
+| Entropía de salida, media | 0,646 | 0,566 | 0,668 | 0,431 |
+| Entropía de salida, suma | 0,696 | 0,575 | 0,716 | 0,670 |
+| Largo de la respuesta | 0,669 | 0,551 | 0,685 | 0,713 |
+| CV: tipo + largo | 0,679 | 0,545 | 0,681 | 0,705 |
+| CV: tipo + largo + salida (4 señales × media y máximo) | 0,684 | 0,563 | 0,685 | 0,601 |
+| CV: tipo + largo + router | **0,811** | **0,759** | **0,813** | **0,815** |
+
+Ningún armado de la entropía de salida (media, máximo, primer token, suma, NLL, margen) supera al
+largo por más de 0,03, y sumada al largo no aporta. El router sí: +0,13 sobre tipo y largo, dentro de
+cada tipo de pregunta. Es la medición más limpia del proyecto a favor de la hipótesis de partida.
+
 Latencia: +7,6 % en p50 con F0+F1+H (meta 5 %). La corrida anterior con F0+F1 dio +3,0 %; falta
 repetir la medición sin H en la misma L4.
 
