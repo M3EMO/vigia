@@ -190,8 +190,50 @@ Diferencias con IC 95 % por bootstrap de tareas:
 
 Lectura: de los 7,5 puntos que separan el azar del techo, el chequeo gratis con los ejemplos del
 enunciado recupera 3,5 y Vigía suma poco encima. En MBPP el ejemplo visible es además uno de los
-tests ocultos, así que parte de esa ganancia es mecánica; falta separar HumanEval de MBPP. En código
-con ejemplos ejecutables, el chequeo de ejemplos es la acción principal y Vigía, un desempate.
+tests ocultos, así que parte de esa ganancia es mecánica. Separado por fuente:
+
+| Fuente | Azar | Vigía | Ejemplos + azar | Ejemplos + Vigía | Techo |
+|---|---|---|---|---|---|
+| HumanEval (n=39) | 92,3 % | 92,3 % | 93,5 % | 94,9 % | 100 % |
+| MBPP (n=174) | 84,0 % | 85,6 % | 88,1 % | 88,5 % | 91,4 % |
+
+En HumanEval, donde el ejemplo no es un test oculto, los ejemplos suman solo 1,2 puntos; con 39
+tareas no se puede concluir más. En código con ejemplos ejecutables, el chequeo de ejemplos es la
+acción principal y Vigía, un desempate.
+
+### 4.8 Factual ampliado con gpt-oss-20b (2.600 preguntas, L4)
+
+MKQA-es estratificado más aritmética (`data/evidence_v2.jsonl`). gpt-oss acierta el 45,7 %: casi
+todo en aritmética, 30 % en entidades. Test: 478 preguntas, 5.320 tokens. Datos crudos:
+`docs/evidencia/gptoss20b_v2-summary.txt` y `gptoss20b_v2-pareto.txt`.
+
+| Medición | AUROC por token |
+|---|---|
+| Detector F0+F1 | 0,773 [0,66; 0,90] |
+| Sonda sobre el residual (H) | 0,793 [0,68; 0,91] |
+| Entropía de salida | 0,569 [0,53; 0,61] |
+
+La aritmética no tiene errores en test, así que el AUROC global mezcla tipo de pregunta y error.
+Dentro de cada tipo:
+
+| Tipo | Tokens | AUROC detector | AUROC entropía |
+|---|---|---|---|
+| Fecha | 618 | 0,776 | 0,592 |
+| Entidad | 3.912 | 0,689 | 0,544 |
+| Número | 119 | 0,634 | 0,494 |
+| Todo menos aritmética | 5.111 | **0,723** | 0,556 |
+
+El router sigue ganando dentro de cada tipo, pero el número limpio es 0,72, no 0,77 ni el 0,88 de la
+corrida de 600 preguntas. Frase corta (187 tokens) da 0,27 y número con unidad 0,97: muestras chicas.
+
+Por respuesta, el alpha recomendado (0,26, elegido en calibración) detecta el 86 % de las respuestas
+malas con 27 % de falsas alarmas; con alpha 0,42, 76 % y 16 %.
+
+Latencia: +7,6 % en p50 con F0+F1+H (meta 5 %). La corrida anterior con F0+F1 dio +3,0 %; falta
+repetir la medición sin H en la misma L4.
+
+Este detector (entrenado con 2.600 preguntas, con `recommended_alpha`) reemplaza al de 600 en
+`detectors/gpt-oss-20b.json`. El artefacto anterior queda en `tests/fixtures/legacy_detectors/`.
 
 ## 5. Latencia
 

@@ -164,6 +164,12 @@ def analyze(run: str, sample_dirs: list[str]) -> None:
     }
     for name, v in picks.items():
         print(f"{name:26s} pasan {v.mean():.1%}")
+    # En MBPP el ejemplo visible es además uno de los tests ocultos: separar las fuentes.
+    for src in ("HumanEval", "MBPP"):
+        k = np.array([t.startswith(src) for t in tasks])
+        if k.any():
+            cols = ", ".join(f"{n} {v[k].mean():.1%}" for n, v in picks.items())
+            print(f"{src} (n={k.sum()}): {cols}")
     boots = rng.integers(0, len(tasks), (2000, len(tasks)))
     for a, b in (
         ("menor entropía en código", "azar (esperado)"),

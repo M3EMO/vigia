@@ -265,7 +265,9 @@ def test_check_model_compares_router_hash_only_when_both_have_it():
 # --- frontera detección / falsas alarmas y alpha recomendado ----------------------------------------
 
 
-@pytest.mark.parametrize("path", sorted((ROOT / "detectors").glob("*.json")), ids=lambda p: p.name)
+@pytest.mark.parametrize(
+    "path", sorted((ROOT / "tests" / "fixtures" / "legacy_detectors").glob("*.json")), ids=lambda p: p.name
+)
 def test_shipped_detectors_without_new_keys_still_load_and_validate_hash(path):
     """Los artefactos previos a recommended_alpha y a las métricas por respuesta siguen cargando: el
     hash valida porque las claves nuevas son opcionales y no se agregan al cargar."""
