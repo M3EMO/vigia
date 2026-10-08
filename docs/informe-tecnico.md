@@ -140,6 +140,32 @@ el código bien y el error en pocas líneas. A nivel respuesta el router aporta,
 del largo. Con 164 tareas y un modelo de 1B, el resultado es débil; la corrida con gpt-oss-20b en
 GPU decide si la señal sirve para código.
 
+### 4.6 Generación de código con gpt-oss-20b (HumanEval + MBPP, 1.134 tareas, L4)
+
+Se sumaron las 970 tareas de MBPP cuya solución de referencia pasa sus propios tests. gpt-oss-20b
+(`reasoning_effort=low`) pasa el 79,5 %. Datos crudos: `docs/evidencia/gptoss20b_code_all-resultados.txt`.
+
+| Medición | AUROC | Nota |
+|---|---|---|
+| Por token, detector F0+F1 (test, 222 tareas) | 0,675 [0,55; 0,79] | Ya no colapsa: con más datos el detector generaliza |
+| Por token, entropía de salida | 0,547 [0,52; 0,58] | — |
+| Por respuesta, entropía media del router (sin entrenar, 1.109) | 0,672 [0,63; 0,72] | — |
+| Por respuesta, solo el largo | 0,59 | El largo pesa mucho menos que en Granite |
+| Por respuesta, largo + router (validación cruzada) | 0,673 | — |
+| Por respuesta, detector con las 243 señales del router + largo (CV) | **0,758** | Mejor resultado en código |
+| Por respuesta, entropía de salida media sobre líneas de código | 0,555 | Hipótesis registrada: **refutada** |
+
+Lectura:
+
+- En gpt-oss, el router predice el fallo del código por encima del largo y de la entropía de salida.
+- La hipótesis que salió de Granite (entropía de salida solo sobre líneas de código) no se replica.
+  Se registró antes de ver estos datos, y por eso el resultado cuenta como refutación.
+- El efecto de composición sí aparece en parte: la entropía del router sobre líneas de código baja
+  de 0,672 a 0,614.
+- Como alarma por respuesta con un umbral por token, el detector es débil: detecta el 85 % de las
+  soluciones que fallan con 45 % de falsas alarmas (alpha 0,48, `pareto_code.txt`). Para código,
+  el uso que corresponde es ordenar respuestas (mejor de N), no bloquear una sola.
+
 ## 5. Latencia
 
 La meta del plan es < 5 % de latencia agregada. La medición limpia corrió en la misma laptop

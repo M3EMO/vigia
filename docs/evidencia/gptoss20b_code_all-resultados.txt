@@ -1,0 +1,75 @@
+## code_response.txt
+respuestas 1109: fallan 207, pasan 902
+agg_mean:r_ent_n       media AUROC 0.672 [0.629; 0.715]
+agg_mean:r_ent_n       max   AUROC 0.626 [0.584; 0.669]
+agg_mean:r_topk_mass   media AUROC 0.394 [0.351; 0.435]
+agg_mean:r_topk_mass   max   AUROC 0.535 [0.493; 0.574]
+agg_mean:u_ihhi        media AUROC 0.560 [0.522; 0.603]
+agg_mean:u_ihhi        max   AUROC 0.537 [0.496; 0.576]
+out_entropy            media AUROC 0.643 [0.603; 0.685]
+out_entropy            max   AUROC 0.648 [0.605; 0.692]
+out_nll                media AUROC 0.625 [0.585; 0.664]
+out_nll                max   AUROC 0.642 [0.602; 0.683]
+largo de la respuesta   AUROC 0.592
+CV AUROC largo 0.578
+CV AUROC largo+router 0.673
+CV AUROC largo+salida 0.634
+CV AUROC largo+router+salida 0.673
+agg_mean:r_ent_n       peor bloque AUROC 0.658 [0.614; 0.697] | CV con largo 0.641
+agg_mean:r_topk_mass   peor bloque AUROC 0.469 [0.425; 0.514] | CV con largo 0.585
+agg_mean:u_ihhi        peor bloque AUROC 0.558 [0.520; 0.597] | CV con largo 0.578
+out_entropy            peor bloque AUROC 0.671 [0.629; 0.712] | CV con largo 0.658
+out_nll                peor bloque AUROC 0.654 [0.614; 0.696] | CV con largo 0.644
+agg_mean:r_ent_n       media en código AUROC 0.614 [0.570; 0.660] | cortas 0.578 | largas 0.673
+agg_mean:r_topk_mass   media en código AUROC 0.427 [0.384; 0.472] | cortas 0.417 | largas 0.428
+agg_mean:u_ihhi        media en código AUROC 0.569 [0.528; 0.612] | cortas 0.570 | largas 0.512
+out_entropy            media en código AUROC 0.555 [0.512; 0.598] | cortas 0.474 | largas 0.657
+out_nll                media en código AUROC 0.551 [0.508; 0.592] | cortas 0.474 | largas 0.645
+CV AUROC detector por respuesta (router + largo, 243 señales) 0.758
+## pareto_code.txt
+alpha 0.02 tau 0.000 | cal: detecta 100% falsas 100% | test: detecta 100% falsas 100% (malas 41, buenas 181)
+alpha 0.04 tau 0.095 | cal: detecta 100% falsas 99% | test: detecta 100% falsas 97% (malas 41, buenas 181)
+alpha 0.06 tau 0.112 | cal: detecta 100% falsas 96% | test: detecta 100% falsas 94% (malas 41, buenas 181)
+alpha 0.08 tau 0.124 | cal: detecta 100% falsas 93% | test: detecta 100% falsas 93% (malas 41, buenas 181)
+alpha 0.10 tau 0.133 | cal: detecta 100% falsas 91% | test: detecta 100% falsas 91% (malas 41, buenas 181)
+alpha 0.12 tau 0.140 | cal: detecta 100% falsas 89% | test: detecta 100% falsas 89% (malas 41, buenas 181)
+alpha 0.14 tau 0.148 | cal: detecta 100% falsas 88% | test: detecta 100% falsas 88% (malas 41, buenas 181)
+alpha 0.16 tau 0.155 | cal: detecta 100% falsas 85% | test: detecta 100% falsas 80% (malas 41, buenas 181)
+alpha 0.18 tau 0.161 | cal: detecta 100% falsas 83% | test: detecta 100% falsas 80% (malas 41, buenas 181)
+alpha 0.20 tau 0.168 | cal: detecta 100% falsas 81% | test: detecta 100% falsas 73% (malas 41, buenas 181)
+alpha 0.22 tau 0.173 | cal: detecta 100% falsas 81% | test: detecta 100% falsas 72% (malas 41, buenas 181)
+alpha 0.24 tau 0.179 | cal: detecta 100% falsas 78% | test: detecta 100% falsas 71% (malas 41, buenas 181)
+alpha 0.26 tau 0.184 | cal: detecta 100% falsas 76% | test: detecta 98% falsas 68% (malas 41, buenas 181)
+alpha 0.28 tau 0.188 | cal: detecta 100% falsas 76% | test: detecta 98% falsas 66% (malas 41, buenas 181)
+alpha 0.30 tau 0.194 | cal: detecta 98% falsas 73% | test: detecta 93% falsas 64% (malas 41, buenas 181)
+alpha 0.32 tau 0.200 | cal: detecta 98% falsas 71% | test: detecta 93% falsas 63% (malas 41, buenas 181)
+alpha 0.34 tau 0.205 | cal: detecta 95% falsas 69% | test: detecta 93% falsas 60% (malas 41, buenas 181)
+alpha 0.36 tau 0.210 | cal: detecta 95% falsas 66% | test: detecta 93% falsas 59% (malas 41, buenas 181)
+alpha 0.38 tau 0.216 | cal: detecta 95% falsas 65% | test: detecta 90% falsas 57% (malas 41, buenas 181)
+alpha 0.40 tau 0.223 | cal: detecta 93% falsas 62% | test: detecta 90% falsas 55% (malas 41, buenas 181)
+alpha 0.42 tau 0.228 | cal: detecta 93% falsas 58% | test: detecta 88% falsas 52% (malas 41, buenas 181)
+alpha 0.44 tau 0.233 | cal: detecta 93% falsas 54% | test: detecta 88% falsas 48% (malas 41, buenas 181)
+alpha 0.46 tau 0.238 | cal: detecta 90% falsas 52% | test: detecta 85% falsas 48% (malas 41, buenas 181)
+alpha 0.48 tau 0.244 | cal: detecta 90% falsas 49% | test: detecta 85% falsas 45% (malas 41, buenas 181)
+alpha 0.50 tau 0.249 | cal: detecta 90% falsas 49% | test: detecta 85% falsas 43% (malas 41, buenas 181)
+RECOMENDADO (elegido en cal): alpha 0.48 -> test detecta 85%, falsas 45%
+PARETO (test): [(0.24, '100%', '71%'), (0.28, '98%', '66%'), (0.36, '93%', '59%'), (0.4, '90%', '55%'), (0.44, '88%', '48%'), (0.5, '85%', '43%')]
+## summary código
+Vigía: experimento de evidencia
+Modelo: openai/gpt-oss-20b (gpt_oss)
+Niveles: F0, F1; max_tokens 768; semilla 0
+Respuestas: 1134 (generadas 1134, teacher forcing 0, salteadas 0)
+Etiquetas: computable
+Exactitud del modelo: 79,5 % sobre 1134 respuestas generadas
+  code: exactitud 79,5 %, alucinación 20,5 % (n=1134)
+Tests de código: error 6, failed 200, no_code 25, passed 902, timeout 1
+Test: 20483 tokens, 222 respuestas, 222 preguntas; prevalencia por token 22,5 %
+AUROC por token (IC 95 % por pregunta):
+  Detector: 0,675 [0,551; 0,787]
+  Nivel F0: 0,547 [0,516; 0,583]
+  Nivel F1: 0,675 [0,551; 0,787]
+  Nivel F0+F1: 0,675 [0,551; 0,787]
+  Nivel todos: 0,675 [0,551; 0,787]
+  Baseline out_entropy: 0,547 [0,516; 0,583]
+  Baseline out_nll: 0,546 [0,515; 0,583]
+  Baseline h_probe: no disponible (sin features de este nivel en el dataset)
