@@ -12,6 +12,7 @@ entropía de la distribución de clusters de significado entre las muestras (ver
 """
 
 import json
+import re
 import sys
 
 import numpy as np
@@ -30,11 +31,32 @@ def same_meaning(a: str, b: str) -> bool:
     return normalize_es(a) == normalize_es(b) or token_f1(a, b) >= 0.5
 
 
-def semantic_entropy(answers: list[str]) -> float:
+def _first_number(text: str) -> int | None:
+    # Dígitos del primer número sin separadores: "560 000", "560,000" y "560.000" dan 560000.
+    m = re.search(r"\d[\d.,   ]*\d|\d", text)
+    return int(re.sub(r"\D", "", m.group())) if m else None
+
+
+def same_meaning_tolerant(a: str, b: str) -> bool:
+    """Como `same_meaning`, pero el primer número va sin separadores, con 2 % de tolerancia (años: exactos).
+
+    Corrige que el parser rioplatense lea "560,000" (miles en inglés, como escribe gpt-oss) como 560.
+    """
+    xa, xb = _first_number(a), _first_number(b)
+    if xa is not None or xb is not None:
+        if xa is None or xb is None:
+            return False
+        if 1000 <= xa <= 2100 or 1000 <= xb <= 2100:  # parece un año: tiene que coincidir exacto
+            return xa == xb
+        return abs(xa - xb) <= 0.02 * max(xa, xb, 1)
+    return normalize_es(a) == normalize_es(b) or token_f1(a, b) >= 0.5
+
+
+def semantic_entropy(answers: list[str], same=same_meaning) -> float:
     clusters: list[list[str]] = []
     for a in answers:
         for c in clusters:
-            if same_meaning(a, c[0]):
+            if same(a, c[0]):
                 c.append(a)
                 break
         else:
@@ -89,13 +111,16 @@ def analyze(features: str, rows_path: str, split_path: str, sample_paths: list[s
 
     lab = np.array([0 if rows[i]["label_info"]["correct"] else 1 for i in te])
     router = clf.predict_proba((np.array([feats(i) for i in te]) - mu) / sd)[:, 1]
-    se = np.array([semantic_entropy([s[i].get("response") or "" for s in samples]) for i in te])
+    answers = [[s[i].get("response") or "" for s in samples] for i in te]
+    se = np.array([semantic_entropy(a) for a in answers])
+    se_tol = np.array([semantic_entropy(a, same_meaning_tolerant) for a in answers])
     length = np.array([(r == i).sum() for i in te], float)
 
     def rank(v: np.ndarray) -> np.ndarray:
         return np.argsort(np.argsort(v, kind="stable"), kind="stable") / (len(v) - 1)
 
     both = (rank(router) + rank(se)) / 2
+    both_tol = (rank(router) + rank(se_tol)) / 2
     print(f"train {len(tr)} | test {len(te)} preguntas, fallan {lab.mean():.0%}, {len(samples)} muestras")
     rng = np.random.default_rng(0)
     boots = [b for b in rng.integers(0, len(te), (2000, len(te))) if lab[b].min() != lab[b].max()]
@@ -103,20 +128,24 @@ def analyze(features: str, rows_path: str, split_path: str, sample_paths: list[s
         ("largo", length),
         ("router", router),
         ("entropía semántica", se),
+        ("semántica, números tolerantes", se_tol),
         ("router + semántica", both),
+        ("router + semántica tolerante", both_tol),
     ):
         lo, hi = np.percentile([auroc(lab[b], s[b]) for b in boots], [2.5, 97.5])
-        print(f"{name:22s} AUROC {auroc(lab, s):.3f} [{lo:.3f}; {hi:.3f}]")
-    diff = [auroc(lab[b], both[b]) - auroc(lab[b], router[b]) for b in boots]
-    lo, hi = np.percentile(diff, [2.5, 97.5])
-    print(f"router + semántica - router: {np.mean(diff):+.3f} [IC 95 %: {lo:+.3f}; {hi:+.3f}]")
-
-    # Cascada: la entropía semántica (5 generaciones más) solo corre en la fracción más dudosa
-    # según el router. Las demás preguntas conservan el puntaje del router, por debajo de las dudosas.
-    for frac in (0.25, 0.5):
-        top = rank(router) >= 1 - frac
-        s = np.where(top, 1 + both, rank(router))
-        print(f"cascada {frac:.0%} más dudoso: AUROC {auroc(lab, s):.3f}, costo x{1 + 5 * frac:.2f}")
+        print(f"{name:30s} AUROC {auroc(lab, s):.3f} [{lo:.3f}; {hi:.3f}]")
+    n = len(samples)
+    for tag, comb in (("estricta", both), ("tolerante", both_tol)):
+        diff = [auroc(lab[b], comb[b]) - auroc(lab[b], router[b]) for b in boots]
+        lo, hi = np.percentile(diff, [2.5, 97.5])
+        print(f"router + semántica {tag} - router: {np.mean(diff):+.3f} [IC 95 %: {lo:+.3f}; {hi:+.3f}]")
+        # Cascada: la entropía semántica (n generaciones más) solo corre en la fracción más dudosa
+        # según el router; las demás preguntas conservan el puntaje del router, debajo de las dudosas.
+        for frac in (0.25, 0.5):
+            s = np.where(rank(router) >= 1 - frac, 1 + comb, rank(router))
+            print(
+                f"  cascada {tag} {frac:.0%} más dudoso: AUROC {auroc(lab, s):.3f}, costo x{1 + n * frac:.2f}"
+            )
 
 
 if __name__ == "__main__":
