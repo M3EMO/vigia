@@ -244,8 +244,38 @@ Ningún armado de la entropía de salida (media, máximo, primer token, suma, NL
 largo por más de 0,03, y sumada al largo no aporta. El router sí: +0,13 sobre tipo y largo, dentro de
 cada tipo de pregunta. Es la medición más limpia del proyecto a favor de la hipótesis de partida.
 
-Latencia: +7,6 % en p50 con F0+F1+H (meta 5 %). La corrida anterior con F0+F1 dio +3,0 %; falta
-repetir la medición sin H en la misma L4.
+Latencia en L4 (8 prompts × 5 corridas, 256 tokens fijos; `docs/evidencia/gptoss20b_bench_l4_sinH.json`):
+
+| Nivel | p50 ms/token | Overhead (IC 95 %) |
+|---|---|---|
+| Sin hooks | 80,9 | — |
+| F0 | 83,3 | +3,0 % [+2,7; +3,2] |
+| F0+F1 | 87,1 | **+7,6 %** [+7,4; +7,9] |
+
+El +7,6 % es del router (F1), no del nivel H. En la T4 el mismo F0+F1 dio +3,0 %: la L4 genera más
+rápido y el costo fijo de los hooks en Python pesa más. **Con el backend HF, la meta de 5 % no se
+cumple en L4.** Caminos: muestrear menos capas del router, vectorizar los features en GPU sin
+volver a CPU por token, o medir con el backend vLLM, que es el de producción.
+
+### 4.9 Entropía semántica + router (351 preguntas de test sin aritmética, 5 muestras)
+
+Cinco respuestas por pregunta (temperatura 0,8), agrupadas por significado: números iguales o
+palabras que se solapan. La variante tolerante compara el primer número sin separadores (gpt-oss
+escribe "560,000" y el parser rioplatense lo leía como 560), con 2 % de tolerancia y años exactos;
+se corrigió al ver los clusters y se informan las dos. Datos: `docs/evidencia/gptoss20b_semantic_entropy.txt`.
+
+| Señal | AUROC por respuesta | Generaciones |
+|---|---|---|
+| Largo | 0,660 | 1 |
+| Router (entrenado en train+cal) | **0,809** [0,76; 0,86] | 1 |
+| Entropía semántica, estricta | 0,747 | 5 |
+| Entropía semántica, tolerante | 0,757 | 5 |
+| Router + semántica tolerante | 0,833 [0,79; 0,88] | 6 |
+| Cascada: semántica solo en el 50 % más dudoso | 0,823 | 3,5 en promedio |
+
+Router + semántica tolerante contra router solo: +0,024 [IC 95 %: −0,009; +0,057], no
+significativo. La entropía semántica, el método de referencia de la literatura, queda por debajo del
+router con cinco veces más cómputo, y sumarla no mejora de forma demostrable.
 
 Este detector (entrenado con 2.600 preguntas, con `recommended_alpha`) reemplaza al de 600 en
 `detectors/gpt-oss-20b.json`. El artefacto anterior queda en `tests/fixtures/legacy_detectors/`.

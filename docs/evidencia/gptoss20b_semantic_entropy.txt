@@ -1,0 +1,13 @@
+train 1441 | test 351 preguntas, fallan 69%, 5 muestras
+largo                          AUROC 0.660 [0.601; 0.720]
+router                         AUROC 0.809 [0.760; 0.855]
+entropía semántica             AUROC 0.747 [0.690; 0.802]
+semántica, números tolerantes  AUROC 0.757 [0.702; 0.808]
+router + semántica             AUROC 0.822 [0.777; 0.864]
+router + semántica tolerante   AUROC 0.833 [0.791; 0.875]
+router + semántica estricta - router: +0.014 [IC 95 %: -0.020; +0.048]
+  cascada estricta 25% más dudoso: AUROC 0.813, costo x2.25
+  cascada estricta 50% más dudoso: AUROC 0.821, costo x3.50
+router + semántica tolerante - router: +0.024 [IC 95 %: -0.009; +0.057]
+  cascada tolerante 25% más dudoso: AUROC 0.813, costo x2.25
+  cascada tolerante 50% más dudoso: AUROC 0.823, costo x3.50
