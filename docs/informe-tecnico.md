@@ -253,9 +253,25 @@ Latencia en L4 (8 prompts × 5 corridas, 256 tokens fijos; `docs/evidencia/gptos
 | F0+F1 | 87,1 | **+7,6 %** [+7,4; +7,9] |
 
 El +7,6 % es del router (F1), no del nivel H. En la T4 el mismo F0+F1 dio +3,0 %: la L4 genera más
-rápido y el costo fijo de los hooks en Python pesa más. **Con el backend HF, la meta de 5 % no se
-cumple en L4.** Caminos: muestrear menos capas del router, vectorizar los features en GPU sin
-volver a CPU por token, o medir con el backend vLLM, que es el de producción.
+rápido y el costo fijo de los hooks en Python pesa más.
+
+Medido en la CPU con las dimensiones de gpt-oss, el mayor costo por token era F0: copiar los
+201.088 logits a la CPU y procesarlos en float64. Dos cambios (commit `fbf073a`): F0 se calcula en
+el dispositivo de los logits y la CPU recibe 4 números; los pesos del router se pasan a float32 una
+vez por contexto. Misma L4, mismo protocolo (`docs/evidencia/gptoss20b_bench_l4_f0gpu.json`):
+
+| Nivel | Antes | Después |
+|---|---|---|
+| F0 | +3,0 % [+2,7; +3,2] | **+1,0 %** [+0,9; +1,1] |
+| F0+F1 | +7,6 % [+7,4; +7,9] | **+4,7 %** [+4,6; +4,8] |
+
+**La meta de 5 % se cumple en L4 con el backend HF**, con poco margen. El margen siguiente está en
+la reducción del router, que sigue en numpy sobre la CPU.
+
+Modo vLLM (solo IDs de expertos y top-20 logprobs, sin logits del router), medido offline sobre las
+1.792 respuestas factuales sin aritmética: tipo + largo 0,679; + salida parcial y cambios de experto
+0,742; router completo (modo HF) 0,811. vLLM conserva la mitad de la ganancia del router sin costo
+de latencia por token.
 
 ### 4.9 Entropía semántica + router (351 preguntas de test sin aritmética, 5 muestras)
 

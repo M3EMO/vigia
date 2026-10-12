@@ -1,0 +1,122 @@
+{
+  "schema_version": "1",
+  "config": {
+    "model_id": "openai/gpt-oss-20b",
+    "model_type": "gpt_oss",
+    "tiers_list": [
+      "sin_hooks",
+      "F0",
+      "F0+F1"
+    ],
+    "n_prompts": 8,
+    "max_tokens": 256,
+    "warmup": 1,
+    "runs": 5,
+    "seed": 0,
+    "threads": 6,
+    "temperature": 0.0,
+    "ignore_eos": {
+      "requested": true,
+      "supported": true,
+      "applied": true,
+      "note": "longitud fija por ignore_eos"
+    },
+    "order": "intercalado; el orden de las configuraciones rota por prompt y corrida",
+    "metric": "ms por token: intervalo entre eventos, reloj de pared, con hooks y end_step",
+    "overhead": "mediana por unidad de p50(ms por token del nivel) / p50(ms por token sin hooks) - 1",
+    "bootstrap": {
+      "n_boot": 1000,
+      "level": 0.95,
+      "seed": 0,
+      "unit": "(corrida, prompt)"
+    },
+    "n_units": 40,
+    "n_units_dropped": 0,
+    "baseline_hooks": 0
+  },
+  "baseline": {
+    "p50": 79.8561010000185,
+    "p95": 82.55935594988841,
+    "p99": 87.67413393996549,
+    "tpot_ms": 80.21555171960745,
+    "ttft_ms": 97.80098550015737,
+    "tok_s": 12.451892659494352,
+    "n_requests": 40,
+    "n_token_latencies": 10200
+  },
+  "tiers": {
+    "F0": {
+      "p50": 80.61348649994216,
+      "p95": 83.37084135011992,
+      "p99": 88.55256596993968,
+      "tpot_ms": 80.97875867647059,
+      "ttft_ms": 98.79805200000646,
+      "tok_s": 12.338362255337083,
+      "n_requests": 40,
+      "n_token_latencies": 10200,
+      "overhead_ratio": 0.009715766839415663,
+      "ci": [
+        0.008452073385016856,
+        0.011017261199875561
+      ],
+      "ttft_overhead_ratio": 0.00869534205125344,
+      "ttft_ci": [
+        0.004263843784412469,
+        0.014277511279297661
+      ],
+      "meets_target": true
+    },
+    "F0+F1": {
+      "p50": 83.60670550007399,
+      "p95": 86.27765824978724,
+      "p99": 90.86721556000613,
+      "tpot_ms": 83.97788844117713,
+      "ttft_ms": 102.79872949990931,
+      "tok_s": 11.897203174238932,
+      "n_requests": 40,
+      "n_token_latencies": 10200,
+      "overhead_ratio": 0.04676094170607392,
+      "ci": [
+        0.04619192502049074,
+        0.04803775830727863
+      ],
+      "ttft_overhead_ratio": 0.05260834292918126,
+      "ttft_ci": [
+        0.048796647161550535,
+        0.05535900116596637
+      ],
+      "meets_target": true
+    }
+  },
+  "vigia": {
+    "p50": 83.60670550007399,
+    "p95": 86.27765824978724,
+    "p99": 90.86721556000613,
+    "tpot_ms": 83.97788844117713,
+    "ttft_ms": 102.79872949990931,
+    "tok_s": 11.897203174238932,
+    "n_requests": 40,
+    "n_token_latencies": 10200,
+    "overhead_ratio": 0.04676094170607392,
+    "ci": [
+      0.04619192502049074,
+      0.04803775830727863
+    ],
+    "ttft_overhead_ratio": 0.05260834292918126,
+    "ttft_ci": [
+      0.048796647161550535,
+      0.05535900116596637
+    ],
+    "meets_target": true,
+    "label": "F0+F1"
+  },
+  "target": 0.05,
+  "hardware": {
+    "cpu": "x86_64",
+    "machine": "x86_64",
+    "threads": 6,
+    "torch": "2.11.0+cu130",
+    "python": "3.13.15",
+    "platform": "Linux-6.6.122+-x86_64-with-glibc2.39"
+  }
+}
