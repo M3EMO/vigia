@@ -10,3 +10,4 @@ respuesta. Meta del plan (docs/plan-original.txt): informe técnico, librería a
 - Research: vault global, notas `vigia-*` (índice en `docs/research/README.md`). Nunca research local.
 - Convenciones: @docs/claude/convenciones.md
 - Gotchas (leer bajo demanda): `docs/claude/gotchas.md`.
+- Cambio de PC, estado y pendientes: `docs/claude/traspaso.md`.

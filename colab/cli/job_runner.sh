@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+# Corre un job en una VM L4 de Colab; si Colab retira la VM, crea otra y lo vuelve a lanzar.
+# Uso: job_runner.sh NOMBRE JOB.py MARCADOR_LOG LOG_REMOTO DIR_LOCAL [archivos remotos a bajar...]
+CLI=/home/map12/.local/bin/colab; C="timeout 180 $CLI"
+S=$1; JOB=$2; MARK=$3; RLOG=$4; D=$5; shift 5
+mkdir -p $D; LOG=$D/runner.log
+log() { echo "$(date -u +%T) $*" >> $LOG; }
+start() {
+  pgrep -f "exec -s $S " | xargs -r kill
+  $C stop -s $S >/dev/null 2>&1
+  $C new -s $S --gpu L4 >> $LOG 2>&1
+  $C upload -s $S /mnt/c/Users/map12/Desktop/Proyectos/vigia/colab/vigia-colab.zip /content/vigia-colab.zip >> $LOG 2>&1
+  nohup $CLI exec -s $S -f $JOB --timeout 30000 > $D/exec.log 2>&1 &
+  log "lanzado"
+}
+start
+for i in $(seq 1 200); do
+  sleep 120
+  if $C status -s $S 2>&1 | grep -q "not found"; then log "VM retirada: relanzo"; start; continue; fi
+  $C download -s $S $RLOG $D/$(basename $RLOG) >/dev/null 2>&1
+  log "$(tail -1 $D/$(basename $RLOG) 2>/dev/null | cut -c1-100)"
+  if grep -qE "$MARK" $D/$(basename $RLOG) 2>/dev/null; then
+    for f in "$@"; do $C download -s $S $f $D/$(basename $f) >/dev/null 2>&1; done
+    $C stop -s $S >> $LOG 2>&1; log "FIN"; exit 0
+  fi
+done

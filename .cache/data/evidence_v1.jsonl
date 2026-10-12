@@ -1,0 +1,600 @@
+{"id": "-5889390396091199699", "question": "¿Cuándo ganó Roger Federer su primer Grand Slam?", "answers": ["2004"], "type": "date"}
+{"id": "arit-1-218", "question": "¿Cuánto da 16 por 35?", "answers": ["560"], "type": "arit×"}
+{"id": "arit-1-65", "question": "¿Cuánto es 40 × 12?", "answers": ["480"], "type": "arit×"}
+{"id": "-5456647303921372804", "question": "cuáles son los estados santuario de estados unidos", "answers": ["Massachusetts", "Mancomunidad de Massachusetts"], "type": "entity"}
+{"id": "2131315908286707660", "question": "quien canta la canción i'm not in love", "answers": ["10cc"], "type": "entity"}
+{"id": "-947675951118523690", "question": "cuántos tipos diferentes de queso hay en el mundo", "answers": ["7.0", "7"], "type": "number"}
+{"id": "2867190626209874551", "question": "de qué está hecha la bandera americana", "answers": ["nailon", "Nylon", "Náilon", "Nilón", "Nilon", "Nailón"], "type": "entity"}
+{"id": "992126601434650028", "question": "quien escribió la declaración de los derechos del hombre y del ciudadano", "answers": ["Marqués de La Fayette", "Marie Joseph Motier marqués de La Fayette", "Marie Joseph Motier marques de La Fayette", "Marie Joseph Motier, marqués de La Fayette", "Marie Joseph Paul Yves Roch Gilbert du Motier", "Marques de Lafayette", "Marques de La Fayette", "Marie-Joseph Paul Yves Roch Gilbert du Motier", "Gilbert du Motier", "Marie Joseph Motier, marques de La Fayette", "La Fayette", "Marqués de Lafayette"], "type": "entity"}
+{"id": "5958577451665719237", "question": "¿Cuánto de lejos está Cincinnati, Ohio, de Indianapolis, Indiana?", "answers": ["112.0 milla", "112 milla"], "type": "number_with_unit"}
+{"id": "5977990164505192934", "question": "cuándo fue grabado shut up and dance de black mirror", "answers": ["Reino Unido", "Reino Unido de Gran Bretaña e Irlanda del Norte", "Gran Bretaña", "UK", "GB", "GBR"], "type": "entity"}
+{"id": "5700268800886629444", "question": "quién canta something in the way she moves", "answers": ["The Beatles", "Les Beatles"], "type": "entity"}
+{"id": "399565880188880579", "question": "quien canta take me down to the little white church", "answers": ["Little Big Town"], "type": "entity"}
+{"id": "arit-1-235", "question": "¿Cuánto es 313 - 754?", "answers": ["-441"], "type": "arit-"}
+{"id": "8585212527779664827", "question": "quien interpreta a la bruza en el mago de Oz", "answers": ["Margaret Hamilton"], "type": "entity"}
+{"id": "2556799146668514507", "question": "cuándo comienzan los clasificatorios para la copa del mundo de 2022", "answers": ["2019-06-06", "06-06-2019", "2019 june, 06", "06 06 2019", "06/06/2019", "06 junio 2019", "2019 06 06", "2019 junio 06"], "type": "date"}
+{"id": "6757519085976641992", "question": "qué bandera tiene rayas verdes blancas y rojas", "answers": ["Italia", "República Italiana"], "type": "entity"}
+{"id": "-7494896791332905463", "question": "¿Quién era el vocalista de The Eagles?", "answers": ["Glenn Frey", "Glenn Lewis Frey"], "type": "entity"}
+{"id": "7769420646768824672", "question": "¿Quién ganó el premio al Álbum del Año en los Grammy?", "answers": ["Kacey Musgraves"], "type": "entity"}
+{"id": "2662447325791353189", "question": "quien interpretó a will turner en piratas del caribe", "answers": ["Dylan Smith"], "type": "entity"}
+{"id": "2663900618010457747", "question": "lista de canciones del tour de slayin  passion pain and demon", "answers": ["Frequency"], "type": "entity"}
+{"id": "arit-1-187", "question": "¿Cuánto es 351 - 625?", "answers": ["-274"], "type": "arit-"}
+{"id": "arit-1-126", "question": "¿Cuánto da 29 más 417?", "answers": ["446"], "type": "arit+"}
+{"id": "arit-1-102", "question": "¿Cuánto da 474 más 25?", "answers": ["499"], "type": "arit+"}
+{"id": "-5764400095751515490", "question": "cuándo comienza la temporada de fútbol americano de 2018", "answers": ["2018-09-06", "09-06-2018", "06-09-2018", "2018 septiembre 06", "09/06/2018", "06 septiembre 2018", "06/09/2018", "09 06 2018", "2018 september, 06", "06 09 2018", "2018 09 06"], "type": "date"}
+{"id": "3217380694214648032", "question": "cuando se rodo orange is the new black", "answers": ["2013-03-07", "2013 03 07", "2013 march, 07", "03 07 2013", "03/07/2013", "03-07-2013", "2013 marzo 07", "07 03 2013", "07/03/2013", "07 marzo 2013", "07-03-2013"], "type": "date"}
+{"id": "5370168031676132312", "question": "quién ganó más grand slams en tenis masculino", "answers": ["Roger Federer"], "type": "entity"}
+{"id": "3072108522197486515", "question": "quien escribio el tema principal de hogan's heroes", "answers": ["Jerry Fielding"], "type": "entity"}
+{"id": "-9038373707666429270", "question": "Quién tiene el mayor porcentaje de tiros en la NBA", "answers": ["DeAndre Jordan"], "type": "entity"}
+{"id": "2756759730168487786", "question": "a qué distancia está madison wisconsin de milwaukee wisconsin", "answers": ["79.0 milla", "79 milla"], "type": "number_with_unit"}
+{"id": "arit-1-87", "question": "¿Cuánto es 365 + 12?", "answers": ["377"], "type": "arit+"}
+{"id": "arit-1-75", "question": "¿Cuánto es 991 + 757?", "answers": ["1748"], "type": "arit+"}
+{"id": "arit-1-52", "question": "¿Cuánto da 99 menos 460?", "answers": ["-361"], "type": "arit-"}
+{"id": "arit-1-83", "question": "¿Cuánto es 81 × 36?", "answers": ["2916"], "type": "arit×"}
+{"id": "arit-1-224", "question": "¿Cuánto da 31 por 24?", "answers": ["744"], "type": "arit×"}
+{"id": "6320298819065588172", "question": "¿Quién escribió Emilio, un libro de referencia de teoría educativa?", "answers": ["Jean-Jacques Rousseau", "Rousseau"], "type": "entity"}
+{"id": "3269592228637864932", "question": "¿cuál es el idioma más hablado del mundo?", "answers": ["chino mandarín", "mandarín", "habla del norte", "chino mandarin", "mandarin"], "type": "entity"}
+{"id": "6442818086505478469", "question": "quién hace de doc brown en regreso al futuro", "answers": ["Christopher Lloyd", "Christopher Allen Lloyd"], "type": "entity"}
+{"id": "arit-1-135", "question": "¿Cuánto es 547 + 675?", "answers": ["1222"], "type": "arit+"}
+{"id": "arit-1-80", "question": "¿Cuánto da 65 por 18?", "answers": ["1170"], "type": "arit×"}
+{"id": "-8606226800439462905", "question": "cuando se hizo la star is born original", "answers": ["1976"], "type": "date"}
+{"id": "1057539322135106755", "question": "qué porcentaje de la población estadounidense es afro-americana", "answers": ["13.0 tanto por ciento", "13 tanto por ciento"], "type": "number_with_unit"}
+{"id": "arit-1-78", "question": "¿Cuánto da 542 más 807?", "answers": ["1349"], "type": "arit+"}
+{"id": "-4484061908781099297", "question": "quien cantó la versión original de true colors", "answers": ["Cyndi Lauper", "Cynthia Ann Stephanie Lauper"], "type": "entity"}
+{"id": "-7519797182419828113", "question": "¿Quién fue el último gobernador de Nueva Jersey?", "answers": ["Chris Christie"], "type": "entity"}
+{"id": "5207517806973998559", "question": "¿Donde se juega la  red river rivalry?", "answers": ["Dallas"], "type": "entity"}
+{"id": "-2174957000218197350", "question": "el cultivo frutal con mayor area de cultivacion en india es", "answers": ["mango"], "type": "entity"}
+{"id": "-6512048946453404606", "question": "quién cantaba it's got to be perfect", "answers": ["Fairground Attraction"], "type": "entity"}
+{"id": "-7514923700670769288", "question": "quién fue el monje que escribió sobre el ataque a jerusalem", "answers": ["Roberto el Monje"], "type": "entity"}
+{"id": "-7791429185683450364", "question": "Quién actuó como el rey malvado en Pantera negra", "answers": ["Michael B. Jordan"], "type": "entity"}
+{"id": "5129349447417807160", "question": "cual es el tema de 2018 del día mundial de la salud dms", "answers": ["Universal Health Coverage: everyone, everywhere"], "type": "short_phrase"}
+{"id": "arit-1-36", "question": "¿Cuánto da 771 más 351?", "answers": ["1122"], "type": "arit+"}
+{"id": "-3667649498633716527", "question": "Quién canta because the night belongs to lovers", "answers": ["Patti Smith", "Patricia Lee Smith"], "type": "entity"}
+{"id": "arit-1-21", "question": "¿Cuánto es 232 + 443?", "answers": ["675"], "type": "arit+"}
+{"id": "arit-1-88", "question": "¿Cuánto da 562 menos 564?", "answers": ["-2"], "type": "arit-"}
+{"id": "-1159080113824315253", "question": "cuantas temporadas de rick y morty hay", "answers": ["3.0", "3"], "type": "number"}
+{"id": "arit-1-225", "question": "¿Cuánto es 456 + 943?", "answers": ["1399"], "type": "arit+"}
+{"id": "arit-1-210", "question": "¿Cuánto da 479 más 929?", "answers": ["1408"], "type": "arit+"}
+{"id": "359450293348926726", "question": "cuántas millas hay de tampa a miami en florida", "answers": ["280.0 milla", "280 milla"], "type": "number_with_unit"}
+{"id": "2665702762075367437", "question": "quién es el hermano de stephen curry y en qué equipo juega", "answers": ["Seth Curry"], "type": "entity"}
+{"id": "-7356948734636149725", "question": "quién canta la canción 30 days in the hole", "answers": ["Humble Pie"], "type": "entity"}
+{"id": "arit-1-48", "question": "¿Cuánto da 435 más 691?", "answers": ["1126"], "type": "arit+"}
+{"id": "arit-1-44", "question": "¿Cuánto da 75 por 61?", "answers": ["4575"], "type": "arit×"}
+{"id": "-4805312203140293076", "question": "ooh child things are gonna get easier artista original", "answers": ["Bruce Ruffin"], "type": "entity"}
+{"id": "5460934984156760527", "question": "quién canta la música de La reina de los condenados", "answers": ["Richard Gibbs"], "type": "entity"}
+{"id": "arit-1-17", "question": "¿Cuánto es 14 × 13?", "answers": ["182"], "type": "arit×"}
+{"id": "arit-1-172", "question": "¿Cuánto da 812 menos 149?", "answers": ["663"], "type": "arit-"}
+{"id": "arit-1-191", "question": "¿Cuánto es 48 × 41?", "answers": ["1968"], "type": "arit×"}
+{"id": "53984122385271589", "question": "¿Cuándo comenzó la temporada 7 de League of Legends?", "answers": ["2016-12-07", "12-07-2016", "07/12/2016", "07 12 2016", "2016 december, 07", "07 diciembre 2016", "12 07 2016", "12/07/2016", "2016 12 07", "07-12-2016", "2016 diciembre 07"], "type": "date"}
+{"id": "-6542990366621530988", "question": "¿Quién ganó la Copa del Mundo de la FIFA en 2017?", "answers": ["selección de fútbol de Inglaterra", "Engerland", "selección nacional de fútbol de Inglaterra", "selección inglesa de fútbol"], "type": "entity"}
+{"id": "3036700087778896814", "question": "cuántos equipos llegan a los playoffs en la nba", "answers": ["16.0", "16"], "type": "number"}
+{"id": "-1501131813198190584", "question": "quién canta i got the magic in me", "answers": ["B.o.B.", "Bobby Ray Simmons Jr."], "type": "entity"}
+{"id": "-6256366794872919373", "question": "Quién fue el decimosegundo presidente de filipinas", "answers": ["Fidel V. Ramos", "Fidel Valdez Ramos", "Fidel Ramos", "Fidel V Ramos"], "type": "entity"}
+{"id": "arit-1-109", "question": "¿Cuánto es 182 - 174?", "answers": ["8"], "type": "arit-"}
+{"id": "arit-1-84", "question": "¿Cuánto da 974 más 527?", "answers": ["1501"], "type": "arit+"}
+{"id": "arit-1-4", "question": "¿Cuánto da 790 menos 471?", "answers": ["319"], "type": "arit-"}
+{"id": "-7074643783095364688", "question": "desde cuándo se permite votar a las mujeres en alemania", "answers": ["1919"], "type": "date"}
+{"id": "-8212333798122067073", "question": "cuándo se unió puerto rico a los estados unidos de américa", "answers": ["1898-12-10", "1898 december, 10", "1898 12 10", "10-12-1898", "1898 diciembre 10", "12/10/1898", "10 12 1898", "12-10-1898", "12 10 1898", "10 diciembre 1898", "10/12/1898"], "type": "date"}
+{"id": "-7837749117751444802", "question": "¿Quién cantaba \"Having my baby\" en los 70?", "answers": ["Paul Anka"], "type": "entity"}
+{"id": "arit-1-169", "question": "¿Cuánto es 29 - 171?", "answers": ["-142"], "type": "arit-"}
+{"id": "-1236121250701808469", "question": "¿Qual team tiene la mayoria de world series rings", "answers": ["New York Yankees", "Yankees de Nueva York", "New York Highlanders", "Yankees", "Yanquis", "Yanquis de Nueva York"], "type": "entity"}
+{"id": "arit-1-132", "question": "¿Cuánto da 656 más 827?", "answers": ["1483"], "type": "arit+"}
+{"id": "arit-1-97", "question": "¿Cuánto es 847 - 964?", "answers": ["-117"], "type": "arit-"}
+{"id": "-5922836418396701454", "question": "¿Cuándo cambió la edad para beber a 21 años en Illinois?", "answers": ["1980"], "type": "date"}
+{"id": "-3536131815820112023", "question": "cuándo se vendió la primera televisión en australia", "answers": ["1956"], "type": "date"}
+{"id": "arit-1-198", "question": "¿Cuánto da 427 más 85?", "answers": ["512"], "type": "arit+"}
+{"id": "8749272093563591158", "question": "¿Cuándo echan por televisión The World of Dance?", "answers": ["2019-02-26", "26 02 2019", "26 febrero 2019", "2019 02 26", "2019 febrero 26", "2019 february, 26", "02-26-2019", "02/26/2019", "26-02-2019", "26/02/2019", "02 26 2019"], "type": "date"}
+{"id": "2874474964302550796", "question": "cual es la cancion que menos gusta en youtube", "answers": ["Baby"], "type": "entity"}
+{"id": "969614606139120797", "question": "listado de jefes de justicia de la suprema corte de india", "answers": ["Sudhi Ranjan Das"], "type": "entity"}
+{"id": "6389328235012626116", "question": "¿Con quién hizo la gira Def Leppard en 1981?", "answers": ["Ozzy Osbourne", "John Michael Osbourne", "Ozzy"], "type": "entity"}
+{"id": "-6102069576651551651", "question": "donde se rodó la película dos chalados y muchas curvas", "answers": ["Luisiana"], "type": "entity"}
+{"id": "arit-1-79", "question": "¿Cuánto es 585 - 221?", "answers": ["364"], "type": "arit-"}
+{"id": "arit-1-155", "question": "¿Cuánto es 90 × 76?", "answers": ["6840"], "type": "arit×"}
+{"id": "arit-1-227", "question": "¿Cuánto es 80 × 48?", "answers": ["3840"], "type": "arit×"}
+{"id": "arit-1-53", "question": "¿Cuánto es 95 × 76?", "answers": ["7220"], "type": "arit×"}
+{"id": "arit-1-196", "question": "¿Cuánto da 799 menos 117?", "answers": ["682"], "type": "arit-"}
+{"id": "-5299283512151753462", "question": "quien canta la canción we are the champions", "answers": ["Queen"], "type": "entity"}
+{"id": "7206472777975261414", "question": "cual es el nombre del caballo en la historia interminable", "answers": ["Artax"], "type": "entity"}
+{"id": "7120250136673619482", "question": "quien es la actriz que interpreta a la mujer maravilla", "answers": ["Gal Gadot"], "type": "entity"}
+{"id": "arit-1-149", "question": "¿Cuánto es 12 × 82?", "answers": ["984"], "type": "arit×"}
+{"id": "-7683576576182123580", "question": "quien ganó el campeonato nacional de fútbol universitario el año pasado", "answers": ["Alabama Crimson Tide football"], "type": "entity"}
+{"id": "arit-1-184", "question": "¿Cuánto da 184 menos 181?", "answers": ["3"], "type": "arit-"}
+{"id": "arit-1-86", "question": "¿Cuánto da 56 por 64?", "answers": ["3584"], "type": "arit×"}
+{"id": "-6706130334600628143", "question": "cuáles de los países caribeños están el áreas geológicas estables", "answers": ["Bahamas", "Mancomunidad de las Bahamas"], "type": "entity"}
+{"id": "-3534059951321558886", "question": "cuántas facultades de derecho hay en estados unidos", "answers": ["237.0", "237"], "type": "number"}
+{"id": "6570443606113831185", "question": "quién es el dios del amor en la mitología griega", "answers": ["Eros"], "type": "entity"}
+{"id": "-5286697952553600640", "question": "quien ganó el último mundial de fútbol femenino", "answers": ["Estados Unidos", "USA", "EUA", "EE. UU.", "EE.UU.", "EEUU", "América", "America", "Estados Unidos de America", "Estados Unidos de América"], "type": "entity"}
+{"id": "arit-1-165", "question": "¿Cuánto es 527 + 522?", "answers": ["1049"], "type": "arit+"}
+{"id": "-580527970685575745", "question": "¿Cuándo se estrenó \"Summertime\" de Will Smith?", "answers": ["1991"], "type": "date"}
+{"id": "7802659769716735629", "question": "quién es el protagonista de el otro lado de la vida", "answers": ["karl childers"], "type": "short_phrase"}
+{"id": "149048364762256067", "question": "cuántas temporadas de h2o hay", "answers": ["3.0", "3"], "type": "number"}
+{"id": "arit-1-33", "question": "¿Cuánto es 113 + 201?", "answers": ["314"], "type": "arit+"}
+{"id": "arit-1-151", "question": "¿Cuánto es 49 - 615?", "answers": ["-566"], "type": "arit-"}
+{"id": "-7182780020959931842", "question": "quién interpretó a bonnie y clyde en la película original", "answers": ["Faye Dunaway", "Dorothy Faye Dunaway"], "type": "entity"}
+{"id": "arit-1-47", "question": "¿Cuánto es 42 × 62?", "answers": ["2604"], "type": "arit×"}
+{"id": "2353915828397382515", "question": "cuando ponen Basketball wives temporada 7 episodio 6", "answers": ["2018-06-25", "25 06 2018", "06-25-2018", "2018 junio 25", "25-06-2018", "06/25/2018", "06 25 2018", "2018 june, 25", "25/06/2018", "25 junio 2018", "2018 06 25"], "type": "date"}
+{"id": "-410573280373798687", "question": "cuántas medallas ganó canadá en los juegos olímpicos de vancouver", "answers": ["26.0", "26"], "type": "number"}
+{"id": "-6158441934367575013", "question": "donde juegan en casa los eagles de filadelfia", "answers": ["Pensilvania"], "type": "entity"}
+{"id": "6166970216887978359", "question": "cuántas series de juego de tronos hay", "answers": ["8.0", "8"], "type": "number"}
+{"id": "arit-1-211", "question": "¿Cuánto es 294 - 121?", "answers": ["173"], "type": "arit-"}
+{"id": "arit-1-237", "question": "¿Cuánto es 471 + 411?", "answers": ["882"], "type": "arit+"}
+{"id": "arit-1-171", "question": "¿Cuánto es 841 + 587?", "answers": ["1428"], "type": "arit+"}
+{"id": "337668016004196187", "question": "cuando mayo venció a kerry por última vez en el campeonato", "answers": ["2009"], "type": "date"}
+{"id": "arit-1-114", "question": "¿Cuánto da 476 más 730?", "answers": ["1206"], "type": "arit+"}
+{"id": "-1340783002612777023", "question": "cuando se publicó stand by me de ben e king", "answers": ["1961-04-24", "04/24/1961", "1961 04 24", "24 04 1961", "1961 april, 24", "04-24-1961", "1961 abril 24", "24-04-1961", "24 abril 1961", "04 24 1961", "24/04/1961"], "type": "date"}
+{"id": "4244476224341486877", "question": "quién interpreta a Rory en mi niñera es un vampiro", "answers": ["My Babysitter's a Vampire"], "type": "entity"}
+{"id": "arit-1-206", "question": "¿Cuánto da 21 por 45?", "answers": ["945"], "type": "arit×"}
+{"id": "-818330539956445806", "question": "dónde comienza y termina la autopista newell", "answers": ["Queensland", "estado de Queensland", "QLD"], "type": "entity"}
+{"id": "arit-1-136", "question": "¿Cuánto da 42 menos 415?", "answers": ["-373"], "type": "arit-"}
+{"id": "arit-1-14", "question": "¿Cuánto da 40 por 86?", "answers": ["3440"], "type": "arit×"}
+{"id": "-2888994232455468445", "question": "Naa Peru Surya, Naa Illu India, fecha de estreno", "answers": ["4 mayo 2018", "04 05 2018", "04/05/2018", "2018 05 04", "05-04-2018", "2018 mayo 04", "04 mayo 2018", "05 04 2018", "2018 may, 04", "05/04/2018", "04-05-2018", "2018-05-04"], "type": "date"}
+{"id": "-2116924521509405474", "question": "Dónde jugaban los Clippers antes del staples center", "answers": ["Los Angeles Memorial Sports Arena", "Los Angeles Sports Arena"], "type": "entity"}
+{"id": "arit-1-31", "question": "¿Cuánto es 437 - 868?", "answers": ["-431"], "type": "arit-"}
+{"id": "699165426180532129", "question": "Voz del rey Louie en el libro de la jungla de 1967", "answers": ["Louis Prima"], "type": "entity"}
+{"id": "-3202330561520495150", "question": "cuál es la temperatura del centro de la tierra", "answers": ["6000.0 grados centigrados", "6000 grados centigrados"], "type": "number_with_unit"}
+{"id": "-7742586764451791533", "question": "quién es el entrenador de los cincinnati bearcats", "answers": ["Luke Fickell"], "type": "entity"}
+{"id": "arit-1-92", "question": "¿Cuánto da 40 por 92?", "answers": ["3680"], "type": "arit×"}
+{"id": "arit-1-37", "question": "¿Cuánto es 928 - 749?", "answers": ["179"], "type": "arit-"}
+{"id": "arit-1-233", "question": "¿Cuánto es 14 × 12?", "answers": ["168"], "type": "arit×"}
+{"id": "-3460113705757461715", "question": "¿cuáles son los tres estados con más población de los estados unidos?", "answers": ["Florida"], "type": "entity"}
+{"id": "arit-1-113", "question": "¿Cuánto es 93 × 48?", "answers": ["4464"], "type": "arit×"}
+{"id": "-888659052107499201", "question": "cuando se estreno jurassic world: el reino caido", "answers": ["2018-05-21", "21-05-2018", "2018 05 21", "05-21-2018", "05 21 2018", "21/05/2018", "05/21/2018", "2018 mayo 21", "21 mayo 2018", "21 05 2018", "2018 may, 21"], "type": "date"}
+{"id": "arit-1-117", "question": "¿Cuánto es 35 + 330?", "answers": ["365"], "type": "arit+"}
+{"id": "arit-1-142", "question": "¿Cuánto da 139 menos 228?", "answers": ["-89"], "type": "arit-"}
+{"id": "-6844718002288756327", "question": "quien canta got you where i want you", "answers": ["The Flys"], "type": "entity"}
+{"id": "7306754908990268475", "question": "quien es el presidente del senado de \"texas\"", "answers": ["Dan Patrick"], "type": "entity"}
+{"id": "-5737887458011607939", "question": "¿Quién tiene la mayoría en el Congreso ahora mismo?", "answers": ["Partido Republicano", "Partido Republicano de Estados Unidos", "Administración republicana", "Administracion republicana"], "type": "entity"}
+{"id": "-2371611984672333347", "question": "quien es el cantate de system of a down", "answers": ["Daron Malakian", "Daron Vartan Malakian"], "type": "entity"}
+{"id": "arit-1-163", "question": "¿Cuánto es 971 - 692?", "answers": ["279"], "type": "arit-"}
+{"id": "3146777178148103274", "question": "quien cantó these boots are made for walkin", "answers": ["Nancy Sinatra"], "type": "entity"}
+{"id": "arit-1-82", "question": "¿Cuánto da 384 menos 594?", "answers": ["-210"], "type": "arit-"}
+{"id": "1987282316965978108", "question": "cuántos goles marcó suárez la temporada pasada", "answers": ["25.0", "25"], "type": "number"}
+{"id": "6022792262990235842", "question": "¿Cuál fue el último huracán en golpear Florida?", "answers": ["Huracán Irma", "Irma", "Huracán Irma 2017", "Irma 2017"], "type": "entity"}
+{"id": "arit-1-185", "question": "¿Cuánto es 79 × 38?", "answers": ["3002"], "type": "arit×"}
+{"id": "arit-1-11", "question": "¿Cuánto es 88 × 11?", "answers": ["968"], "type": "arit×"}
+{"id": "-876791510063092428", "question": "quienes son los jueces de irlanda tiene talento 2018", "answers": ["Michelle Visage"], "type": "entity"}
+{"id": "4605127645921665115", "question": "quien es el actor que interpreta a michael myers", "answers": ["Tony Moran"], "type": "entity"}
+{"id": "-1197964138016895966", "question": "quién es el propietario del casino sands en Bethlehem  Pensilvania", "answers": ["Las Vegas Sands"], "type": "entity"}
+{"id": "-8999574577662585246", "question": "¿Quien interpreto a la mrs Robinson en la pelicula El Graduado?", "answers": ["Anne Bancroft"], "type": "entity"}
+{"id": "arit-1-101", "question": "¿Cuánto es 21 × 13?", "answers": ["273"], "type": "arit×"}
+{"id": "-1550646020963618458", "question": "quién cantaba the house of the rising sun", "answers": ["The Animals"], "type": "entity"}
+{"id": "-4156870232683209747", "question": "donde está la central de energía nuclear en nueva york", "answers": ["Nueva York", "New York State", "NY", "New York, United States", "Nueva York (estado)", "Estado de Nueva York"], "type": "entity"}
+{"id": "7184014639679117710", "question": "quien escribió la canción on the road again", "answers": ["Willie Nelson", "Willie Hugh Nelson"], "type": "entity"}
+{"id": "arit-1-85", "question": "¿Cuánto es 434 - 507?", "answers": ["-73"], "type": "arit-"}
+{"id": "-8242550269661005952", "question": "quien canta searching for a heart of gold", "answers": ["Neil Young", "Neil Percival Young"], "type": "entity"}
+{"id": "arit-1-57", "question": "¿Cuánto es 512 + 761?", "answers": ["1273"], "type": "arit+"}
+{"id": "7127577961923843538", "question": "¿Quién canta \"this is the way to Amarillo\"?", "answers": ["Tony Christie"], "type": "entity"}
+{"id": "-5303907474500643611", "question": "¿Cuándo se estrenaron las películas de Harry Potter?", "answers": ["2005-11-18", "11 18 2005", "18 noviembre 2005", "2005 november, 18", "2005 noviembre 18", "18/11/2005", "18-11-2005", "2005 11 18", "18 11 2005", "11/18/2005", "11-18-2005"], "type": "date"}
+{"id": "6935422240574600373", "question": "cuándo se convierte Jackson en presidente en Hijos de la Anarquía", "answers": ["episodio 14 temporada 4"], "type": "short_phrase"}
+{"id": "1373929920121106749", "question": "quien sera el duodecimo doctor", "answers": ["Peter Capaldi"], "type": "entity"}
+{"id": "-5949685421005125662", "question": "quién cantaba the bluest skies are in seattle", "answers": ["Perry Como"], "type": "entity"}
+{"id": "4673538029525383170", "question": "Cuando salió The Land Before Time", "answers": ["1988-11-18", "1988 noviembre 18", "18/11/1988", "1988 11 18", "11 18 1988", "11/18/1988", "18 11 1988", "18-11-1988", "11-18-1988", "1988 november, 18", "18 noviembre 1988"], "type": "date"}
+{"id": "arit-1-41", "question": "¿Cuánto es 35 × 49?", "answers": ["1715"], "type": "arit×"}
+{"id": "-5360115206629393550", "question": "quién fue el presidente que comenzó la guerra de vietnam", "answers": ["Lyndon B. Johnson"], "type": "entity"}
+{"id": "1265705704686680374", "question": "cuándo se lanzó el primer teléfono con cámara en los estados unidos de américa", "answers": ["2002"], "type": "date"}
+{"id": "arit-1-115", "question": "¿Cuánto es 340 - 519?", "answers": ["-179"], "type": "arit-"}
+{"id": "-1970797027062941797", "question": "qué representa cb en cb radio", "answers": ["banda ciudadana"], "type": "entity"}
+{"id": "arit-1-230", "question": "¿Cuánto da 51 por 23?", "answers": ["1173"], "type": "arit×"}
+{"id": "2749044527299176241", "question": "cuando fue la ultima vez que los leafs ganaron la copa", "answers": ["1967"], "type": "date"}
+{"id": "arit-1-174", "question": "¿Cuánto da 229 más 283?", "answers": ["512"], "type": "arit+"}
+{"id": "arit-1-180", "question": "¿Cuánto da 507 más 797?", "answers": ["1304"], "type": "arit+"}
+{"id": "-3976700472036906836", "question": "quien fue el ultimo presidente de los estados unidos a ser asesinado", "answers": ["John F. Kennedy", "JFK"], "type": "entity"}
+{"id": "2594286516767261680", "question": "cuantas veces ha ganado venezuela miss universo", "answers": ["7.0", "7"], "type": "number"}
+{"id": "-1792142003460532685", "question": "quien escribió was this the face that launched a thousand ships", "answers": ["Christopher Marlowe", "Kit Marlowe"], "type": "entity"}
+{"id": "arit-1-143", "question": "¿Cuánto es 17 × 50?", "answers": ["850"], "type": "arit×"}
+{"id": "arit-1-127", "question": "¿Cuánto es 160 - 47?", "answers": ["113"], "type": "arit-"}
+{"id": "arit-1-213", "question": "¿Cuánto es 23 + 639?", "answers": ["662"], "type": "arit+"}
+{"id": "arit-1-66", "question": "¿Cuánto da 800 más 215?", "answers": ["1015"], "type": "arit+"}
+{"id": "2028695015205385283", "question": "quiénes son los miembros originales de lynyrd skynyrd", "answers": ["Ronnie Van Zant"], "type": "entity"}
+{"id": "-7925752079676715238", "question": "cuál es la velocidad máxima de un boeing 737", "answers": ["564.0 milla", "564 milla"], "type": "number_with_unit"}
+{"id": "arit-1-77", "question": "¿Cuánto es 76 × 27?", "answers": ["2052"], "type": "arit×"}
+{"id": "-3846554273761795081", "question": "cómo se llamaba la primera sinfonía de mozart", "answers": ["Sinfonía número 1 en Mi bemol mayor, K.16"], "type": "short_phrase"}
+{"id": "arit-1-179", "question": "¿Cuánto es 98 × 79?", "answers": ["7742"], "type": "arit×"}
+{"id": "7425647564385219480", "question": "quienes son los actores en el gran lebowski", "answers": ["Jeff Bridges"], "type": "entity"}
+{"id": "2731718849211499422", "question": "¿qué equipo ha ganado más títulos de la NBA?", "answers": ["Boston Celtics", "Celtics", "Los Celtics"], "type": "entity"}
+{"id": "3289687642937609257", "question": "¿Cuando hizo la Inmaculada Concepción un dogma?", "answers": ["1854"], "type": "date"}
+{"id": "-8651619018883977220", "question": "quien canta en spite of ourselves con john prine", "answers": ["Iris DeMent"], "type": "entity"}
+{"id": "-4358039032953240899", "question": "cuantas super bowls tienen los rams", "answers": ["1.0", "1"], "type": "number"}
+{"id": "3971361751209691329", "question": "quién hace de Venus en Hijos de la anarquía", "answers": ["Walton Goggins"], "type": "entity"}
+{"id": "1055521992737437168", "question": "quién fue el autor principal de la declaración de independencia", "answers": ["Thomas Jefferson"], "type": "entity"}
+{"id": "arit-1-202", "question": "¿Cuánto da 640 menos 612?", "answers": ["28"], "type": "arit-"}
+{"id": "-8408180440642663270", "question": "donde tiene lugar la pelicula great outdoors", "answers": ["Wisconsin"], "type": "entity"}
+{"id": "-1198227656095162134", "question": "cuántas temporadas hay de united states of tara", "answers": ["3.0", "3"], "type": "number"}
+{"id": "1162687162492750961", "question": "quien escribio i love to tell the story", "answers": ["Katherine Hankey"], "type": "entity"}
+{"id": "7465715979153721885", "question": "quién cantaba 1 2 3 what are we fighting for", "answers": ["Country Joe McDonald"], "type": "entity"}
+{"id": "4099217858976214714", "question": "cuál es el juego más vendido para la playstation 4", "answers": ["Grand Theft Auto V", "GTA V", "GTA 5", "Grand Theft Auto 5"], "type": "entity"}
+{"id": "4383366077260435539", "question": "Animal que carece de celoma o cavidad corporal", "answers": ["Acelio"], "type": "short_phrase"}
+{"id": "5725856502455649226", "question": "cual es el puente más largo en los estados unidos", "answers": ["Calzada del lago Pontchartrain", "Lake Pontchartrain Causeway"], "type": "entity"}
+{"id": "6449918077143051997", "question": "¿Qué tipo de empresa es Jaguar Land Rover?", "answers": ["industria automotriz", "industria del automóvil", "industria de automoción", "industria del automovil", "industria de automocion"], "type": "entity"}
+{"id": "-4013161620535567137", "question": "que estructura cerebral se encuentra en la punta del hipocampo", "answers": ["lóbulo temporal", "Lobus temporalis", "Lobulo temporal"], "type": "entity"}
+{"id": "arit-1-24", "question": "¿Cuánto da 793 más 459?", "answers": ["1252"], "type": "arit+"}
+{"id": "-3394135182863066073", "question": "dónde jugó fútbol universitario el quarterback de los eagles", "answers": ["Universidad Estatal de Míchigan", "Universidad del Estado de Michigan", "Universidad del Estado de Míchigan", "Universidad Estatal de Michigan", "Universidad de Michigan State", "Michigan State University"], "type": "entity"}
+{"id": "arit-1-35", "question": "¿Cuánto es 48 × 26?", "answers": ["1248"], "type": "arit×"}
+{"id": "6265074932803252556", "question": "¿Quién paró la revolución nacional polaca de 1830?", "answers": ["Rusia", "Federación Rusa"], "type": "entity"}
+{"id": "arit-1-200", "question": "¿Cuánto da 29 por 27?", "answers": ["783"], "type": "arit×"}
+{"id": "arit-1-98", "question": "¿Cuánto da 43 por 15?", "answers": ["645"], "type": "arit×"}
+{"id": "arit-1-168", "question": "¿Cuánto da 932 más 299?", "answers": ["1231"], "type": "arit+"}
+{"id": "7663793374867451272", "question": "cual es el nombre del bebé de nala y simba", "answers": ["Kiara"], "type": "short_phrase"}
+{"id": "8520056925724990737", "question": "cuántos distritos electorales hay en canadá", "answers": ["338.0", "338"], "type": "number"}
+{"id": "-6549515607449177711", "question": "quien interpretó a elder cunningham en book of mormon", "answers": ["cody jamison strand"], "type": "short_phrase"}
+{"id": "arit-1-175", "question": "¿Cuánto es 701 - 109?", "answers": ["592"], "type": "arit-"}
+{"id": "arit-1-208", "question": "¿Cuánto da 313 menos 588?", "answers": ["-275"], "type": "arit-"}
+{"id": "5008591256887246614", "question": "cuándo llegó el esquí alpino a los juegos olímpicos", "answers": ["1936"], "type": "date"}
+{"id": "-3734738148451196286", "question": "quien marco el gol mas rapido en la fifa", "answers": ["Clint Dempsey", "Clinton Drew Dempsey"], "type": "entity"}
+{"id": "arit-1-63", "question": "¿Cuánto es 673 + 185?", "answers": ["858"], "type": "arit+"}
+{"id": "arit-1-74", "question": "¿Cuánto da 81 por 88?", "answers": ["7128"], "type": "arit×"}
+{"id": "arit-1-23", "question": "¿Cuánto es 78 × 39?", "answers": ["3042"], "type": "arit×"}
+{"id": "-8299327714934748282", "question": "cuál es el nombre de la montaña más alta del Reino Unido", "answers": ["Scafell Pike"], "type": "entity"}
+{"id": "9209506207905378218", "question": "cuanto cuesta un big mac en america", "answers": ["5.58 dólar estadounidense"], "type": "number_with_unit"}
+{"id": "-6775440561065790969", "question": "quién cantó Killing Me Softly with His Song", "answers": ["Fugees", "The Fugees", "Tranzlator Crew", "Refugee Camp", "The Rap Translatorz"], "type": "entity"}
+{"id": "441296213865660806", "question": "quien hizo la voz de Johnny en Sing", "answers": ["Taron Egerton"], "type": "entity"}
+{"id": "arit-1-209", "question": "¿Cuánto es 79 × 25?", "answers": ["1975"], "type": "arit×"}
+{"id": "-508964584219648102", "question": "Cuántos años tenía Tony Stark cuando murió Howard Stark", "answers": ["74.0 año terrestre", "74 año terrestre"], "type": "number_with_unit"}
+{"id": "-465602876539575550", "question": "¿Quién cantó Don't Sit Under the Apple Tree?", "answers": ["The Andrews Sisters", "The Andrew Sisters"], "type": "entity"}
+{"id": "2762057807250995453", "question": "quién canta la canción you find out who your friends are", "answers": ["Tracy Lawrence"], "type": "entity"}
+{"id": "3970404258950915059", "question": "¿cuantos jugadores hay en los Chicago Cubs?", "answers": ["43.0", "43"], "type": "number"}
+{"id": "arit-1-220", "question": "¿Cuánto da 611 menos 442?", "answers": ["169"], "type": "arit-"}
+{"id": "arit-1-61", "question": "¿Cuánto es 640 - 618?", "answers": ["22"], "type": "arit-"}
+{"id": "arit-1-58", "question": "¿Cuánto da 41 menos 491?", "answers": ["-450"], "type": "arit-"}
+{"id": "arit-1-188", "question": "¿Cuánto da 75 por 43?", "answers": ["3225"], "type": "arit×"}
+{"id": "-7438449460180724010", "question": "quién interpreta al hijo del rey en Juego de tronos", "answers": ["Jack Gleeson"], "type": "entity"}
+{"id": "101438295447102068", "question": "quien interpretó a Anna en El rey y yo", "answers": ["Deborah Kerr"], "type": "entity"}
+{"id": "-1711577940839725776", "question": "quien hace de Eric en days of our lives", "answers": ["Jensen Ackles", "Jensen Ackles Ross"], "type": "entity"}
+{"id": "-5941174388758603039", "question": "que tipo de planeta es jupiter y saturno", "answers": ["gigante gaseoso", "planeta joviano", "gigante de gas", "planeta gaseoso"], "type": "entity"}
+{"id": "-5682089752151940709", "question": "Wstrella de la asociación de baloncesto tiene la mayor cantidad de puntos en playoffs", "answers": ["LeBron James", "LeBron Raymone James", "King James", "LBJ", "L-Train"], "type": "entity"}
+{"id": "arit-1-212", "question": "¿Cuánto da 16 por 48?", "answers": ["768"], "type": "arit×"}
+{"id": "arit-1-50", "question": "¿Cuánto da 81 por 97?", "answers": ["7857"], "type": "arit×"}
+{"id": "6693310442126683022", "question": "que son conocidos por reconocer la existencia y la importancia de la inteligencia emocional en la historia", "answers": ["Peter Salovey"], "type": "entity"}
+{"id": "6480057164410797415", "question": "¿Cuántos años le quedan a Kevin Durant en su contrato?", "answers": ["3.0 año terrestre", "3 año terrestre"], "type": "number_with_unit"}
+{"id": "-7572043940498192460", "question": "¿Dónde se inventó el primer globo de aire caliente?", "answers": ["Francia", "República Francesa", "Republica Francesa"], "type": "entity"}
+{"id": "arit-1-217", "question": "¿Cuánto es 917 - 819?", "answers": ["98"], "type": "arit-"}
+{"id": "arit-1-192", "question": "¿Cuánto da 899 más 977?", "answers": ["1876"], "type": "arit+"}
+{"id": "-5590423982475744712", "question": "cuántos años tienes que tener para hacerte un tatuaje en los estados unidos", "answers": ["18.0 año terrestre", "18 año terrestre"], "type": "number_with_unit"}
+{"id": "arit-1-60", "question": "¿Cuánto da 731 más 879?", "answers": ["1610"], "type": "arit+"}
+{"id": "arit-1-71", "question": "¿Cuánto es 84 × 56?", "answers": ["4704"], "type": "arit×"}
+{"id": "2303278544286800290", "question": "quién canta el tema de NCIS New Orleans", "answers": ["Scott Bakula", "Scott Stewart Bakula"], "type": "entity"}
+{"id": "arit-1-236", "question": "¿Cuánto da 87 por 51?", "answers": ["4437"], "type": "arit×"}
+{"id": "arit-1-129", "question": "¿Cuánto es 732 + 529?", "answers": ["1261"], "type": "arit+"}
+{"id": "-5089877846081247027", "question": "cuántos años debes tener para hacerte un tatuaje en utah", "answers": ["18.0 año terrestre", "18 año terrestre"], "type": "number_with_unit"}
+{"id": "5881677502990210383", "question": "quién protagoniza el río de la vida", "answers": ["Brenda Blethyn"], "type": "entity"}
+{"id": "3317714975739547118", "question": "cómo de ancho es el canal inglés de dover a calais", "answers": ["19.0 other unit", "19 other unit"], "type": "number_with_unit"}
+{"id": "4807982044372192071", "question": "cómo se escribe el 8 en números romanos", "answers": ["VIII"], "type": "short_phrase"}
+{"id": "arit-1-221", "question": "¿Cuánto es 31 × 25?", "answers": ["775"], "type": "arit×"}
+{"id": "arit-1-70", "question": "¿Cuánto da 363 menos 986?", "answers": ["-623"], "type": "arit-"}
+{"id": "-8172217876204531907", "question": "cuantas onzas lleva una botella de vodka", "answers": ["59.2 onza"], "type": "number_with_unit"}
+{"id": "-6371194604785307523", "question": "Cuántos episodios hay en la temporada 1 de Siete Segundos", "answers": ["10.0", "10"], "type": "number"}
+{"id": "arit-1-59", "question": "¿Cuánto es 16 × 50?", "answers": ["800"], "type": "arit×"}
+{"id": "arit-1-193", "question": "¿Cuánto es 629 - 809?", "answers": ["-180"], "type": "arit-"}
+{"id": "arit-1-118", "question": "¿Cuánto da 406 menos 362?", "answers": ["44"], "type": "arit-"}
+{"id": "arit-1-25", "question": "¿Cuánto es 972 - 518?", "answers": ["454"], "type": "arit-"}
+{"id": "3928293266168746093", "question": "cuándo fue erigido el ángel del norte", "answers": ["1998"], "type": "date"}
+{"id": "-6558255662045389370", "question": "¿quién cantab la canción \"come and get your love\"?", "answers": ["Redbone"], "type": "entity"}
+{"id": "-5706559367925106178", "question": "Cuántos miembros hay en el tribunal supremo de la India", "answers": ["34.0", "34"], "type": "number"}
+{"id": "-8038040490989347484", "question": "donde se rodó los cuatro hijos de katie elder", "answers": ["México", "mx", "Méjico", "Mejico", "Estados Unidos Mexicanos", "MX", "MEX", "Mexico", "Republica Mexicana", "República Mexicana"], "type": "entity"}
+{"id": "8633231234479392582", "question": "qué tipo de tiburones puedes tener como mascota", "answers": ["Pangasianodon hypophthalmus"], "type": "entity"}
+{"id": "arit-1-19", "question": "¿Cuánto es 565 - 20?", "answers": ["545"], "type": "arit-"}
+{"id": "2510334644407695934", "question": "quién es el corredor de los eagles de filadelfia", "answers": ["Miles Sanders"], "type": "entity"}
+{"id": "-6502768221091798293", "question": "dr. seuss the simplest seuss for youngest use", "answers": ["Hop on Pop"], "type": "entity"}
+{"id": "784291719838105725", "question": "quién canta everything i do i do it for you", "answers": ["Bryan Adams", "Brian Adams"], "type": "entity"}
+{"id": "-2079370499831813361", "question": "¿Cuándo se publicó Wrath of The Lich King?", "answers": ["2008-11-13", "11-13-2008", "2008 november, 13", "2008 11 13", "13/11/2008", "13 noviembre 2008", "13-11-2008", "11/13/2008", "13 11 2008", "11 13 2008", "2008 noviembre 13"], "type": "date"}
+{"id": "-5004573756759210454", "question": "Quiénes son los miembros de la junta del abc", "answers": ["Ita Buttrose"], "type": "entity"}
+{"id": "5951813401828362619", "question": "Cuando fue construido el prudential building en chicago", "answers": ["1955"], "type": "date"}
+{"id": "3013296189889794664", "question": "quién cantó 50 ways to leave your lover", "answers": ["Paul Simon", "Paul Frederic Simon"], "type": "entity"}
+{"id": "6198321052490349117", "question": "¿Cuál es la superficie de un acre de terreno?", "answers": ["43560.0 pies cuadrados", "43560 pies cuadrados"], "type": "number_with_unit"}
+{"id": "arit-1-125", "question": "¿Cuánto es 13 × 39?", "answers": ["507"], "type": "arit×"}
+{"id": "3429146202338791083", "question": "¿Cuándo se estrenó 50 sombras de Grey?", "answers": ["2015-02-13", "2015 february, 13", "13-02-2015", "13/02/2015", "2015 02 13", "02/13/2015", "13 02 2015", "13 febrero 2015", "02 13 2015", "2015 febrero 13", "02-13-2015"], "type": "date"}
+{"id": "arit-1-146", "question": "¿Cuánto da 49 por 31?", "answers": ["1519"], "type": "arit×"}
+{"id": "-4794116528469612742", "question": "¿Quién canta \"She's some kind of wonderful\"?", "answers": ["Grand Funk Railroad"], "type": "entity"}
+{"id": "arit-1-76", "question": "¿Cuánto da 16 menos 403?", "answers": ["-387"], "type": "arit-"}
+{"id": "arit-1-67", "question": "¿Cuánto es 563 - 953?", "answers": ["-390"], "type": "arit-"}
+{"id": "-8525124454763371713", "question": "Tiene Arizona un gobernador republicano o demócrata", "answers": ["Partido Republicano", "Partido Republicano de Estados Unidos", "Administración republicana", "Administracion republicana"], "type": "entity"}
+{"id": "arit-1-30", "question": "¿Cuánto da 959 más 33?", "answers": ["992"], "type": "arit+"}
+{"id": "2778449315185714340", "question": "Quién dijo que no puedes manejar la verdad?", "answers": ["Jack Nicholson", "John Joseph Nicholson"], "type": "entity"}
+{"id": "7750567004360684024", "question": "quién cantaba these boots were made for walking", "answers": ["Nancy Sinatra"], "type": "entity"}
+{"id": "arit-1-122", "question": "¿Cuánto da 76 por 37?", "answers": ["2812"], "type": "arit×"}
+{"id": "-8819224356617100445", "question": "cuándo se estrenó sígueme el rollo", "answers": ["2011-02-11", "02/11/2011", "02 11 2011", "11 febrero 2011", "02-11-2011", "11-02-2011", "2011 02 11", "11 02 2011", "2011 febrero 11", "2011 february, 11", "11/02/2011"], "type": "date"}
+{"id": "6933028138973193669", "question": "en que costa de barbados está la capital bridgetown", "answers": ["Bahía de Carlisle", "Bahia de Carlisle"], "type": "entity"}
+{"id": "arit-1-104", "question": "¿Cuánto da 46 por 42?", "answers": ["1932"], "type": "arit×"}
+{"id": "arit-1-51", "question": "¿Cuánto es 766 + 394?", "answers": ["1160"], "type": "arit+"}
+{"id": "arit-1-103", "question": "¿Cuánto es 783 - 784?", "answers": ["-1"], "type": "arit-"}
+{"id": "-2338532746383916517", "question": "quién poseía el territorio de louisiana antes de los estados unidos", "answers": ["Francia", "República Francesa", "Republica Francesa"], "type": "entity"}
+{"id": "arit-1-147", "question": "¿Cuánto es 437 + 589?", "answers": ["1026"], "type": "arit+"}
+{"id": "-8795772951937729106", "question": "cuándo fue la última vez que los bears jugaron la super bowl", "answers": ["2006"], "type": "date"}
+{"id": "-261620323803487359", "question": "a qué distancia está Dayton Ohio de Springfield Ohio", "answers": ["27.4 milla"], "type": "number_with_unit"}
+{"id": "-3321938931931776750", "question": "cuál fue el partido de béisbol de ligas mayores más largo de la historia", "answers": ["Partido profesional de béisbol más largo"], "type": "entity"}
+{"id": "-2474594977941723144", "question": "quién compuso la canción ghost riders in the sky", "answers": ["Stan Jones"], "type": "entity"}
+{"id": "5777597430854555492", "question": "¿Dónde fue combatida la batalla final de la guerra de Independencia?", "answers": ["Virginia"], "type": "entity"}
+{"id": "-4018959341407620176", "question": "cuando se publicó say you won't let go", "answers": ["2016"], "type": "date"}
+{"id": "-5288895482841197100", "question": "que tipo de articulacion es la articulacion  carpometacarpiana", "answers": ["diartrosis", "articulación sinobial", "articulacion sinobial"], "type": "entity"}
+{"id": "9057981874059120549", "question": "equipos que nunca han ganado una serie mundial", "answers": ["Seattle Mariners", "Marineros de Seattle"], "type": "entity"}
+{"id": "arit-1-0", "question": "¿Cuánto da 148 más 593?", "answers": ["741"], "type": "arit+"}
+{"id": "4597818957150700101", "question": "quien ganó el abierto de estados unidos de tenis en 2016", "answers": ["Stanislas Wawrinka", "Wawrinka", "Stan Wawrinka"], "type": "entity"}
+{"id": "arit-1-89", "question": "¿Cuánto es 90 × 89?", "answers": ["8010"], "type": "arit×"}
+{"id": "arit-1-91", "question": "¿Cuánto es 625 - 39?", "answers": ["586"], "type": "arit-"}
+{"id": "arit-1-111", "question": "¿Cuánto es 985 + 183?", "answers": ["1168"], "type": "arit+"}
+{"id": "-8491458297615165745", "question": "¿Quién fue el primer gobernante indio que tenía territorio fuera de la India?", "answers": ["Kanishka", "Kaniska", "Kaniṣka"], "type": "entity"}
+{"id": "-7501917070679782209", "question": "cuándo fue la última vez que el liverpool estuvo en la champions league", "answers": ["2020"], "type": "date"}
+{"id": "-1283343564030787069", "question": "que ciudad es conocida como the grasse of east en uttar pradesh", "answers": ["Kannauj"], "type": "entity"}
+{"id": "3361688268804920099", "question": "quien canta when can i see you again", "answers": ["Owl City"], "type": "entity"}
+{"id": "arit-1-145", "question": "¿Cuánto es 89 - 328?", "answers": ["-239"], "type": "arit-"}
+{"id": "-6781927726630191682", "question": "cuando fue la ultima vez que los mets fueron a la serie mundial", "answers": ["2015"], "type": "date"}
+{"id": "arit-1-160", "question": "¿Cuánto da 929 menos 454?", "answers": ["475"], "type": "arit-"}
+{"id": "9095930905693200944", "question": "cual es la pobalcion de \"silver spring maryland\"", "answers": ["71452.0", "71452"], "type": "number"}
+{"id": "5838698792219885364", "question": "quien dirigió alguien voló sobre el nido del cuco", "answers": ["Miloš Forman"], "type": "entity"}
+{"id": "arit-1-38", "question": "¿Cuánto da 75 por 65?", "answers": ["4875"], "type": "arit×"}
+{"id": "arit-1-6", "question": "¿Cuánto da 399 más 818?", "answers": ["1217"], "type": "arit+"}
+{"id": "5321789135429122643", "question": "cual es el mayor empleador en los estados unidos", "answers": ["Walmart", "Wal Mart", "Wal-Mart Stores", "Wal Mart Stores Inc.", "Supermercado de Wal-Mart", "Supermercado De Walmart", "Wal Mart Stores Inc", "Wall Mart", "Wal-Mart", "Wal Mart Stores", "Wal-Mart Stores Inc.", "Wal-Mart Stores Inc", "Walmart Soundcheck", "Walmart, Inc."], "type": "entity"}
+{"id": "arit-1-55", "question": "¿Cuánto es 178 - 544?", "answers": ["-366"], "type": "arit-"}
+{"id": "arit-1-94", "question": "¿Cuánto da 609 menos 196?", "answers": ["413"], "type": "arit-"}
+{"id": "-2525953826884829153", "question": "Aquí cuántos tipos de testigos hay en un tribunal penal", "answers": ["3.0", "3"], "type": "number"}
+{"id": "5979139532584581040", "question": "¿Cuántos dígitos conforman un número de Seguridad Social?", "answers": ["9.0", "9"], "type": "number"}
+{"id": "-5545266771249945753", "question": "Cuándo volverá Prentis a Mentes Criminales", "answers": ["Paget Brewster (Prentiss) regresa para una aparición especial en 2014 y el episodio de la temporada 11 \"Tribute\" a principios de 2016"], "type": "short_phrase"}
+{"id": "8153109977607713399", "question": "cuándo fue la última vez que el liverpool ganó un trofeo", "answers": ["2019"], "type": "date"}
+{"id": "arit-1-157", "question": "¿Cuánto es 216 - 366?", "answers": ["-150"], "type": "arit-"}
+{"id": "arit-1-68", "question": "¿Cuánto da 81 por 40?", "answers": ["3240"], "type": "arit×"}
+{"id": "arit-1-54", "question": "¿Cuánto da 121 más 808?", "answers": ["929"], "type": "arit+"}
+{"id": "4874743856997153275", "question": "¿En que condado esta Cherry Hill, New Jersey?", "answers": ["Condado de Camden", "Camden County, New Jersey", "Camden County New Jersey"], "type": "entity"}
+{"id": "4477300473899301723", "question": "¿Cuándo comenzó la policía a usar chalecos antibalas?", "answers": ["1970"], "type": "date"}
+{"id": "-3068131541685394725", "question": "quien fue el bateria origina de Guns and roses", "answers": ["Rob Gardner"], "type": "entity"}
+{"id": "-2930748943982564376", "question": "en el cumpleaños de quién se celebra el día del maestro", "answers": ["Sarvepalli Radhakrishnan", "Sarvepalli Radhakrisnan"], "type": "entity"}
+{"id": "arit-1-134", "question": "¿Cuánto da 68 por 39?", "answers": ["2652"], "type": "arit×"}
+{"id": "-2361242704753296055", "question": "qué actriz hace el papel de mary en coronation street", "answers": ["Patti Clare"], "type": "entity"}
+{"id": "arit-1-120", "question": "¿Cuánto da 275 más 122?", "answers": ["397"], "type": "arit+"}
+{"id": "-7977769336206568086", "question": "quién canta don't forget me when i'm gone", "answers": ["Glass Tiger"], "type": "entity"}
+{"id": "arit-1-216", "question": "¿Cuánto da 128 más 856?", "answers": ["984"], "type": "arit+"}
+{"id": "7690682516518935026", "question": "¿Quién canta \"i'm hooked on a feeling\"?", "answers": ["Blue Swede"], "type": "entity"}
+{"id": "arit-1-34", "question": "¿Cuánto da 655 menos 752?", "answers": ["-97"], "type": "arit-"}
+{"id": "3047488273407199884", "question": "Quien interpreta al demonio en la película Death Note?", "answers": ["Willem Dafoe", "William Dafoe"], "type": "entity"}
+{"id": "arit-1-232", "question": "¿Cuánto da 336 menos 51?", "answers": ["285"], "type": "arit-"}
+{"id": "-8273101638407250482", "question": "quien canta la canción it's my party and i'll cry if i want to", "answers": ["Lesley Gore", "Lesley Sue Goldstein"], "type": "entity"}
+{"id": "arit-1-148", "question": "¿Cuánto da 269 menos 144?", "answers": ["125"], "type": "arit-"}
+{"id": "arit-1-100", "question": "¿Cuánto da 700 menos 83?", "answers": ["617"], "type": "arit-"}
+{"id": "arit-1-153", "question": "¿Cuánto es 482 + 186?", "answers": ["668"], "type": "arit+"}
+{"id": "819207418696106881", "question": "cuando se hizo la película campo de sueños", "answers": ["1989-04-21", "1989 04 21", "1989 abril 21", "1989 april, 21", "21-04-1989", "04/21/1989", "21 04 1989", "04-21-1989", "21 abril 1989", "04 21 1989", "21/04/1989"], "type": "date"}
+{"id": "-3029726963901339644", "question": "quien cantó la canción you can ring my bell", "answers": ["Anita Ward"], "type": "entity"}
+{"id": "arit-1-173", "question": "¿Cuánto es 54 × 65?", "answers": ["3510"], "type": "arit×"}
+{"id": "-3073607660813051229", "question": "quien canta college gameday con big and rich", "answers": ["Cowboy Troy"], "type": "entity"}
+{"id": "arit-1-228", "question": "¿Cuánto da 574 más 270?", "answers": ["844"], "type": "arit+"}
+{"id": "5169947080601428883", "question": "quién es la chica que interpreta en Fifty Shades of Grey", "answers": ["Dakota Johnson"], "type": "entity"}
+{"id": "-6930371014100116329", "question": "cual es el nombre del mono en aladdin", "answers": ["Abu"], "type": "short_phrase"}
+{"id": "2091438961808499174", "question": "quien jugó en la Super Bowl en 2014", "answers": ["Seattle Seahawks"], "type": "entity"}
+{"id": "arit-1-72", "question": "¿Cuánto da 481 más 942?", "answers": ["1423"], "type": "arit+"}
+{"id": "552681895418621106", "question": "¿cuáno se inventó el bocadillo de crema de cacahuete y jalea?", "answers": ["1901"], "type": "date"}
+{"id": "3027645115022091599", "question": "Cuándo murió compo en Last of the Summer Wine", "answers": ["julio 1999", "july, 1999", "1999-07", "1999 julio", "1999 07"], "type": "date"}
+{"id": "arit-1-40", "question": "¿Cuánto da 943 menos 697?", "answers": ["246"], "type": "arit-"}
+{"id": "arit-1-238", "question": "¿Cuánto da 331 menos 419?", "answers": ["-88"], "type": "arit-"}
+{"id": "arit-1-124", "question": "¿Cuánto da 453 menos 847?", "answers": ["-394"], "type": "arit-"}
+{"id": "-8027438484347755517", "question": "quien canta yummy yummy yummy i got love in my tummy", "answers": ["Ohio Express"], "type": "entity"}
+{"id": "arit-1-215", "question": "¿Cuánto es 22 × 63?", "answers": ["1386"], "type": "arit×"}
+{"id": "-6360254598048825498", "question": "Quién interpretó a la madre de dragones en juego de tronos", "answers": ["Emilia Clarke"], "type": "entity"}
+{"id": "3302860993380182820", "question": "cuándo anunciaron los Beatles su ruptura", "answers": ["1970-04-10", "10-04-1970", "10/04/1970", "1970 abril 10", "1970 april, 10", "04-10-1970", "10 abril 1970", "1970 04 10", "04 10 1970", "04/10/1970", "10 04 1970"], "type": "date"}
+{"id": "arit-1-194", "question": "¿Cuánto da 73 por 28?", "answers": ["2044"], "type": "arit×"}
+{"id": "6676343500734129807", "question": "cuándo fue escrito harry potter y las reliquias de la muerte", "answers": ["2007-01", "2007 01", "2007 enero", "enero 2007", "january, 2007"], "type": "date"}
+{"id": "8604363031718573611", "question": "Gases principales en la atmósfera de Júpiter y Saturno", "answers": ["helio", "He"], "type": "entity"}
+{"id": "arit-1-45", "question": "¿Cuánto es 614 + 884?", "answers": ["1498"], "type": "arit+"}
+{"id": "-3697248169701347608", "question": "Ella va a distancia él va por la velocidad", "answers": ["The Distance"], "type": "short_phrase"}
+{"id": "7657147454533468258", "question": "¿Quién es el único indio que ha llegado a la final del campeonato de bádminton de toda Inglaterra?", "answers": ["Prakash Padukone"], "type": "entity"}
+{"id": "arit-1-106", "question": "¿Cuánto da 827 menos 650?", "answers": ["177"], "type": "arit-"}
+{"id": "arit-1-214", "question": "¿Cuánto da 697 menos 25?", "answers": ["672"], "type": "arit-"}
+{"id": "arit-1-181", "question": "¿Cuánto es 556 - 251?", "answers": ["305"], "type": "arit-"}
+{"id": "-5619970964515082772", "question": "quién cantaba kiss the girl en la sirenita", "answers": ["Ashley Tisdale"], "type": "entity"}
+{"id": "3581991713445181755", "question": "nombre real de shooter de love & hip hop atlanta", "answers": ["Rodricous Gates"], "type": "short_phrase"}
+{"id": "arit-1-144", "question": "¿Cuánto da 83 más 890?", "answers": ["973"], "type": "arit+"}
+{"id": "2371503729615532707", "question": "quien cantó la canción the first time ever i saw your face", "answers": ["Roberta Flack"], "type": "entity"}
+{"id": "-8198378858661156137", "question": "quien escribió willy wonka y la fábrica de chocolate", "answers": ["Roald Dahl"], "type": "entity"}
+{"id": "arit-1-137", "question": "¿Cuánto es 97 × 84?", "answers": ["8148"], "type": "arit×"}
+{"id": "arit-1-3", "question": "¿Cuánto es 131 + 518?", "answers": ["649"], "type": "arit+"}
+{"id": "arit-1-27", "question": "¿Cuánto es 364 + 247?", "answers": ["611"], "type": "arit+"}
+{"id": "arit-1-201", "question": "¿Cuánto es 360 + 128?", "answers": ["488"], "type": "arit+"}
+{"id": "-9014547525984148785", "question": "¿Cuándo ganaron las series mundiales los Philadelphia Phillies?", "answers": ["2008"], "type": "date"}
+{"id": "4402349211619821774", "question": "¿Cuantos episodios hay en Juego de Tronos?", "answers": ["73.0", "73"], "type": "number"}
+{"id": "476368974337766528", "question": "cuando fue la última vez que los republicanos ganaron el voto popular", "answers": ["2004"], "type": "date"}
+{"id": "-1537094394650926719", "question": "cuándo se rodó Are you the one second chances", "answers": ["2017"], "type": "date"}
+{"id": "9101947982403339923", "question": "quien gano la quinta temporada de rupaul's drag race", "answers": ["Jinkx Monsoon"], "type": "entity"}
+{"id": "arit-1-176", "question": "¿Cuánto da 59 por 81?", "answers": ["4779"], "type": "arit×"}
+{"id": "arit-1-5", "question": "¿Cuánto es 71 × 94?", "answers": ["6674"], "type": "arit×"}
+{"id": "-1139903759343056693", "question": "parte de la mandíbula dónde el cuerpo se junta con la rama", "answers": ["angulo de la mandibula"], "type": "short_phrase"}
+{"id": "arit-1-108", "question": "¿Cuánto da 308 más 82?", "answers": ["390"], "type": "arit+"}
+{"id": "arit-1-164", "question": "¿Cuánto da 60 por 48?", "answers": ["2880"], "type": "arit×"}
+{"id": "arit-1-182", "question": "¿Cuánto da 19 por 16?", "answers": ["304"], "type": "arit×"}
+{"id": "7264049249369676399", "question": "cuál es el aeropuerto de mayor tamaño de Estados Unidos", "answers": ["Aeropuerto Internacional Hartsfield-Jackson", "Aeropuerto de Atlanta", "KATL", "Aeropuerto Internacional de Atlanta", "Aeropuerto Internacional Hartsfield Jackson de Atlanta", "Aeropuerto Internacional Hartsfield-Jackson de Atlanta", "ATL", "Aeropuerto Internacional Hartsfield Jackson"], "type": "entity"}
+{"id": "6134810927991933545", "question": "cual era el nombre de la furgoneta de scooby doo", "answers": ["La maquina del misterio"], "type": "short_phrase"}
+{"id": "4878845393742315508", "question": "quien canta you only get what you give", "answers": ["New Radicals", "The New Radicals"], "type": "entity"}
+{"id": "arit-1-223", "question": "¿Cuánto es 708 - 258?", "answers": ["450"], "type": "arit-"}
+{"id": "-1251512664651917442", "question": "cuando se convirtió utah en parte de los estados unidos", "answers": ["1896-01-04", "01-04-1896", "04/01/1896", "01 04 1896", "04 01 1896", "01/04/1896", "04 enero 1896", "1896 01 04", "04-01-1896", "1896 january, 04", "1896 enero 04"], "type": "date"}
+{"id": "-997484400849915695", "question": "en qué episodio de Zack y Cody: Todos a bordo aparece maddie", "answers": ["temporada 1 episodio 13"], "type": "short_phrase"}
+{"id": "6202026021432820071", "question": "¿cuándo fue la última vez que los atlanta braves ganaron las world series?", "answers": ["1995"], "type": "date"}
+{"id": "5148882599180077957", "question": "quién era presidente de estados unidos durante la guerra civil", "answers": ["Abraham Lincoln"], "type": "entity"}
+{"id": "2636854670992768357", "question": "¿Quiénes son los senadores del estado de California?", "answers": ["Dianne Feinstein", "Dianne Goldman Berman Feinstein"], "type": "entity"}
+{"id": "1736622075043572243", "question": "¿Quién ganó la primera temporada de El gran pastelero británico?", "answers": ["Edd Kimber"], "type": "entity"}
+{"id": "arit-1-139", "question": "¿Cuánto es 686 - 657?", "answers": ["29"], "type": "arit-"}
+{"id": "-4781076157089758377", "question": "quien ganó la canción rock del año 2017", "answers": ["David Bowie", "David Robert Jones", "David Jones"], "type": "entity"}
+{"id": "3032476747580042560", "question": "cuántas peliculas de mighty morphin power ranger hay", "answers": ["3.0", "3"], "type": "number"}
+{"id": "arit-1-186", "question": "¿Cuánto da 285 más 788?", "answers": ["1073"], "type": "arit+"}
+{"id": "199825077536341316", "question": "quién tiene poderes para esteblacer el consejo interestatal", "answers": ["presidente", "Pdte.", "Pdte", "presidenta", "máximo mandatario", "maximo mandatario"], "type": "entity"}
+{"id": "8110697163919095299", "question": "Quién hace de Mrs Benson en Yo amo a Lucy", "answers": ["Norma Varden"], "type": "entity"}
+{"id": "3453595725488611576", "question": "quien gano el all-star de la mlb del año pasado", "answers": ["Liga Americana", "Liga Americana (béisbol)", "American League", "Liga Americana (beisbol)"], "type": "entity"}
+{"id": "81543553621132354", "question": "dónde se rodó Las vacaciones europeas de una chiflada familia americana", "answers": ["Italia", "República Italiana"], "type": "entity"}
+{"id": "arit-1-170", "question": "¿Cuánto da 36 por 52?", "answers": ["1872"], "type": "arit×"}
+{"id": "-325206254929308816", "question": "cuándo murió el caballo Silver de El llanero solitario", "answers": ["1959"], "type": "date"}
+{"id": "2786888963624595931", "question": "como se llaman los pastizales al sur de egipto", "answers": ["sabana", "sabana tropical"], "type": "entity"}
+{"id": "-4555607120929378828", "question": "donde está la edad para beber más baja en europa", "answers": ["16.0 año terrestre", "16 año terrestre"], "type": "number_with_unit"}
+{"id": "8612400649446195452", "question": "¿Quien es el actor que interpreta al Capitan Garfio en Erase una Vez?", "answers": ["Colin O'Donoghue"], "type": "entity"}
+{"id": "-2393437492692142124", "question": "Cuál es los nombres de las muñecas American Girl", "answers": ["Caroline Abbott"], "type": "short_phrase"}
+{"id": "-8107001391089328047", "question": "¿Cuándo llegó la Peste Negra a Europa?", "answers": ["1347"], "type": "date"}
+{"id": "-1492890414777477611", "question": "quién era el primer ministro inglés durante la Primera guerra mundial", "answers": ["David Lloyd George", "Lloyd George"], "type": "entity"}
+{"id": "-6177091657813211348", "question": "quién canta i want to know your name", "answers": ["The Whispers"], "type": "entity"}
+{"id": "arit-1-39", "question": "¿Cuánto es 530 + 860?", "answers": ["1390"], "type": "arit+"}
+{"id": "-7908423204462836045", "question": "episodio de los simpsons donde Homer compra marge una bola de bolos", "answers": ["Life On The Fast Lane", "Life on the Last Lane", "Jacques, el rompecorazones", "Un momento de decisión", "Life on the Fast Lane", "Un momento de decision", "Jacques el rompecorazones"], "type": "entity"}
+{"id": "-8073311805426057133", "question": "quien canta i heard it through the grapevine", "answers": ["Marvin Gaye", "Marvin Gay", "Marvin Pentz Gaye", "Marvin Pentz Gay", "Marvin Pentz Gay Jr.", "Marvin Pentz Gaye Jr", "Marvin Pentz Gaye Jr."], "type": "entity"}
+{"id": "arit-1-121", "question": "¿Cuánto es 270 - 932?", "answers": ["-662"], "type": "arit-"}
+{"id": "arit-1-43", "question": "¿Cuánto es 914 - 522?", "answers": ["392"], "type": "arit-"}
+{"id": "arit-1-93", "question": "¿Cuánto es 192 + 574?", "answers": ["766"], "type": "arit+"}
+{"id": "arit-1-130", "question": "¿Cuánto da 705 menos 447?", "answers": ["258"], "type": "arit-"}
+{"id": "5389106437312212883", "question": "quién canta la canción I believe I can fly", "answers": ["R. Kelly", "R Kelly", "Ricky Sylvester Kelly"], "type": "entity"}
+{"id": "arit-1-69", "question": "¿Cuánto es 425 + 537?", "answers": ["962"], "type": "arit+"}
+{"id": "-1959465086841168110", "question": "cuándo consiguieron las mujeres el derecho al voto en canadá", "answers": ["1918"], "type": "date"}
+{"id": "-6933378735828006337", "question": "cuándo empezó a estudiarse el cambio social", "answers": ["siglo XIX", "19. siglo"], "type": "entity"}
+{"id": "1219854107139788551", "question": "cuantas temporadas de love island hay", "answers": ["4.0", "4"], "type": "number"}
+{"id": "-1247208140655682089", "question": "cuando juega el equipo de cricket australiano", "answers": ["2019 10 26", "2019 october, 26", "26 10 2019", "26 octubre 2019", "26/10/2019", "10 26 2019", "10/26/2019", "26-10-2019", "2019 octubre 26", "10-26-2019", "2019-10-26"], "type": "date"}
+{"id": "37656685629962290", "question": "Donde se desarrolla Call me by your name", "answers": ["Italia", "República Italiana"], "type": "entity"}
+{"id": "2987825150735046357", "question": "cuándo se estrenó what does the fox say", "answers": ["2013-09-03", "09 03 2013", "09/03/2013", "2013 09 03", "2013 september, 03", "03 09 2013", "2013 septiembre 03", "09-03-2013", "03/09/2013", "03-09-2013", "03 septiembre 2013"], "type": "date"}
+{"id": "2319017908089751726", "question": "en que temporada de the bachelor estuvo rachel", "answers": ["Dancing with the Stars (Estados Unidos, temporada 21)"], "type": "entity"}
+{"id": "arit-1-1", "question": "¿Cuánto es 878 - 832?", "answers": ["46"], "type": "arit-"}
+{"id": "-565969426717265629", "question": "Cuándo fue declarada Patrimonio de la Humanidad la tumba de Humayun", "answers": ["1993"], "type": "date"}
+{"id": "arit-1-229", "question": "¿Cuánto es 739 - 499?", "answers": ["240"], "type": "arit-"}
+{"id": "-5448844015474339555", "question": "Quién pone la voz de Meg Griffin en Padre de familia", "answers": ["Mila Kunis"], "type": "entity"}
+{"id": "arit-1-26", "question": "¿Cuánto da 81 por 40?", "answers": ["3240"], "type": "arit×"}
+{"id": "8116824124734816791", "question": "quién es el general manager de Los Angeles lakers", "answers": ["Rob Pelinka"], "type": "entity"}
+{"id": "98262964342640738", "question": "Cuándo salió el primer par de Jordan", "answers": ["1985"], "type": "date"}
+{"id": "arit-1-18", "question": "¿Cuánto da 37 más 676?", "answers": ["713"], "type": "arit+"}
+{"id": "6653022138404992506", "question": "cuando movieron el faro de cape hetteras", "answers": ["1999"], "type": "date"}
+{"id": "arit-1-32", "question": "¿Cuánto da 82 por 93?", "answers": ["7626"], "type": "arit×"}
+{"id": "4447434169011525175", "question": "quién canta la canción return of the mack", "answers": ["Mark Morrison"], "type": "entity"}
+{"id": "3170992895587448501", "question": "quien escribio \"the times they are a changing\"", "answers": ["Bob Dylan", "Robert Allen Zimmerman"], "type": "entity"}
+{"id": "-8991186456399142895", "question": "cuantos wimbledon tiene roger federer", "answers": ["8.0", "8"], "type": "number"}
+{"id": "4900370580755973701", "question": "quién es el cantante líder en simply red", "answers": ["Mick Hucknall"], "type": "entity"}
+{"id": "8605162615517470946", "question": "quien escribió in the still of the night", "answers": ["fred parris"], "type": "short_phrase"}
+{"id": "-5824730534419401682", "question": "quien gano la final en dance plus 3", "answers": ["bir radha sherpa"], "type": "short_phrase"}
+{"id": "7428902671467301472", "question": "¿Quién tiene el promedio de bateo más alto de este año?", "answers": ["Ty Cobb", "Tyrus Raymond Cobb"], "type": "entity"}
+{"id": "arit-1-239", "question": "¿Cuánto es 19 × 19?", "answers": ["361"], "type": "arit×"}
+{"id": "arit-1-22", "question": "¿Cuánto da 754 menos 40?", "answers": ["714"], "type": "arit-"}
+{"id": "arit-1-226", "question": "¿Cuánto da 998 menos 398?", "answers": ["600"], "type": "arit-"}
+{"id": "-5300182137882368717", "question": "Quién interpretó a la cheerleader en saturday night live", "answers": ["Cheri Oteri"], "type": "entity"}
+{"id": "arit-1-234", "question": "¿Cuánto da 816 más 958?", "answers": ["1774"], "type": "arit+"}
+{"id": "-6128892653961791251", "question": "quien es la voz de megara en hércules", "answers": ["Susan Egan"], "type": "entity"}
+{"id": "-4252930450591462993", "question": "donde se originó el apellido collins", "answers": ["Irlanda", "República de Irlanda", "Republica de Irlanda"], "type": "entity"}
+{"id": "-998307019943031188", "question": "cuál es la montaña más alta de carolina del norte", "answers": ["Monte Michell"], "type": "entity"}
+{"id": "arit-1-203", "question": "¿Cuánto es 59 × 20?", "answers": ["1180"], "type": "arit×"}
+{"id": "-3090740937431566894", "question": "cuándo empezaron a salir charlie y la camarera", "answers": ["al final de la temporada 12"], "type": "short_phrase"}
+{"id": "arit-1-46", "question": "¿Cuánto da 46 menos 502?", "answers": ["-456"], "type": "arit-"}
+{"id": "-4781434911431225969", "question": "quién escribió to everything there is a season", "answers": ["Pete Seeger", "Peter Seeger"], "type": "entity"}
+{"id": "265069798223595000", "question": "¿en qué temporada muere hersel en \"the walking dead\"?", "answers": ["9.0", "9"], "type": "number"}
+{"id": "-851149197598120689", "question": "quien interpretra al padre de col en f de prom", "answers": ["Bctcg"], "type": "entity"}
+{"id": "-1548786101485516149", "question": "¿Cuándo fue la última vez que Gran Bretaña tuvo un rey y una reina?", "answers": ["1952-06-02", "02/06/1952", "02 junio 1952", "06/02/1952", "1952 06 02", "1952 junio 02", "02-06-1952", "06-02-1952", "02 06 1952", "06 02 1952", "1952 june, 02"], "type": "date"}
+{"id": "371675702092173493", "question": "ciudades con mayor población en el estado de Nueva York", "answers": ["Rochester"], "type": "entity"}
+{"id": "1831064377975284998", "question": "cuánto dinero debe puerto rico a los estados unidos", "answers": ["74000000000.0 dólar estadounidense", "74000000000 dólar estadounidense"], "type": "number_with_unit"}
+{"id": "-3128225645728760094", "question": "quien interpreta a la niña pequeña de puente a terabithia", "answers": ["Bailee Madison"], "type": "entity"}
+{"id": "arit-1-16", "question": "¿Cuánto da 934 menos 336?", "answers": ["598"], "type": "arit-"}
+{"id": "-8036563285204482986", "question": "¿Quién escribió el texto amarkosha durante la era Gupta?", "answers": ["Amara Simja"], "type": "entity"}
+{"id": "arit-1-119", "question": "¿Cuánto es 64 × 35?", "answers": ["2240"], "type": "arit×"}
+{"id": "arit-1-189", "question": "¿Cuánto es 387 + 357?", "answers": ["744"], "type": "arit+"}
+{"id": "-3187170524176385709", "question": "a quien se le ocurrio la idea del hipertexto", "answers": ["Ted Nelson", "Theodore Holm Nelson"], "type": "entity"}
+{"id": "2125172940018922622", "question": "¿Quién comenzó a celebrar el año nuevo el 1 de enero?", "answers": ["Julio César", "Julio Cesar", "Cayo Julio César", "Cayo Julio Cesar", "Gayo Julio César", "Gayo Julio Cesar"], "type": "entity"}
+{"id": "-3943859381144544184", "question": "¿Quién posee más puntos por juego en la NBA?", "answers": ["Wilt Chamberlain", "Wilton Norman Chamberlain"], "type": "entity"}
+{"id": "-4853759279052413002", "question": "cual es la mayor distancia que alguien ha corrido", "answers": ["350.0 milla", "350 milla"], "type": "number_with_unit"}
+{"id": "arit-1-110", "question": "¿Cuánto da 43 por 78?", "answers": ["3354"], "type": "arit×"}
+{"id": "arit-1-13", "question": "¿Cuánto es 283 - 749?", "answers": ["-466"], "type": "arit-"}
+{"id": "-5818906764192144597", "question": "¿Cuál fue el arma más usada en la guerra de Independencia?", "answers": ["Brown Bess"], "type": "entity"}
+{"id": "arit-1-133", "question": "¿Cuánto es 722 - 539?", "answers": ["183"], "type": "arit-"}
+{"id": "8688547147381696071", "question": "¿cuándo fue la última vez que se usó la guillotina en francia?", "answers": ["1981-09", "september, 1981", "1981 septiembre", "1981 09", "septiembre 1981"], "type": "date"}
+{"id": "arit-1-128", "question": "¿Cuánto da 31 por 68?", "answers": ["2108"], "type": "arit×"}
+{"id": "4002948439158921388", "question": "quién cantaba la canción i can't live without you", "answers": ["Harry Nilsson"], "type": "entity"}
+{"id": "-635933088487910257", "question": "quien juega en el hard rock stadium en miami", "answers": ["Miami Hurricanes"], "type": "entity"}
+{"id": "-6521784313032991330", "question": "uántas temporadas duró law and order criminal intent", "answers": ["10.0 estaciones del año", "10 estaciones del año"], "type": "number_with_unit"}
+{"id": "451560502074824668", "question": "¿Cuál es el nombre del área donde el fémur se articula con la pelvis?", "answers": ["acetábulo", "Acetabulum"], "type": "entity"}
+{"id": "4277370647950785243", "question": "dónde se grabó alguien voló sobre el nido del cuco", "answers": ["Estados Unidos", "USA", "EUA", "EE. UU.", "EE.UU.", "EEUU", "América", "America", "Estados Unidos de America", "Estados Unidos de América"], "type": "entity"}
+{"id": "7323463382570261703", "question": "quien escribió la canción love me like you do", "answers": ["Ali Payami"], "type": "entity"}
+{"id": "-1185129645816876391", "question": "cuándo se contruyó el museo de arte metropolitano", "answers": ["1870"], "type": "date"}
+{"id": "-4138034991911706144", "question": "quién ganó los Másters durante los últimos días años", "answers": ["Danny Willett"], "type": "entity"}
+{"id": "2051141609383316115", "question": "Quién interpreta a Evil Steve en la película de Keith Lemon", "answers": ["Leigh Francis"], "type": "entity"}
+{"id": "2289551215702424818", "question": "cuando ganó el liverpool la última premier league", "answers": ["1989"], "type": "date"}
+{"id": "arit-1-28", "question": "¿Cuánto da 704 menos 235?", "answers": ["469"], "type": "arit-"}
+{"id": "arit-1-7", "question": "¿Cuánto es 225 - 107?", "answers": ["118"], "type": "arit-"}
+{"id": "arit-1-99", "question": "¿Cuánto es 872 + 977?", "answers": ["1849"], "type": "arit+"}
+{"id": "2625276851485102302", "question": "¿Dónde sucede la primera escena de \"Italian job\"?", "answers": ["Italia", "República Italiana"], "type": "entity"}
+{"id": "6265990105062828626", "question": "cuántos goles marcó ronaldo en la premier league", "answers": ["84.0", "84"], "type": "number"}
+{"id": "arit-1-90", "question": "¿Cuánto da 350 más 480?", "answers": ["830"], "type": "arit+"}
+{"id": "arit-1-123", "question": "¿Cuánto es 999 + 631?", "answers": ["1630"], "type": "arit+"}
+{"id": "-2636623161713410044", "question": "cuándo se formó el equipo de los New York Mets", "answers": ["1962"], "type": "date"}
+{"id": "arit-1-62", "question": "¿Cuánto da 85 por 61?", "answers": ["5185"], "type": "arit×"}
+{"id": "6956719386037713554", "question": "dónde se rodaron todas las películas de Piratas del Caribe", "answers": ["Utah"], "type": "entity"}
+{"id": "-3573207091591676988", "question": "¿Dónde fue rodada la película de El Señor de los Anillos?", "answers": ["Nueva Zelanda", "Nueva Zelandia"], "type": "entity"}
+{"id": "arit-1-205", "question": "¿Cuánto es 240 - 590?", "answers": ["-350"], "type": "arit-"}
+{"id": "arit-1-158", "question": "¿Cuánto da 23 por 37?", "answers": ["851"], "type": "arit×"}
+{"id": "8952717755010970909", "question": "¿Cuándo salió \"Barbie: Life In the Dreamhouse\"?", "answers": ["2012-05-11", "2012 may, 11", "2012 05 11", "05-11-2012", "05 11 2012", "11 05 2012", "11 mayo 2012", "2012 mayo 11", "11-05-2012", "11/05/2012", "05/11/2012"], "type": "date"}
+{"id": "-5357805991340028761", "question": "quién actuó en la película el reencuentro", "answers": ["William Hurt"], "type": "entity"}
+{"id": "6053436523985066144", "question": "¿quien tiene el record de asistencias de todos los tiempos?", "answers": ["John Stockton"], "type": "entity"}
+{"id": "474117384072691879", "question": "cuantos equipos hay en la psl", "answers": ["6.0", "6"], "type": "number"}
+{"id": "4547333015547257897", "question": "¿Quien hace de Violeta en Una serie de catastróficas desdichas?", "answers": ["Malina Weissman"], "type": "entity"}
+{"id": "-1186907498670550741", "question": "cuando termina la 5 temporada de blacklist", "answers": ["2018-05-16", "05-16-2018", "16-05-2018", "2018 05 16", "05/16/2018", "2018 may, 16", "16 mayo 2018", "16 05 2018", "2018 mayo 16", "16/05/2018", "05 16 2018"], "type": "date"}
+{"id": "-3035485922399347025", "question": "en qué país desemboca el río Indo", "answers": ["India", "República de la India", "Republica de la India", "La India"], "type": "entity"}
+{"id": "3285987525925960558", "question": "Dónde se fueron de vacaciones en Antes de ti", "answers": ["Mauricio", "República de Mauricio", "Republica de Mauricio"], "type": "entity"}
+{"id": "6581833370403343207", "question": "cuándo fue la última vez que Francia ganó un mundial", "answers": ["1998"], "type": "date"}
+{"id": "arit-1-15", "question": "¿Cuánto es 978 + 115?", "answers": ["1093"], "type": "arit+"}
+{"id": "arit-1-140", "question": "¿Cuánto da 65 por 18?", "answers": ["1170"], "type": "arit×"}
+{"id": "8190425404870295487", "question": "qué distancia hay de nueva york a buffalo en el estado de nueva york", "answers": ["372.7 milla"], "type": "number_with_unit"}
+{"id": "-6133009717802725861", "question": "quién escribió this is a man's world", "answers": ["James Brown"], "type": "entity"}
+{"id": "arit-1-56", "question": "¿Cuánto da 61 por 58?", "answers": ["3538"], "type": "arit×"}
+{"id": "arit-1-159", "question": "¿Cuánto es 598 + 701?", "answers": ["1299"], "type": "arit+"}
+{"id": "arit-1-156", "question": "¿Cuánto da 49 más 398?", "answers": ["447"], "type": "arit+"}
+{"id": "-8289161855062990086", "question": "por qué película se llevó un oscar natalie portman", "answers": ["Black Swan"], "type": "entity"}
+{"id": "-5964399058648417411", "question": "quien cantó honey don't de los beatles", "answers": ["The Beatles", "Les Beatles"], "type": "entity"}
+{"id": "arit-1-131", "question": "¿Cuánto es 80 × 39?", "answers": ["3120"], "type": "arit×"}
+{"id": "arit-1-222", "question": "¿Cuánto da 472 más 182?", "answers": ["654"], "type": "arit+"}
+{"id": "-8817357831042426028", "question": "cuántos días tarda la tierra en orbitar el sol", "answers": ["365.0 día", "365 día"], "type": "number_with_unit"}
+{"id": "arit-1-207", "question": "¿Cuánto es 384 + 923?", "answers": ["1307"], "type": "arit+"}
+{"id": "-8601333932519018614", "question": "Quién cantó if i were a carpenter and you were a lady", "answers": ["Johnny Cash", "Johnny el Vergadura"], "type": "entity"}
+{"id": "arit-1-138", "question": "¿Cuánto da 833 más 339?", "answers": ["1172"], "type": "arit+"}
+{"id": "arit-1-107", "question": "¿Cuánto es 34 × 55?", "answers": ["1870"], "type": "arit×"}
+{"id": "9044447430031636829", "question": "Reparto de  a cinderella story: once upon a time", "answers": ["Lucy Hale", "Lucy Kate Hale"], "type": "entity"}
+{"id": "arit-1-190", "question": "¿Cuánto da 359 menos 127?", "answers": ["232"], "type": "arit-"}
+{"id": "arit-1-105", "question": "¿Cuánto es 286 + 123?", "answers": ["409"], "type": "arit+"}
+{"id": "arit-1-195", "question": "¿Cuánto es 604 + 575?", "answers": ["1179"], "type": "arit+"}
+{"id": "arit-1-167", "question": "¿Cuánto es 89 × 62?", "answers": ["5518"], "type": "arit×"}
+{"id": "arit-1-152", "question": "¿Cuánto da 38 por 83?", "answers": ["3154"], "type": "arit×"}
+{"id": "arit-1-150", "question": "¿Cuánto da 910 más 881?", "answers": ["1791"], "type": "arit+"}
+{"id": "163812861735992154", "question": "quien escribió la canción i believe in love", "answers": ["Kenny Loggins"], "type": "entity"}
+{"id": "arit-1-141", "question": "¿Cuánto es 766 + 316?", "answers": ["1082"], "type": "arit+"}
+{"id": "8450376111876739069", "question": "¿cuándo se estrenó harry potter and the sorcerer's stone?", "answers": ["2002-04-12", "2002 april, 12", "12 04 2002", "12 abril 2002", "2002 04 12", "04 12 2002", "2002 abril 12", "12/04/2002", "12-04-2002", "04/12/2002", "04-12-2002"], "type": "date"}
+{"id": "arit-1-183", "question": "¿Cuánto es 97 + 147?", "answers": ["244"], "type": "arit+"}
+{"id": "arit-1-112", "question": "¿Cuánto da 683 menos 290?", "answers": ["393"], "type": "arit-"}
+{"id": "arit-1-49", "question": "¿Cuánto es 188 - 386?", "answers": ["-198"], "type": "arit-"}
+{"id": "7027599956289751821", "question": "¿Quién ganó más copas Stanley en la NHL?", "answers": ["Canadiens de Montréal", "Montreal Canadiens", "Canadiens de Montreal"], "type": "entity"}
+{"id": "arit-1-199", "question": "¿Cuánto es 400 - 897?", "answers": ["-497"], "type": "arit-"}
+{"id": "arit-1-10", "question": "¿Cuánto da 410 menos 454?", "answers": ["-44"], "type": "arit-"}
+{"id": "arit-1-2", "question": "¿Cuánto da 19 por 43?", "answers": ["817"], "type": "arit×"}
+{"id": "arit-1-219", "question": "¿Cuánto es 256 + 815?", "answers": ["1071"], "type": "arit+"}
+{"id": "arit-1-177", "question": "¿Cuánto es 363 + 947?", "answers": ["1310"], "type": "arit+"}
+{"id": "arit-1-64", "question": "¿Cuánto da 183 menos 525?", "answers": ["-342"], "type": "arit-"}
+{"id": "arit-1-96", "question": "¿Cuánto da 827 más 882?", "answers": ["1709"], "type": "arit+"}
+{"id": "178875795584768999", "question": "¿Cuándo se unieron alaska y hawaii a la unión?", "answers": ["1959"], "type": "date"}
+{"id": "arit-1-166", "question": "¿Cuánto da 28 menos 344?", "answers": ["-316"], "type": "arit-"}
+{"id": "arit-1-8", "question": "¿Cuánto da 73 por 14?", "answers": ["1022"], "type": "arit×"}
+{"id": "arit-1-204", "question": "¿Cuánto da 595 más 574?", "answers": ["1169"], "type": "arit+"}
+{"id": "arit-1-162", "question": "¿Cuánto da 515 más 117?", "answers": ["632"], "type": "arit+"}
+{"id": "-6339549143246224695", "question": "quién tiene más suscriptores en youtube", "answers": ["T-Series", "Super Cassettes Industries Private Limited"], "type": "entity"}
+{"id": "-3806273856954608914", "question": "quién interpretó a ramsay bolton en juego de tronos", "answers": ["Iwan Rheon"], "type": "entity"}
+{"id": "4189590166138253194", "question": "quien tiene la mayor cantidad de dinero en la nba", "answers": ["Kevin Garnett", "Kevin Maurice Garnett"], "type": "entity"}
+{"id": "7011446331114983875", "question": "qué significa se en un vauxhall astra", "answers": ["edición especial"], "type": "entity"}
+{"id": "-6412417606016046895", "question": "cuántas temporadas de diners drive-ins and dives hay", "answers": ["30.0", "30"], "type": "number"}
+{"id": "-5298983925744557273", "question": "cuándo fue la última vez que estados unidos no tenía deuda pública", "answers": ["1835-01-08", "01-08-1835", "01 08 1835", "08 01 1835", "08-01-1835", "1835 january, 08", "1835 enero 08", "1835 01 08", "08/01/1835", "08 enero 1835", "01/08/1835"], "type": "date"}
+{"id": "-9164557426920255978", "question": "quien gano el campeonato de futbol universitario el año pasado", "answers": ["60-0"], "type": "entity"}
+{"id": "-1089141579981071177", "question": "¿Cuándo se estrena la temporada 4 de Boku No Hero Academia?", "answers": ["2019-10-21", "10/21/2019", "21-10-2019", "2019 october, 21", "21 octubre 2019", "2019 10 21", "2019 octubre 21", "21 10 2019", "10-21-2019", "10 21 2019", "21/10/2019"], "type": "date"}
+{"id": "3716943449734480322", "question": "quien cantaba let's go all the way", "answers": ["Sly Fox"], "type": "entity"}
+{"id": "arit-1-178", "question": "¿Cuánto da 914 menos 868?", "answers": ["46"], "type": "arit-"}
+{"id": "arit-1-73", "question": "¿Cuánto es 286 - 686?", "answers": ["-400"], "type": "arit-"}
+{"id": "arit-1-29", "question": "¿Cuánto es 69 × 48?", "answers": ["3312"], "type": "arit×"}
+{"id": "-2595528603820801676", "question": "¿Quién canta I Wanna Be A Billionaire?", "answers": ["Travis McCoy"], "type": "entity"}
+{"id": "arit-1-116", "question": "¿Cuánto da 71 por 25?", "answers": ["1775"], "type": "arit×"}
+{"id": "arit-1-12", "question": "¿Cuánto da 723 más 467?", "answers": ["1190"], "type": "arit+"}
+{"id": "-2825603185739116838", "question": "qué producto químico se mezcla en las bolsas de plástico de polilefinas", "answers": ["etileno"], "type": "entity"}
+{"id": "arit-1-231", "question": "¿Cuánto es 223 + 678?", "answers": ["901"], "type": "arit+"}
+{"id": "6461065212753382626", "question": "donde tuvo lugar la batalla de gettysburg", "answers": ["Pensilvania"], "type": "entity"}
+{"id": "arit-1-154", "question": "¿Cuánto da 858 menos 899?", "answers": ["-41"], "type": "arit-"}
+{"id": "arit-1-95", "question": "¿Cuánto es 22 × 81?", "answers": ["1782"], "type": "arit×"}
+{"id": "arit-1-197", "question": "¿Cuánto es 52 × 16?", "answers": ["832"], "type": "arit×"}
+{"id": "arit-1-20", "question": "¿Cuánto da 59 por 98?", "answers": ["5782"], "type": "arit×"}
+{"id": "arit-1-161", "question": "¿Cuánto es 86 × 35?", "answers": ["3010"], "type": "arit×"}
+{"id": "arit-1-42", "question": "¿Cuánto da 301 más 612?", "answers": ["913"], "type": "arit+"}
+{"id": "arit-1-81", "question": "¿Cuánto es 503 + 901?", "answers": ["1404"], "type": "arit+"}
+{"id": "-4499761486504763398", "question": "quién interpreta al padre en mi gran boda griega", "answers": ["Michael Constantine"], "type": "entity"}
+{"id": "-1135225573282689031", "question": "Programas recientes lanzados por el gobierno de la India", "answers": ["Pradhan Mantri Jan Dhan Yojana"], "type": "entity"}
+{"id": "-1970505664005495754", "question": "dónde se celebrarán las olimpiadas en 2024", "answers": ["Francia", "República Francesa", "Republica Francesa"], "type": "entity"}
+{"id": "4839476130665858888", "question": "Quién hizo de Andy en Ley y Orden temporada 19 episodio 8", "answers": ["Steve Howey"], "type": "entity"}
+{"id": "-5176829151729688172", "question": "quien gano la ultima edicion de the bachelor", "answers": ["Becca Kufrin"], "type": "entity"}
+{"id": "-350445814840338026", "question": "¿quién hace el papel de penny en \"the big bang theory\"?", "answers": ["Kaley Cuoco"], "type": "entity"}
+{"id": "arit-1-9", "question": "¿Cuánto es 925 + 866?", "answers": ["1791"], "type": "arit+"}
+{"id": "6477209141371587806", "question": "quién cantó nothing's gonna change my love for you", "answers": ["Glenn Medeiros"], "type": "entity"}
+{"id": "582120899342331504", "question": "a quien se le atribuye la creación de la primera tabla periódica", "answers": ["Dmitri Mendeléyev", "Dmitri Ivánovich Mendeléyev", "Dmitri Ivanovich Mendeleyev", "Dmitri Mendeleyev", "Dmitri Mendeléiev", "Dmitri Mendeleiev", "Mendeléyev", "Mendeléiev", "Mendeleyev", "Mendeleiev", "Dimitri Mendeliév", "Dimitri Mendeliev"], "type": "entity"}
+{"id": "-3692496407846821915", "question": "¿Quien tiene mas seguidores en Instagram?", "answers": ["Cristiano Ronaldo", "Cristiano Ronaldo dos Santos Aveiro", "CR7"], "type": "entity"}

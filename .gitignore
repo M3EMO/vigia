@@ -13,7 +13,8 @@ logs/
 credentials.json
 token.json
 *.key
-.cache/
+.cache/*
+!.cache/data/
 var/
 dist/
 build/
