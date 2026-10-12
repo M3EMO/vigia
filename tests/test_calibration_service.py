@@ -135,7 +135,7 @@ def test_parse_dataset_rejects_deeply_nested_json_with_dataset_error():
     """Regresión: 'Subida de dataset de calibración con JSON profundamente anidado lanza
     RecursionError no capturada y devuelve HTTP 500 en vez de 422'."""
     prefix = '{"id":"a","question":"q","response":"r","label":0,"x":'
-    deep = (prefix + "[" * 6000 + "]" * 6000 + "}").encode()
+    deep = (prefix + "[" * 100_000 + "]" * 100_000 + "}").encode()
     content = jsonl({"id": "ok", "question": "q", "answers": ["x"]}) + deep
     with pytest.raises(DatasetError, match=r"Línea 2: JSON inválido \(anidamiento excesivo\)"):
         parse_dataset(content)

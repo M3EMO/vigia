@@ -83,7 +83,8 @@ def test_subprocess_does_not_see_parent_secrets(monkeypatch, tmp_path):
     tests = (
         "import os, sys\n"
         "assert 'VIGIA_TEST_SECRET' not in env()\n"
-        "assert {k.upper() for k in env()} <= {'PATH', 'SYSTEMROOT'}\n"
+        # LC_CTYPE lo agrega el propio Python en Linux (coerción de locale, PEP 538), no se hereda.
+        "assert {k.upper() for k in env()} <= {'PATH', 'SYSTEMROOT', 'LC_CTYPE'}\n"
         f"assert os.path.realpath(os.getcwd()) != os.path.realpath({str(tmp_path)!r})\n"
         "assert sys.flags.isolated and sys.flags.no_site\n"
     )

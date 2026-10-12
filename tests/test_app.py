@@ -284,7 +284,7 @@ def test_deeply_nested_dataset_upload_is_422_not_500(rt, app):
     add_user(rt, org, "owner@acme.com.ar", "owner")
     panel, csrf = login(app, "owner@acme.com.ar")
     prefix = '{"id":"a","question":"q","response":"r","label":0,"x":'
-    deep = (prefix + "[" * 6000 + "]" * 6000 + "}").encode()
+    deep = (prefix + "[" * 100_000 + "]" * 100_000 + "}").encode()
     up = panel.post(
         "/calibration/datasets",
         data={"csrf_token": csrf, "name": "hondo"},
