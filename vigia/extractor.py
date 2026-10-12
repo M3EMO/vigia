@@ -210,6 +210,7 @@ class SignalExtractor:
         self._counts: np.ndarray | None = None  # (B, L, N): uso acumulado por fila
         self._prev_sel: list[np.ndarray | None] = []  # por fila: selección (L, k) de la última válida
         self._handles: list[torch.utils.hooks.RemovableHandle] = []
+        self._router_w: dict[int, tuple[torch.Tensor, torch.Tensor | None]] = {}
         self._step: _Step | None = None
         self.reset()
 
@@ -237,6 +238,7 @@ class SignalExtractor:
 
     def __exit__(self, *exc: object) -> None:
         self._remove_hooks()
+        self._router_w.clear()  # los pesos pueden cambiar entre contextos (ajuste fino)
 
     def _remove_hooks(self) -> None:
         try:
@@ -264,10 +266,16 @@ class SignalExtractor:
         block = self.blocks[j]
         with _inference():
             h = x.detach().reshape(-1, x.shape[-1]).float()
-            bias = getattr(block.router, "bias", None)
-            logits = F.linear(
-                h, block.router.weight.detach().float(), None if bias is None else bias.detach().float()
-            )
+            w = self._router_w.get(j)
+            if w is None or w[0].device != h.device:
+                # Pesos en float32 una vez por contexto: convertirlos en cada token costaba un kernel
+                # y una copia por capa y paso.
+                bias = getattr(block.router, "bias", None)
+                w = self._router_w[j] = (
+                    block.router.weight.detach().float(),
+                    None if bias is None else bias.detach().float(),
+                )
+            logits = F.linear(h, *w)
         step = self._current()
         step.shape = tuple(x.shape[:-1]) if x.dim() == 3 else (1, h.shape[0])
         step.router[j] = logits
@@ -420,6 +428,38 @@ class SignalExtractor:
 
     # --- reducciones ------------------------------------------------------------------------
 
+    @staticmethod
+    def _output_features(rows: torch.Tensor, targets: np.ndarray) -> dict[str, np.ndarray]:
+        """`features.output_features` en el dispositivo de los logits: copia 4 números por fila, no V.
+
+        Copiar el vocabulario entero a la CPU en cada token era el mayor costo de latencia de F0
+        (201.088 logits en gpt-oss). float64 en el dispositivo mantiene la paridad con la versión numpy.
+        """
+        z = rows.detach().to(torch.float64)
+        tgt = torch.as_tensor(targets, dtype=torch.long, device=z.device).reshape(-1)
+        top = torch.topk(z, min(fx.TOP_N_OUTPUT, z.shape[-1]), dim=-1).values
+        shifted = z - top[:, :1]
+        e = shifted.exp()
+        se = e.sum(-1)
+        log_se = se.log()
+        top_shifted = top - top[:, :1]
+        e_top = top_shifted.exp()
+        se_top = e_top.sum(-1)
+        margin = (e_top[:, 0] - e_top[:, 1]) / se if z.shape[-1] > 1 else e_top[:, 0] / se
+        out = (
+            torch.stack(
+                [
+                    log_se - (e * shifted).sum(-1) / se,
+                    log_se - shifted.gather(1, tgt[:, None])[:, 0],
+                    margin,
+                    se_top.log() - (e_top * top_shifted).sum(-1) / se_top,
+                ]
+            )
+            .cpu()
+            .numpy()
+        )
+        return dict(zip(("out_entropy", "out_nll", "out_margin", "out_top20_entropy"), out, strict=True))
+
     def _f0(
         self, logits: torch.Tensor | None, targets: Any, bs: np.ndarray, ps: np.ndarray, seq: int
     ) -> dict[str, np.ndarray]:
@@ -436,10 +476,9 @@ class SignalExtractor:
             raise ValueError("hay posiciones puntuadas sin logits (logits_to_keep demasiado chico)")
         lg = logits.detach()
         if offset == 0 and len(bs) == lg.shape[0] * lg.shape[1]:  # todas puntuadas (decodificación)
-            rows = lg.reshape(len(bs), -1).float().cpu().numpy()
-            return fx.output_features(rows, tgt.reshape(-1))
-        rows = lg[torch.as_tensor(bs), torch.as_tensor(ps - offset)].float().cpu().numpy()
-        return fx.output_features(rows, tgt[bs, ps - offset])
+            return self._output_features(lg.reshape(len(bs), -1), tgt.reshape(-1))
+        rows = lg[torch.as_tensor(bs, device=lg.device), torch.as_tensor(ps - offset, device=lg.device)]
+        return self._output_features(rows, tgt[bs, ps - offset])
 
     def _route(self, z: np.ndarray) -> dict[str, np.ndarray]:
         """Features F1, `idx` y `w` de logits `(L, m, N)`; una sola llamada si las capas comparten ruteo."""

@@ -473,3 +473,21 @@ def test_vectorized_reduction_matches_token_by_token_oracle(model_type):
             for name in AGGREGATES:
                 a, b = sig.features[agg_feature(name, base)], float(agg[name])
                 assert (math.isnan(a) and math.isnan(b)) or a == pytest.approx(b, abs=1e-12)
+
+
+def test_output_features_on_device_match_numpy_reference():
+    """F0 se calcula en el dispositivo de los logits; tiene que coincidir con `features.output_features`."""
+    import numpy as np
+    import torch
+
+    from vigia import features as fx
+    from vigia.extractor import SignalExtractor
+
+    rng = np.random.default_rng(0)
+    for vocab in (2, 25, 5000):
+        z = rng.normal(0, 4, (7, vocab)).astype(np.float32)
+        tgt = rng.integers(0, vocab, 7)
+        got = SignalExtractor._output_features(torch.from_numpy(z), tgt)
+        ref = fx.output_features(z, tgt)
+        for k, v in ref.items():
+            np.testing.assert_allclose(got[k], v, rtol=1e-9, atol=1e-12, err_msg=k)
