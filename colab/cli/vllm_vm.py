@@ -22,6 +22,7 @@ python colab/vllm_mode.py latency /content/lat_flag.json >> $L 2>&1
 echo "== evidencia 600" >> $L
 python colab/vllm_mode.py evidence data/evidence_v1.jsonl /content/vllm_v1 > /content/vllm_evidence.log 2>&1
 tail -30 /content/vllm_evidence.log >> $L
+tar czf /content/vllm_v1.tgz -C /content vllm_v1  # filas para el control por estrato
 serve "" || exit 1
 echo "== latencia sin routed experts" >> $L
 python colab/vllm_mode.py latency /content/lat_noflag.json >> $L 2>&1
