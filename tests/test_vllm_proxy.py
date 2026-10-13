@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import io
 import json
 import math
 
@@ -166,6 +167,20 @@ def test_offsets_and_text_from_backend():
     assert [(e.start, e.end) for e in events] == [(0, 4), (4, 7), (7, 9)]
 
 
+def npy_b64(arr: np.ndarray) -> str:
+    buf = io.BytesIO()
+    np.save(buf, arr, allow_pickle=False)
+    return base64.b64encode(buf.getvalue()).decode()
+
+
+def test_npy_routed_experts_with_prompt_rows_aligns_the_tail():
+    """vLLM 0.31: `.npy` en base64 con filas del prompt; las últimas n filas son las de la respuesta."""
+    prompt_rows = np.full((4, 2, 2), 3, dtype=np.int16)
+    events = run(make_backend(vllm_response(npy_b64(np.concatenate([prompt_rows, ROUTED.astype(np.int16)])))))
+    assert [e.expert_ids for e in events] == ROUTED.tolist()
+    assert all(math.isfinite(e.features["u_gini@0"]) for e in events)
+
+
 def test_routed_experts_one_short_leaves_last_token_without_u():
     events = run(make_backend(vllm_response(ROUTED[:2].tolist())))
     assert math.isfinite(events[1].features["u_gini@0"])
@@ -182,6 +197,8 @@ def test_routed_experts_one_short_leaves_last_token_without_u():
         encode(np.array([[[-1, 0]]]), "int16"),
         [[1, 2], [3]],
         "abc",
+        npy_b64(np.zeros((1, 1, 1), dtype=np.float32)),
+        npy_b64(np.zeros((2, 2), dtype=np.int16)),
     ],
 )
 def test_parse_routed_experts_rejects_invalid(raw):

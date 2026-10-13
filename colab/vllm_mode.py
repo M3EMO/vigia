@@ -15,7 +15,7 @@ import time
 
 import httpx
 
-from vigia.backends.vllm_proxy import VllmProxyBackend
+from vigia.backends.vllm_proxy import VllmProxyBackend, parse_routed_experts
 from vigia.datasets import read_jsonl
 
 URL = "http://127.0.0.1:8000"
@@ -55,7 +55,8 @@ def smoke() -> None:
     print("reasoning:", repr((msg.get("reasoning_content") or msg.get("reasoning") or "")[:120]))
     print("tokens con logprobs:", len((ch.get("logprobs") or {}).get("content") or []))
     re_ = ch.get("routed_experts") or raw.get("routed_experts")
-    print("routed_experts:", type(re_).__name__, (re_ or {}).get("shape") if isinstance(re_, dict) else None)
+    shape = parse_routed_experts(re_).shape if re_ is not None else None
+    print("routed_experts:", type(re_).__name__, shape, "| token_ids:", len(ch.get("token_ids") or []))
     s = backend().stream(q["messages"], max_tokens=256, tiers=backend().capabilities().tiers)
     events = list(s)
     print("proxy: eventos", len(events), "| texto", repr(s.text[:120]), "| fin", s.finish_reason)

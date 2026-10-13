@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import base64
 import bisect
+import io
 import math
 import threading
 import time
@@ -153,9 +154,18 @@ def nan_usage(n_layers: int) -> dict[str, float]:
 def parse_routed_experts(raw: Any) -> np.ndarray:
     """Convierte `routed_experts` a int64 [len, capas, top_k].
 
-    Acepta listas anidadas o un objeto {"dtype": uint8|uint16|int16, "shape": [...], "data": base64}.
+    Acepta listas anidadas, un objeto {"dtype": uint8|uint16|int16, "shape": [...], "data": base64}
+    o un `.npy` en base64 (vLLM >= 0.31, `numpy2base64`).
     """
-    if isinstance(raw, dict):
+    if isinstance(raw, str):
+        try:
+            arr = np.load(io.BytesIO(base64.b64decode(raw, validate=True)), allow_pickle=False)
+        except (ValueError, OSError, EOFError) as exc:
+            raise VllmProxyError("routed_experts no es un .npy válido en base64") from exc
+        if arr.dtype.kind not in "iu":
+            raise VllmProxyError(f"dtype de routed_experts no soportado: {arr.dtype}")
+        arr = arr.astype(np.int64)
+    elif isinstance(raw, dict):
         dtype_name = raw.get("dtype")
         if dtype_name not in ROUTED_DTYPES:
             raise VllmProxyError(f"dtype de routed_experts no soportado: {dtype_name!r}")
@@ -442,6 +452,10 @@ class VllmProxyBackend:
                 )
             routed = parse_routed_experts(raw)
             n_tok = len(pieces)
+            # vLLM >= 0.31 cubre las posiciones [0, P+n-1) del prompt y la respuesta. La pasada que
+            # genera el token i procesa la posición P-1+i: las últimas n filas se alinean como en HF.
+            if routed.shape[0] > n_tok:
+                routed = routed[-n_tok:]
             if routed.shape[0] not in (n_tok, n_tok - 1) or (routed.shape[0] and routed.shape[2] == 0):
                 raise VllmProxyError(
                     f"routed_experts tiene {routed.shape[0]} posiciones para {n_tok} tokens generados"
