@@ -27,6 +27,7 @@ services:
     restart: unless-stopped
     environment:
       # Mismo texto que el --model usado al calibrar: es parte de la huella del detector.
+      VIGIA_BACKEND: hf               # el default con un modelo real es vllm (ver el bloque de abajo)
       VIGIA_MODEL: ibm-granite/granite-3.1-1b-a400m-instruct
       VIGIA_DATA_DIR: /var/lib/vigia
       VIGIA_PEPPERS_FILE: /run/secrets/vigia_peppers
@@ -69,7 +70,7 @@ services:
       start_period: 300s
       retries: 3
 
-  # --- Modo vLLM reducido (GPU, ADR A-08). Descomentar y quitar el montaje del modelo de arriba. ---
+  # --- Modo vLLM (GPU, ADR A-08, default de producción). Descomentar y quitar el montaje de arriba. ---
   # Vigía actúa como proxy. vLLM no se publica: solo Vigía lo alcanza por la red interna.
   # En el servicio vigia, reemplazar el bloque environment por:
   #   VIGIA_BACKEND: vllm

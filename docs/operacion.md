@@ -23,7 +23,7 @@ Reglas comunes:
 | Variable | Default | Obligatoria | Descripción |
 |---|---|---|---|
 | `VIGIA_MODEL` | — | sí | Id de Hugging Face, ruta local, `tiny:mixtral` o `tiny:gpt_oss`. El texto exacto entra en la huella del detector (ver §9). |
-| `VIGIA_BACKEND` | `hf` | no | `hf` hospeda el modelo en el proceso (CPU). `vllm` actúa como proxy en modo reducido. |
+| `VIGIA_BACKEND` | `vllm`; `hf` con `tiny:*` | no | `vllm` actúa como proxy en modo reducido (default de producción). `hf` hospeda el modelo en el proceso y da la mejor detección (§13). |
 | `VIGIA_BASE_DETECTOR` | — | no | Ruta a un `detector.json`. Se instala y activa en cada org sin detectores, si coincide con el modelo. |
 | `VIGIA_VLLM_URL` | — | con `vllm` | URL http(s) del servidor vLLM, sin `/v1`. |
 | `VIGIA_VLLM_MODEL` | — | con `vllm` | Nombre del modelo en vLLM. |
@@ -314,6 +314,11 @@ con escritura.
 
 ## 13. Modo vLLM reducido
 
+El modo vLLM es el default con un modelo real (decisión 2026-10-13). Medido en gpt-oss-20b sobre una
+L4 (informe §4.10): dentro de MKQA da AUROC 0,784 contra 0,837 del backend HF, y devolver los
+expertos no agrega latencia. El backend HF suma +4,7 % por token. Elegí HF con `VIGIA_BACKEND=hf`
+cuando la detección pesa más que la latencia.
+
 Con `VIGIA_BACKEND=vllm`, Vigía no carga el modelo. Hace de proxy hacia un vLLM lanzado con
 `--enable-return-routed-experts` (ADR A-08). El ejemplo comentado está en `compose.yaml`.
 
@@ -330,7 +335,8 @@ Qué cambia frente al backend HF:
 - `VIGIA_VLLM_N_EXPERTS`, `_TOP_K` y `_N_LAYERS` fijan la normalización de U. Sin ellos, el
   `p_error` de un token dependería de tokens futuros. Copialos del `config.json` del modelo.
 - Una falla de vLLM responde 502 `upstream_unavailable` con `Retry-After`.
-- El modo reducido no se probó contra un vLLM real con GPU; los tests usan un vLLM falso.
+- Probado contra vLLM 0.31 real en una L4. vLLM 0.31 entrega `routed_experts` como `.npy` en base64,
+  con las filas del prompt; con gpt-oss, Vigía puntúa solo el canal `final`.
 
 Seguridad de vLLM: su `--api-key` protege solo rutas bajo `/v1`. Rutas como `/invocations`,
 `/pause` o `/update_weights` quedan sin auth. Nunca publiques vLLM: dejalo en una red interna que

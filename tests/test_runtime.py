@@ -310,6 +310,17 @@ def test_unreadable_base_detector_is_a_settings_error(tmp_path, case):
     assert ("No existe" in message) if case == "missing" else ("inválido" in message)
 
 
+def test_backend_defaults_to_vllm_for_real_models_and_hf_for_tiny():
+    """Decisión 2026-10-13: vLLM por defecto en producción; `tiny:*` (demo y tests) sigue en HF."""
+    assert Settings.from_env({"VIGIA_MODEL": "tiny:mixtral"}).backend == "hf"
+    with pytest.raises(SettingsError, match="VIGIA_VLLM_URL.*default"):
+        Settings.from_env({"VIGIA_MODEL": "openai/gpt-oss-20b"})
+    assert Settings.from_env({"VIGIA_MODEL": "openai/gpt-oss-20b", "VIGIA_BACKEND": "hf"}).backend == "hf"
+    vllm = {"VIGIA_VLLM_URL": "http://vllm:8000", "VIGIA_VLLM_MODEL": "m", "VIGIA_VLLM_N_EXPERTS": "32",
+            "VIGIA_VLLM_TOP_K": "4", "VIGIA_VLLM_N_LAYERS": "24"}  # fmt: skip
+    assert Settings.from_env({"VIGIA_MODEL": "openai/gpt-oss-20b", **vllm}).backend == "vllm"
+
+
 @pytest.mark.parametrize("kind", ["empty_dir", "missing_path"])
 def test_unloadable_model_is_a_settings_error(tmp_path, kind):
     """Regresión: 'VIGIA_MODEL inválido (ruta o repo inexistente) aborta el arranque con traceback
@@ -320,7 +331,7 @@ def test_unloadable_model_is_a_settings_error(tmp_path, kind):
     if kind == "empty_dir":
         model.mkdir()
     with pytest.raises(SettingsError) as exc:
-        build_backend(make_settings(tmp_path, model=str(model)))
+        build_backend(make_settings(tmp_path, model=str(model), backend="hf"))
     message = str(exc.value)
     assert message.startswith(f"No se puede cargar el modelo (VIGIA_MODEL={model}): ")
     assert len(message.splitlines()) == 1 and len(message) < 500

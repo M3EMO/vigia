@@ -637,7 +637,7 @@ def test_cli_serve_bad_model_or_base_detector_exits_2(tmp_path, monkeypatch, cap
     arranque y /startupz dice detectors:true'."""
     _capture_server(monkeypatch)
     missing = tmp_path / "no-existe"
-    env = cli_env(tmp_path / "datos", **{variable: str(missing)})
+    env = cli_env(tmp_path / "datos", VIGIA_BACKEND="hf", **{variable: str(missing)})
     capsys.readouterr()
     assert main(["serve", "--port", "8123"], environ=env) == 2
     err = capsys.readouterr().err

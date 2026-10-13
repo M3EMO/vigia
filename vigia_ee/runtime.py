@@ -122,7 +122,7 @@ class Settings:
     data_dir: Path = Path("var")
     db_path: Path | None = None  # default: data_dir / 'vigia.db'
     model: str = "tiny:mixtral"  # id o ruta HF, o 'tiny:mixtral' / 'tiny:gpt_oss' (demo y tests)
-    backend: Literal["hf", "vllm"] = "hf"
+    backend: Literal["hf", "vllm"] | None = None  # None: hf con tiny:*, vllm con un modelo real
     vllm_url: str | None = None
     vllm_model: str | None = None
     max_tokens_limit: int = 1024
@@ -157,10 +157,12 @@ class Settings:
             self.base_detector_path = Path(self.base_detector_path)
         self.rag_allowed_hosts = tuple(self.rag_allowed_hosts)
         self.webhook_allowed_hosts = tuple(self.webhook_allowed_hosts)
-        if self.backend not in ("hf", "vllm"):
-            raise SettingsError("VIGIA_BACKEND debe ser 'hf' o 'vllm'.")
         if not isinstance(self.model, str) or not self.model.strip():
             raise SettingsError("VIGIA_MODEL es obligatorio.")
+        if self.backend is None:  # decisión 2026-10-13: vLLM por defecto en producción, HF para la demo
+            self.backend = "hf" if self.model.startswith(TINY_PREFIX) else "vllm"
+        if self.backend not in ("hf", "vllm"):
+            raise SettingsError("VIGIA_BACKEND debe ser 'hf' o 'vllm'.")
         if self.model.startswith(TINY_PREFIX) and self.model.removeprefix(TINY_PREFIX) not in TINY_ARCHS:
             raise SettingsError(
                 f"Modelo diminuto desconocido; opciones: {', '.join(TINY_PREFIX + a for a in TINY_ARCHS)}."
@@ -169,19 +171,22 @@ class Settings:
             raise SettingsError("VIGIA_DTYPE debe ser auto, float32, bfloat16 o float16.")
         if not re.fullmatch(r"cpu|mps|cuda(:\d+)?", self.device):
             raise SettingsError("VIGIA_DEVICE debe ser cpu, mps, cuda o cuda:N.")
-        if self.backend == "vllm":
-            self._check_vllm()
         for name, env_name, lo, hi in _RANGES:
             _check_int(getattr(self, name), env_name, lo, hi)
         if self.default_max_tokens > self.max_tokens_limit:
             raise SettingsError("VIGIA_DEFAULT_MAX_TOKENS no puede superar VIGIA_MAX_TOKENS_LIMIT.")
         if self.metrics_token is not None and len(self.metrics_token) < 16:
             raise SettingsError("VIGIA_METRICS_TOKEN debe tener al menos 16 caracteres.")
+        if self.backend == "vllm":  # al final: con el default vllm, no tapa los errores de arriba
+            self._check_vllm()
 
     def _check_vllm(self) -> None:
         """URL y forma del modelo servido. Sin `n_experts` fijo, U de un token dependería del futuro."""
         if not self.vllm_url or not self.vllm_model:
-            raise SettingsError("Con VIGIA_BACKEND=vllm hacen falta VIGIA_VLLM_URL y VIGIA_VLLM_MODEL.")
+            raise SettingsError(
+                "Con VIGIA_BACKEND=vllm hacen falta VIGIA_VLLM_URL y VIGIA_VLLM_MODEL "
+                "(vllm es el default con un modelo real; VIGIA_BACKEND=hf lo hospeda en el proceso)."
+            )
         parts = urlsplit(self.vllm_url)
         if parts.scheme not in ("http", "https") or not parts.hostname:
             raise SettingsError("VIGIA_VLLM_URL debe ser una URL http(s) con host.")
@@ -212,7 +217,7 @@ class Settings:
             data_dir=data_dir,
             db_path=Path(db_path) if db_path else None,
             model=model,
-            backend=env.get("VIGIA_BACKEND", "hf").strip().lower(),  # type: ignore[arg-type]
+            backend=(env.get("VIGIA_BACKEND") or "").strip().lower() or None,  # type: ignore[arg-type]
             vllm_url=env.get("VIGIA_VLLM_URL") or None,
             vllm_model=env.get("VIGIA_VLLM_MODEL") or None,
             max_tokens_limit=_env_int(env, "VIGIA_MAX_TOKENS_LIMIT", 1024),
