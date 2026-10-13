@@ -4,14 +4,19 @@ Uso (en la VM, con `vllm serve` ya escuchando en :8000):
   python colab/vllm_mode.py smoke            una pregunta: forma de la respuesta y de routed_experts
   python colab/vllm_mode.py latency OUT.json ms por token con streaming y longitud fija
   python colab/vllm_mode.py evidence DATA OUT run_evidence completo con el backend proxy (F0 parcial + U)
+  python colab/vllm_mode.py concurrency OUT.json [plain,proxy] [1,4,16,32]
+                                             N requests simultáneos de 256 tokens fijos: vLLM directo
+                                             (plain) contra el proxy de Vigía (logprobs + expertos)
 
 gpt-oss usa `reasoning_effort=low`, igual que las corridas con el backend HF.
 """
 
 import json
+import math
 import statistics
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 import httpx
 
@@ -96,6 +101,56 @@ def latency(out: str, n_prompts: int = 8, tokens: int = 256, runs: int = 3) -> N
     print(json.dumps({k: v for k, v in res.items() if k != "values"}))
 
 
+class FixedLenProxy(LowEffortProxy):
+    def _request(self, body):
+        return super()._request({**body, "ignore_eos": True})
+
+
+def _plain(q: dict, tokens: int) -> tuple[float, int]:
+    body = {"model": MODEL, "messages": q["messages"], "max_tokens": tokens, "temperature": 0,
+            "ignore_eos": True, "reasoning_effort": "low"}  # fmt: skip
+    t0 = time.perf_counter()
+    r = httpx.post(f"{URL}/v1/chat/completions", json=body, timeout=900)
+    r.raise_for_status()
+    return time.perf_counter() - t0, r.json()["usage"]["completion_tokens"]
+
+
+def concurrency(
+    out: str, variants: str = "plain,proxy", levels: str = "1,4,16,32", tokens: int = 256
+) -> None:
+    qs = read_jsonl("data/evidence_v2.jsonl")
+    proxy = FixedLenProxy(URL, MODEL, n_experts=32, top_k=4, n_layers=24, model_type="gpt_oss", timeout=900)
+
+    def via_proxy(q: dict) -> tuple[float, int]:
+        t0 = time.perf_counter()
+        n = len(list(proxy.stream(q["messages"], max_tokens=tokens, tiers=proxy.capabilities().tiers)))
+        return time.perf_counter() - t0, n
+
+    run = {"plain": lambda q: _plain(q, tokens), "proxy": via_proxy}
+    res = {}
+    for v in variants.split(","):
+        for c in (int(x) for x in levels.split(",")):
+            lat, toks, wall = [], 0, 0.0
+            for r in range(3):  # la ronda 0 calienta este nivel
+                batch = [qs[(r * c + i) % len(qs)] for i in range(c)]
+                t0 = time.perf_counter()
+                with ThreadPoolExecutor(c) as ex:
+                    outs = list(ex.map(run[v], batch))
+                if r:
+                    wall += time.perf_counter() - t0
+                    lat += [t for t, _ in outs]
+                    toks += sum(n for _, n in outs)
+            lat.sort()
+            p95 = lat[math.ceil(0.95 * len(lat)) - 1]  # rango más cercano: con n chico es el máximo
+            res[f"{v}@{c}"] = {
+                "req_s_p50": statistics.median(lat),
+                "req_s_p95": p95,
+                "tok_per_s": toks / wall,
+            }
+            print(f"{v}@{c}", json.dumps(res[f"{v}@{c}"]), flush=True)
+    json.dump(res, open(out, "w"), indent=1)
+
+
 def evidence(data: str, out: str) -> None:
     from vigia.evidence import run_evidence, summary_text
 
@@ -107,4 +162,6 @@ def evidence(data: str, out: str) -> None:
 
 
 if __name__ == "__main__":
-    {"smoke": smoke, "latency": latency, "evidence": evidence}[sys.argv[1]](*sys.argv[2:])
+    {"smoke": smoke, "latency": latency, "evidence": evidence, "concurrency": concurrency}[sys.argv[1]](
+        *sys.argv[2:]
+    )
