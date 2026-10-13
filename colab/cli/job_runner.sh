@@ -25,4 +25,8 @@ for i in $(seq 1 200); do
     for f in "$@"; do $C download -s $S $f $D/$(basename $f) >/dev/null 2>&1; done
     $C stop -s $S >> $LOG 2>&1; log "FIN"; exit 0
   fi
+  if ! kill -0 $(cat $D/exec.pid) 2>/dev/null; then  # el job terminó sin marcador: relanzar repetiría la falla
+    for f in "$@"; do $C download -s $S $f $D/$(basename $f) >/dev/null 2>&1; done
+    $C stop -s $S >> $LOG 2>&1; log "FALLA: exec terminó sin marcador: $(tail -c 150 $D/exec.log | tr '\n' ' ')"; exit 1
+  fi
 done
