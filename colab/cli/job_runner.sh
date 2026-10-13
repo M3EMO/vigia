@@ -25,7 +25,8 @@ for i in $(seq 1 200); do
     for f in "$@"; do $C download -s $S $f $D/$(basename $f) >/dev/null 2>&1; done
     $C stop -s $S >> $LOG 2>&1; log "FIN"; exit 0
   fi
-  if ! kill -0 $(cat $D/exec.pid) 2>/dev/null; then
+  # Un cliente con traceback y sin EXIT puede quedar colgado ("Connection was lost"): cuenta como caído.
+  if ! kill -0 $(cat $D/exec.pid) 2>/dev/null || { grep -q "Traceback" $D/exec.log && ! grep -q "EXIT" $D/exec.log; }; then
     # Sin EXIT se cayó el cliente (p. ej. ReadTimeout) y la VM sin cliente muere a los ~20 min: relanzar.
     if ! grep -q "EXIT" $D/exec.log; then log "cliente caído: relanzo"; start; continue; fi
     # Con EXIT el job terminó sin marcador: relanzar repetiría la falla.
