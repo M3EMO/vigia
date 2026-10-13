@@ -7,11 +7,12 @@ S=$1; JOB=$2; MARK=$3; RLOG=$4; D=$5; shift 5
 mkdir -p $D; LOG=$D/runner.log
 log() { echo "$(date -u +%T) $*" >> $LOG; }
 start() {
-  pgrep -f "exec -s $S " | xargs -r kill
+  [ -f $D/exec.pid ] && kill $(cat $D/exec.pid) 2>/dev/null  # nunca pkill -f: el patrón aparece en la línea de comandos del propio runner
   $C stop -s $S >/dev/null 2>&1
   $C new -s $S --gpu L4 >> $LOG 2>&1
   $C upload -s $S $ZIP /content/vigia-colab.zip >> $LOG 2>&1
   nohup $CLI exec -s $S -f $JOB --timeout 30000 > $D/exec.log 2>&1 &
+  echo $! > $D/exec.pid
   log "lanzado"
 }
 start

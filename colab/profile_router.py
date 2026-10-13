@@ -17,7 +17,7 @@ import numpy as np
 import torch
 
 from vigia.cli import load_backend
-from vigia.contracts import Tier
+from vigia.contracts import HookNotFiredError, Tier
 from vigia.datasets import read_jsonl
 from vigia.extractor import SignalExtractor
 
@@ -60,11 +60,14 @@ def main(n_prompts: int, tokens: int, runs: int) -> None:
     backend = load_backend(model, device=device, dtype="auto", reasoning_effort="low")
     items = read_jsonl(os.environ.get("VIGIA_DATA", "data/evidence_v2.jsonl"))[:n_prompts]
     times: dict[str, list[float]] = {k: [] for k in VARIANTS}
+    failed: dict[str, str] = {}  # variante -> motivo; en gpt-oss el kernel fusionado no llama al router
     order = list(VARIANTS)
     for r in range(runs + 1):  # la corrida 0 es calentamiento
         for p, it in enumerate(items):
             rot = order[(r + p) % len(order) :] + order[: (r + p) % len(order)]
             for name in rot:
+                if name in failed:
+                    continue
                 tiers, enter, step = VARIANTS[name]
                 SignalExtractor.__enter__ = enter or ORIG_ENTER
                 SignalExtractor._router_step = step or ORIG_STEP
@@ -74,6 +77,9 @@ def main(n_prompts: int, tokens: int, runs: int) -> None:
                         pass
                     if device == "cuda":
                         torch.cuda.synchronize()
+                except HookNotFiredError as e:
+                    failed[name] = str(e).split(":")[-1].strip()
+                    continue
                 finally:
                     SignalExtractor.__enter__ = ORIG_ENTER
                     SignalExtractor._router_step = ORIG_STEP
@@ -81,7 +87,11 @@ def main(n_prompts: int, tokens: int, runs: int) -> None:
                 if r:
                     times[name].append(1000 * t["decode_s"] / max(1, s.completion_tokens - 1))
     base = statistics.median(times["base"])
+    for name, why in failed.items():
+        print(f"{name:11s} inviable: {why}")
     for name, v in times.items():
+        if name in failed:
+            continue
         med = statistics.median(v)
         print(f"{name:11s} {med:7.2f} ms/token  overhead {100 * (med / base - 1):+.2f} %  (n={len(v)})")
 
