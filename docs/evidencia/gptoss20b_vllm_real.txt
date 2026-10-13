@@ -1,0 +1,61 @@
+# Modo vLLM real (vLLM 0.31, gpt-oss-20b, L4, 2026-10-13)
+
+## Etapas
+== humo
+claves choice: ['finish_reason', 'index', 'logprobs', 'message', 'routed_experts', 'stop_reason', 'token_ids'] | claves message: ['annotations', 'audio', 'content', 'function_call', 'reasoning', 'refusal', 'role']
+content: '2003 Wimbledon.'
+reasoning: 'Need answer: 2003 Wimbledon.'
+tokens con logprobs: 22
+routed_experts: str (112, 24, 4) | token_ids: 0
+proxy: eventos 22 | texto '2003 Wimbledon.' | fin stop
+features del primer evento: ['agg_max:r_switch', 'agg_max:u_ent', 'agg_max:u_gini', 'agg_max:u_ihhi', 'agg_mean:r_switch', 'agg_mean:u_ent', 'agg_mean:u_gini', 'agg_mean:u_ihhi']
+== latencia con routed experts
+{"ms_per_token_p50": 22.571507497696913, "n": 24}
+== evidencia 600
+Vigía: experimento de evidencia
+Modelo: openai/gpt-oss-20b (gpt_oss)
+Niveles: F0, U; max_tokens 256; semilla 0
+Respuestas: 600 (generadas 600, teacher forcing 0, salteadas 0)
+Etiquetas: computable
+Exactitud del modelo: 59,3 % sobre 600 respuestas generadas
+  arit+: exactitud 100,0 %, alucinación 0,0 % (n=80)
+  arit-: exactitud 100,0 %, alucinación 0,0 % (n=80)
+  arit×: exactitud 100,0 %, alucinación 0,0 % (n=80)
+  date: exactitud 46,9 %, alucinación 53,1 % (n=64)
+  entity: exactitud 29,6 %, alucinación 70,4 % (n=230)
+  number: exactitud 26,9 %, alucinación 73,1 % (n=26)
+  number_with_unit: exactitud 33,3 %, alucinación 66,7 % (n=21)
+  short_phrase: exactitud 21,1 %, alucinación 78,9 % (n=19)
+Test: 720 tokens, 114 respuestas, 114 preguntas; prevalencia por token 75,7 %
+AUROC por token (IC 95 % por pregunta):
+  Detector: 0,947 [0,894; 0,979]
+  Nivel F0: 0,719 [0,642; 0,775]
+  Nivel F1: 0,946 [0,892; 0,978]
+  Nivel F0+F1: 0,947 [0,894; 0,979]
+  Nivel todos: 0,947 [0,894; 0,979]
+  Baseline out_entropy: no disponible (no se pudo entrenar: ninguna feature utilizable en train)
+  Baseline out_nll: 0,603 [0,537; 0,664]
+  Baseline h_probe: no disponible (sin features de este nivel en el dataset)
+
+== latencia sin routed experts
+{"ms_per_token_p50": 22.614433976187627, "n": 24}
+ETAPAS_FIN
+
+## Control dentro de cada estrato (detector reentrenado por estrato)
+AUROC por token (IC 95 % por pregunta):
+  Detector: 0,784 [0,639; 0,916]
+  Nivel F0: 0,512 [0,396; 0,644]
+  Nivel F1: 0,787 [0,645; 0,916]
+  Nivel F0+F1: 0,784 [0,639; 0,916]
+  Nivel todos: 0,784 [0,639; 0,916]
+  Baseline out_entropy: no disponible (no se pudo entrenar: ninguna feature utilizable en train)
+  Baseline out_nll: 0,461 [0,355; 0,597]
+  Baseline h_probe: no disponible (sin features de este nivel en el dataset)
+  no evaluable: todas las respuestas etiquetadas son correctas: hace falta al menos una de cada clase para calibrar y evaluar (no se inventa un AUROC)
+
+## Perfil del router en HF (6 prompts, 128 tokens, 3 corridas)
+logits_mod  inviable: el forward no pasó por los bloques instrumentados (¿kernel fusionado, torch.compile o forward fuera del contexto?)
+base          76.73 ms/token  overhead +0.00 %  (n=18)
+F0+F1         78.90 ms/token  overhead +2.83 %  (n=18)
+sin_red       78.89 ms/token  overhead +2.82 %  (n=18)
+PERFIL_FIN

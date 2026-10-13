@@ -265,8 +265,8 @@ vez por contexto. Misma L4, mismo protocolo (`docs/evidencia/gptoss20b_bench_l4_
 | F0 | +3,0 % [+2,7; +3,2] | **+1,0 %** [+0,9; +1,1] |
 | F0+F1 | +7,6 % [+7,4; +7,9] | **+4,7 %** [+4,6; +4,8] |
 
-**La meta de 5 % se cumple en L4 con el backend HF**, con poco margen. El margen siguiente está en
-la reducción del router, que sigue en numpy sobre la CPU.
+**La meta de 5 % se cumple en L4 con el backend HF**, con poco margen. La reducción del router en
+numpy no explica el costo restante (§4.10).
 
 Modo vLLM (solo IDs de expertos y top-20 logprobs, sin logits del router), medido offline sobre las
 1.792 respuestas factuales sin aritmética: tipo + largo 0,679; + salida parcial y cambios de experto
@@ -295,6 +295,45 @@ router con cinco veces más cómputo, y sumarla no mejora de forma demostrable.
 
 Este detector (entrenado con 2.600 preguntas, con `recommended_alpha`) reemplaza al de 600 en
 `detectors/gpt-oss-20b.json`. El artefacto anterior queda en `tests/fixtures/legacy_detectors/`.
+
+### 4.10 Perfil del router y modo vLLM real (L4, 2026-10-13)
+
+**Perfil del router en HF.** Seis prompts, 128 tokens fijos, tres corridas intercaladas (n = 18 por
+variante). Datos: `docs/evidencia/gptoss20b_vllm_real.txt`.
+
+| Variante | ms por token | Overhead |
+|---|---|---|
+| Sin hooks | 76,73 | — |
+| F0+F1 (extractor actual) | 78,90 | +2,83 % |
+| F0+F1 sin la reducción en CPU | 78,89 | +2,82 % |
+| Logits que el router de gpt-oss ya calcula | inviable | — |
+
+La reducción en CPU no cuesta nada medible: pasarla a la GPU no gana margen. El costo está en los
+hooks. El hook sobre el módulo router no dispara en gpt-oss, porque el kernel fusionado no lo llama.
+El +2,83 % no reemplaza al +4,7 % de §4.8: el protocolo cambia (prompts, 128 tokens fijos).
+
+**Modo vLLM real.** vLLM 0.31 con `--enable-return-routed-experts`, a través del proxy de Vigía
+(niveles F0 y U), sobre las 600 preguntas de §4.4 con `max_tokens` 256. La exactitud del modelo es
+59,3 %. La aritmética acierta siempre, así que el AUROC global (0,947) mide sobre todo el tipo de
+pregunta. La cifra comparable es la de MKQA sola, con el detector reentrenado dentro del estrato:
+
+| MKQA sin aritmética | AUROC por token | IC 95 % |
+|---|---|---|
+| vLLM: F0 + uso de expertos | **0,784** | 0,639–0,916 |
+| vLLM: solo F0 | 0,512 | 0,396–0,644 |
+| vLLM: NLL del token (baseline) | 0,461 | 0,355–0,597 |
+| HF: F0+F1 (§4.4, otra corrida y `max_tokens` 24) | 0,837 | — |
+
+| Latencia por token p50 en vLLM | ms |
+|---|---|
+| Con `--enable-return-routed-experts` | 22,57 |
+| Sin la opción | 22,61 |
+
+Devolver los expertos no agrega latencia medible. En la misma L4, vLLM tarda unos 22,6 ms por token
+y HF 76,7 ms, con protocolos distintos. El modo vLLM conserva la mayor parte de la señal del router dentro de MKQA, con un
+intervalo ancho (114 preguntas de test). La medición destapó dos defectos del proxy, ya corregidos:
+vLLM 0.31 entrega `routed_experts` como `.npy` en base64 con las filas del prompt, y los logprobs
+traen el canal `analysis` de gpt-oss.
 
 ## 5. Latencia
 
@@ -330,4 +369,4 @@ La corrida es reanudable. En una laptop con CPU i5-1035G1 y 8 GB de RAM tarda un
 1. La etiqueta es por respuesta; falta medir con etiquetas por span (juez validado o humanos).
 2. gpt-oss-20b ya se midió en una T4; falta gpt-oss-120b y un servidor de producción (vLLM con plugin).
 3. La sonda sobre H iguala a F1; falta medir si F1 transfiere mejor entre dominios o modelos.
-4. La latencia en GPU cumple la meta con HF transformers; falta medirla en vLLM con batching.
+4. La latencia en GPU cumple la meta con HF y vLLM (§4.10); falta medir vLLM con batching concurrente.

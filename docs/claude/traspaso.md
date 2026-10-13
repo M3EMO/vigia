@@ -28,11 +28,10 @@ Sin el zip, todo se puede regenerar en Colab con `colab/run_benchmarks.sh` (unas
 
 - Informe técnico al día hasta §4.9 y §5 (`docs/informe-tecnico.md`).
 - Latencia F0+F1 en L4: +4,7 % después del commit `fbf073a` (meta 5 % cumplida, poco margen).
-- Pendiente, a pedido del usuario ("probá ambos, elegimos después"):
-  1. Perfil del router en GPU (`colab/profile_router.py`, job `colab/cli/prof_vm.py`).
-  2. Modo vLLM real (`colab/vllm_mode.py`, job `colab/cli/vllm_vm.py`): humo, latencia con y sin
-     `--enable-return-routed-experts`, evidencia sobre las 600 preguntas.
-  Los dos se cortaron porque Colab retiró las VMs a los ~20 min (ver `colab/cli/README.md`).
+- Hecho 2026-10-13 (informe §4.10): el perfil del router descarta pasar la reducción a la GPU, y el
+  modo vLLM real da AUROC 0,784 dentro de MKQA sin latencia agregada. Falta que el usuario elija.
+- Colab desde Linux: `colab/cli/job_runner.sh` relanza si Colab retira la VM o se cae el cliente.
+  La PC no se puede suspender durante una corrida: el cliente se desconecta y la VM muere.
 - Orden de fases del usuario: Vigía → OS Harness → agente kernel. MF-MoE (fractal) es investigación.
 
 ## Colab desde la PC nueva
