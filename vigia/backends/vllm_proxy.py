@@ -42,6 +42,7 @@ from vigia.contracts import (
     agg_feature,
     layer_feature,
 )
+from vigia.harmony import SCORED_CHANNEL, SPECIAL_TOKENS, START, HarmonyParser, has_markup
 
 NAN = float("nan")
 DEFAULT_MAX_CONCURRENCY = 16  # vLLM hace batching: serializar sus requests multiplica la latencia
@@ -258,6 +259,32 @@ def clip_to_content(
     return text[:cut], kept
 
 
+def harmony_final(
+    text: str, offsets: list[tuple[int, int]]
+) -> tuple[str, list[tuple[int, int]], list[tuple[str, bool, str]]]:
+    """Lleva el texto con marcado harmony (gpt-oss) al canal `final`, como el backend HF.
+
+    vLLM devuelve en logprobs todos los tokens, también `analysis` y los especiales. Cada token
+    conserva su índice (logprobs y expertos se alinean por índice); los que no son contenido de
+    `final` quedan con ancho cero. Devuelve el texto final, los offsets y (canal, especial, texto)
+    por token; como en HF, un token fuera de `final` conserva su texto aunque no ocupe lugar.
+    """
+    parser = HarmonyParser()
+    parser.feed(START, True)  # el prompt de gpt-oss termina en <|start|>assistant
+    parser.feed("assistant", False)
+    out, new_offsets, channels = "", [], []
+    for start, end in offsets:
+        piece = text[start:end]
+        special = piece in SPECIAL_TOKENS
+        channel = parser.feed(piece, special)
+        pos = len(out)
+        if channel == SCORED_CHANNEL and not special:
+            out += piece
+        new_offsets.append((pos, len(out)))
+        channels.append((channel, special, piece))
+    return out, new_offsets, channels
+
+
 # --- Backend ------------------------------------------------------------------------------------
 
 
@@ -440,6 +467,9 @@ class VllmProxyBackend:
                 ]
             )
         text, offsets = token_offsets(pieces, raw_bytes)
+        channels: list[tuple[str, bool, str]] | None = None
+        if has_markup(text):
+            text, offsets, channels = harmony_final(text, offsets)
         text, offsets = clip_to_content(text, offsets, (choice.get("message") or {}).get("content"))
 
         usage: list[dict[str, float]] | None = None
@@ -476,16 +506,19 @@ class VllmProxyBackend:
                 else:  # vLLM no devolvió la posición final: U no aplica
                     feats.update(nan_usage(routed.shape[1]))
             start, end = offsets[i]
+            channel, special, piece = channels[i] if channels else (SCORED_CHANNEL, False, text[start:end])
             events.append(
                 TokenEvent(
                     index=i,
                     token_id=-1,  # vLLM no expone IDs de token en chat logprobs
-                    text=text[start:end],
+                    text=text[start:end] if channel == SCORED_CHANNEL and not special else piece,
                     start=start,
                     end=end,
                     features=feats,
                     logprob=logprobs[i],
                     expert_ids=expert_ids,
+                    channel=channel,
+                    is_special=special,
                 )
             )
         usage_info = data.get("usage") if isinstance(data.get("usage"), dict) else {}

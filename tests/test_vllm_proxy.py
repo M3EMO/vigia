@@ -181,6 +181,23 @@ def test_npy_routed_experts_with_prompt_rows_aligns_the_tail():
     assert all(math.isfinite(e.features["u_gini@0"]) for e in events)
 
 
+def test_harmony_markup_scores_only_the_final_channel():
+    """gpt-oss en vLLM: logprobs trae `analysis` y especiales; el texto es solo el canal `final`."""
+    pieces = ["<|channel|>", "analysis", "<|message|>", "Pienso", "<|end|>", "<|start|>", "assistant",
+              "<|channel|>", "final", "<|message|>", "Hola", " niño"]  # fmt: skip
+    tokens = [{"token": t, "logprob": -0.5, "bytes": list(t.encode())} for t in pieces]
+    payload = vllm_response(np.zeros((len(pieces), 2, 2), dtype=np.int64).tolist(), tokens)
+    payload["choices"][0]["message"]["content"] = "Hola niño"
+    events = run(make_backend(payload))
+    assert len(events) == len(pieces) and [e.index for e in events] == list(range(len(pieces)))
+    final = [e for e in events if e.channel == "final" and not e.is_special]
+    assert [e.text for e in final] == ["Hola", " niño"]
+    assert [(e.start, e.end) for e in final] == [(0, 4), (4, 9)]
+    assert events[3].channel == "analysis" and events[3].text == "Pienso"
+    assert events[3].start == events[3].end == 0
+    assert events[0].is_special and events[0].channel == "control"
+
+
 def test_routed_experts_one_short_leaves_last_token_without_u():
     events = run(make_backend(vllm_response(ROUTED[:2].tolist())))
     assert math.isfinite(events[1].features["u_gini@0"])

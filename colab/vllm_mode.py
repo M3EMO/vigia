@@ -17,6 +17,7 @@ import httpx
 
 from vigia.backends.vllm_proxy import VllmProxyBackend, parse_routed_experts
 from vigia.datasets import read_jsonl
+from vigia.harmony import has_markup
 
 URL = "http://127.0.0.1:8000"
 MODEL = "openai/gpt-oss-20b"
@@ -61,6 +62,8 @@ def smoke() -> None:
     events = list(s)
     print("proxy: eventos", len(events), "| texto", repr(s.text[:120]), "| fin", s.finish_reason)
     print("features del primer evento:", sorted(events[0].features)[:8] if events else None)
+    # El texto puntuado tiene que ser el canal final, igual a message.content y sin marcado harmony.
+    assert not has_markup(s.text) and s.text == (msg.get("content") or ""), "el proxy no aisló el canal final"
 
 
 def latency(out: str, n_prompts: int = 8, tokens: int = 256, runs: int = 3) -> None:
