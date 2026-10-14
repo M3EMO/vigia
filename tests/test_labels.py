@@ -11,6 +11,7 @@ from vigia.labels import (
     FakeJudge,
     InvalidJudgment,
     JudgeError,
+    JudgeQuotaError,
     OpenAICompatibleJudge,
     date_match,
     exact_match,
@@ -300,6 +301,56 @@ def test_openai_compatible_judge_retries_and_errors(monkeypatch):
     )
     with pytest.raises(JudgeError, match="2 intentos"):
         judge.judge("q", "a")
+
+
+@pytest.mark.parametrize(
+    ("status", "body"),
+    [
+        (
+            429,
+            {
+                "error": {
+                    "code": "1113",
+                    "message": "Insufficient balance or no resource package. Please recharge.",
+                }
+            },
+        ),
+        (429, {"error": {"type": "insufficient_quota", "message": "You exceeded your current quota"}}),
+        (402, {"error": "Payment Required"}),
+    ],
+)
+def test_judge_without_balance_fails_fast_without_retries(monkeypatch, status, body):
+    monkeypatch.setattr(L.time, "sleep", lambda s: None)
+    calls = {"n": 0}
+
+    def broke(request):
+        calls["n"] += 1
+        return httpx.Response(status, json=body)
+
+    judge = OpenAICompatibleJudge(
+        "http://localhost/v1", "sk-secreta", "m", client=httpx.Client(transport=httpx.MockTransport(broke))
+    )
+    with pytest.raises(JudgeQuotaError, match="saldo o cuota") as exc:
+        judge.judge("q", "a")
+    assert calls["n"] == 1 and "sk-secreta" not in str(exc.value)
+    with pytest.raises(JudgeQuotaError):  # no se cuenta como rechazo de transporte: corta el lote
+        label_with_judge(judge, [{"id": "a", "question": "q", "answer": "a"}])
+
+
+def test_plain_rate_limit_is_still_retried(monkeypatch):
+    monkeypatch.setattr(L.time, "sleep", lambda s: None)
+    calls = {"n": 0}
+
+    def busy(request):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return httpx.Response(429, json={"error": "Rate limit reached, slow down"})
+        return _chat('{"label": 0, "hallucinated_spans": []}')
+
+    judge = OpenAICompatibleJudge(
+        "http://localhost/v1", "k", "m", client=httpx.Client(transport=httpx.MockTransport(busy))
+    )
+    assert json.loads(judge.judge("q", "a"))["label"] == 0 and calls["n"] == 2
 
 
 def test_openai_compatible_judge_validates_configuration():

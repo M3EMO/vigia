@@ -814,8 +814,11 @@ def relabel(
     rejected: Counter[str] = Counter()
     agree = disagree = 0
     todo = [r for r in rows if not r.get("skipped")]
-    with ThreadPoolExecutor(max(1, workers)) as pool:
+    pool = ThreadPoolExecutor(max(1, workers))
+    try:  # sin saldo en el juez se corta antes de reescribir filas y sin esperar las llamadas pendientes
         results = list(pool.map(lambda r: label_row(r, judge, allow_code_exec=allow_code_exec), todo))
+    finally:
+        pool.shutdown(cancel_futures=True)
     for row, (labels, info) in zip(todo, results, strict=True):
         row["labels"], row["label_info"] = labels, info
         if row["label_info"].get("rejected"):

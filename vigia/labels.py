@@ -389,6 +389,21 @@ class JudgeError(VigiaError):
     """Falla de transporte o de formato del endpoint del juez."""
 
 
+class JudgeQuotaError(JudgeError):
+    """El proveedor del juez no tiene saldo o cuota: reintentar no sirve y cada item fallaría igual."""
+
+
+# HTTP 429 sirve para límites de ritmo (se reintenta) y también para saldo agotado (no). Medido
+# 2026-10-14: z.ai responde 429 con "Insufficient balance or no resource package. Please recharge."
+_QUOTA_HINTS = ("balance", "quota", "insufficient", "billing", "recharge", "saldo", "cuota")
+
+
+def _is_quota(response: httpx.Response) -> bool:
+    if response.status_code == 402:
+        return True
+    return response.status_code == 429 and any(h in response.text.lower() for h in _QUOTA_HINTS)
+
+
 @dataclass(frozen=True)
 class JudgeVerdict:
     label: int
@@ -564,6 +579,11 @@ class OpenAICompatibleJudge:
             except httpx.TransportError as exc:
                 last_error = f"error de red: {type(exc).__name__}"
                 continue
+            if _is_quota(response):  # sin el cuerpo en el mensaje: no se filtra nada del proveedor
+                raise JudgeQuotaError(
+                    f"el juez no tiene saldo o cuota (HTTP {response.status_code}): "
+                    "cargá saldo en el proveedor y volvé a correr"
+                )
             if response.status_code == 429 or response.status_code >= 500:
                 last_error = f"HTTP {response.status_code}"
                 continue
@@ -654,6 +674,8 @@ def label_with_judge(judge: Judge, items: Iterable[Mapping[str, Any]]) -> JudgeR
             continue
         try:
             raw = judge.judge(question, answer, evidence)
+        except JudgeQuotaError:
+            raise  # todos los items siguientes fallarían igual: se corta en lugar de rechazarlos
         except JudgeError:
             reject("transporte")
             continue
