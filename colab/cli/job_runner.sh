@@ -2,7 +2,7 @@
 # Corre un job en una VM L4 de Colab; si Colab retira la VM, crea otra y lo vuelve a lanzar.
 # Uso: job_runner.sh NOMBRE JOB.py MARCADOR_LOG LOG_REMOTO DIR_LOCAL [archivos remotos a bajar...]
 CLI=$HOME/.local/bin/colab; C="timeout 180 $CLI"
-ZIP=$(cd "$(dirname "$0")/.." && pwd)/vigia-colab.zip
+ZIP=${ZIP:-$(cd "$(dirname "$0")/.." && pwd)/vigia-colab.zip}  # otro proyecto: ZIP=ruta bash job_runner.sh ...
 S=$1; JOB=$2; MARK=$3; RLOG=$4; D=$5; shift 5
 mkdir -p $D; LOG=$D/runner.log
 log() { echo "$(date -u +%T) $*" >> $LOG; }
