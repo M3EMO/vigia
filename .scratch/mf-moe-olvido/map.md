@@ -26,6 +26,7 @@ no. El primer hito es una spec cerrada y lista para correr; después se construy
 - Destino: spec + experimento + resultado en el paper (usuario, 2026-10-14).
 - Tareas: sintéticas primero, texto después si hay señal (usuario, 2026-10-14).
 - Presupuesto: hasta 300 unidades de Colab (usuario, 2026-10-14).
+- [Cómo crecen y se fusionan expertos en los trabajos publicados](issues/01-precedentes.md) — nadie dispara con la duda del router (eso es lo nuevo); fusión por similitud de salidas (HC-SMoE); el fijo arranca con los parámetros finales; fijo+repetición es el baseline fuerte; nadie reporta BWT.
 
 ## Not yet specified
 
