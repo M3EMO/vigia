@@ -33,6 +33,7 @@ no. El primer hito es una spec cerrada y lista para correr; después se construy
 - [Tareas sintéticas de la fase 1](issues/04-tareas-sinteticas.md) — 10-12 tareas de dígitos (seis base más compuestas, con números largos calibrados por presión de capacidad); escenarios con y sin nombre, con pista implícita por largo de los números; un orden por semilla; cada tarea entrena hasta dominarla al 88 %, sin tope de pasos (una alarma pausa y avisa si una tarea se estanca); datos al vuelo y evaluación exacta sobre 1.000 ejemplos fijos.
 - [Dónde vive el código del experimento](issues/02-donde-vive-el-codigo.md) — repo aparte `mf-moe`, privado hasta el paper, Apache 2.0, con Vigía como dependencia.
 - [Cómo funciona la repetición de datos viejos](issues/08-repeticion.md) — buffer finito de 1.000 ejemplos por tarea; 10 % de cada lote, parejo entre tareas viejas; misma regla en toda condición con repetición.
+- [Qué dispara la división de un experto](issues/06-disparador-de-division.md) — tres disparadores (duda del router, pérdida, combinación); z-score > 2 sobre la capa cada 500 pasos; hijo clonado con fila de alta duda; router global.
 
 ## Not yet specified
 
@@ -40,6 +41,7 @@ no. El primer hito es una spec cerrada y lista para correr; después se construy
 - Adaptador de Vigía para el MoE propio (registrar su `model_type` y el atributo del router).
 - Construcción: módulos de división, fusión y repetición, y el bucle de entrenamiento secuencial; se tiquetea al cerrar la spec.
 - Corridas: orden, reintentos y cómo escribe cada VM en Google Drive (hoy `colab drivemount` pide login interactivo por VM).
+- Experimento aparte (pedido del usuario, 2026-10-14): micro-router jerárquico por padre, y la comparación router global contra jerárquico; también el clon con solo ruido contra el clon con fila de alta duda.
 - Medida secundaria: si la huella topológica (JSD de uso de expertos) cambia durante el aprendizaje continuo.
 - Escritura: cómo entra el resultado al paper y qué figuras lo cuentan.
 

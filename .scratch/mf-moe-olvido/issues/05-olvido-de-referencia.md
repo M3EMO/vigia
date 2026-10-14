@@ -1,7 +1,7 @@
 # Medir el olvido de referencia y la velocidad real en una L4
 
 Type: task
-Status: open
+Status: claimed
 Blocked by: 03, 04
 
 ## Question
