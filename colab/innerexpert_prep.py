@@ -40,6 +40,7 @@ def _items(qid: str, q: str, answer: str, ev: str, sys_prompt: str, kind: str) -
         out.append(
             {
                 "id": f"{qid}-{suffix}",
+                "group": qid,  # las dos respuestas de una pregunta van al mismo split y cluster
                 "messages": [{"role": "system", "content": sys_prompt}, {"role": "user", "content": user}],
                 "answers": [a.strip() for a in answer.split(" | ") if a.strip()],
                 "evidence": judge_ev,
