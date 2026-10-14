@@ -54,7 +54,11 @@ def main(root: str) -> None:
     for name in TESTS:
         test = _load(base, name)
         fs = _concat([train, test])
-        split = {"train": [q for q in qs if q not in cal], "cal": sorted(cal), "test": np.unique(test.groups).tolist()}
+        split = {
+            "train": [q for q in qs if q not in cal],
+            "cal": sorted(cal),
+            "test": np.unique(test.groups).tolist(),
+        }
         rep = evaluate_report(
             fs.features(), fs.labels, fs.groups, fs.response_ids, fs.model_info, split=split, n_boot=1000
         )
