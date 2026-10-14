@@ -27,6 +27,7 @@ no. El primer hito es una spec cerrada y lista para correr; después se construy
 - Tareas: sintéticas primero, texto después si hay señal (usuario, 2026-10-14).
 - Presupuesto: hasta 300 unidades de Colab (usuario, 2026-10-14).
 - [Cómo crecen y se fusionan expertos en los trabajos publicados](issues/01-precedentes.md) — nadie dispara con la duda del router (eso es lo nuevo); fusión por similitud de salidas (HC-SMoE); el fijo arranca con los parámetros finales; fijo+repetición es el baseline fuerte; nadie reporta BWT.
+- [Qué enseñan los papers de DeepSeek sobre expertos finos, compartidos y balanceo](issues/10-deepseek-moe.md) — los expertos finos son una división fija (el control fijo usa la granularidad final del fractal); el compartido no es un ancla demostrada; balancear por lote en tareas en fila puede causar olvido; con sigmoide la entropía cambia de sentido.
 
 ## Not yet specified
 
