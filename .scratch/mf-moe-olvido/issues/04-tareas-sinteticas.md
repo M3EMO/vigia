@@ -28,3 +28,4 @@ Resuelto con el usuario el 2026-10-14 (grilling).
     2. Tareas compuestas de varios pasos, por ejemplo (a+b)×c, invertir y sumar, binario de una suma, resto de un producto.
     3. Más tareas: de 6 a 10-12 en total (las seis base más las compuestas).
   - La lista final y los largos se fijan con la prueba de capacidad del ticket "Medir el olvido de referencia y la velocidad real en una L4".
+- 2026-10-14, cambio de formato decidido por el usuario tras la aprendibilidad: mult, mod, sumamult, binsuma, modmult y digmult escriben la respuesta desde la unidad (`REVERSED_ANSWER` en `mf_moe/tasks.py`). Las otras seis siguen en orden normal.
