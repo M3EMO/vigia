@@ -5,7 +5,7 @@ Uso (en la VM, con `vllm serve` ya escuchando en :8000):
   python colab/vllm_mode.py latency OUT.json ms por token con streaming y longitud fija
   python colab/vllm_mode.py evidence DATA OUT run_evidence completo con el backend proxy (F0 parcial + U)
   python colab/vllm_mode.py concurrency OUT.json [plain,proxy] [1,4,16,32]
-                                             N requests simultáneos de 256 tokens fijos: vLLM directo
+                                             N requests simultáneos (hasta 256 tokens): vLLM directo
                                              (plain) contra el proxy de Vigía (logprobs + expertos)
 
 gpt-oss usa `reasoning_effort=low`, igual que las corridas con el backend HF.
@@ -101,14 +101,9 @@ def latency(out: str, n_prompts: int = 8, tokens: int = 256, runs: int = 3) -> N
     print(json.dumps({k: v for k, v in res.items() if k != "values"}))
 
 
-class FixedLenProxy(LowEffortProxy):
-    def _request(self, body):
-        return super()._request({**body, "ignore_eos": True})
-
-
 def _plain(q: dict, tokens: int) -> tuple[float, int]:
     body = {"model": MODEL, "messages": q["messages"], "max_tokens": tokens, "temperature": 0,
-            "ignore_eos": True, "reasoning_effort": "low"}  # fmt: skip
+            "reasoning_effort": "low"}  # fmt: skip
     t0 = time.perf_counter()
     r = httpx.post(f"{URL}/v1/chat/completions", json=body, timeout=900)
     r.raise_for_status()
@@ -118,8 +113,10 @@ def _plain(q: dict, tokens: int) -> tuple[float, int]:
 def concurrency(
     out: str, variants: str = "plain,proxy", levels: str = "1,4,16,32", tokens: int = 256
 ) -> None:
-    qs = read_jsonl("data/evidence_v2.jsonl")
-    proxy = FixedLenProxy(URL, MODEL, n_experts=32, top_k=4, n_layers=24, model_type="gpt_oss", timeout=900)
+    # Sin ignore_eos: vLLM 0.31 rompe el parser harmony de gpt-oss si se genera después de <|return|>
+    # en una respuesta no streaming. Las tareas de código dan respuestas largas y de largo parecido.
+    qs = read_jsonl("data/code_es.jsonl")
+    proxy = backend()
 
     def via_proxy(q: dict) -> tuple[float, int]:
         t0 = time.perf_counter()
@@ -130,7 +127,7 @@ def concurrency(
     res = {}
     for v in variants.split(","):
         for c in (int(x) for x in levels.split(",")):
-            lat, toks, wall = [], 0, 0.0
+            lat, per_tok, toks, wall = [], [], 0, 0.0
             for r in range(3):  # la ronda 0 calienta este nivel
                 batch = [qs[(r * c + i) % len(qs)] for i in range(c)]
                 t0 = time.perf_counter()
@@ -139,12 +136,14 @@ def concurrency(
                 if r:
                     wall += time.perf_counter() - t0
                     lat += [t for t, _ in outs]
+                    per_tok += [1000 * t / max(n, 1) for t, n in outs]
                     toks += sum(n for _, n in outs)
             lat.sort()
             p95 = lat[math.ceil(0.95 * len(lat)) - 1]  # rango más cercano: con n chico es el máximo
             res[f"{v}@{c}"] = {
                 "req_s_p50": statistics.median(lat),
                 "req_s_p95": p95,
+                "ms_per_tok_p50": statistics.median(per_tok),
                 "tok_per_s": toks / wall,
             }
             print(f"{v}@{c}", json.dumps(res[f"{v}@{c}"]), flush=True)
