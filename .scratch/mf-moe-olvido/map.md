@@ -31,6 +31,7 @@ no. El primer hito es una spec cerrada y lista para correr; después se construy
 - [Qué enseñan los papers de DeepSeek sobre expertos finos, compartidos y balanceo](issues/10-deepseek-moe.md) — los expertos finos son una división fija (el control fijo usa la granularidad final del fractal); el compartido no es un ancla demostrada; balancear por lote en tareas en fila puede causar olvido; con sigmoide la entropía cambia de sentido.
 - [Arquitectura base del MoE de 80-100 M](issues/03-arquitectura-base.md) — dos bases con experimento completo cada una (Qwen2-MoE y MoE propio); d = 512, 8 capas, 1 compartido + ruteados finos, top-3; fractal 6 → 12 expertos (52,6 → 90,3 M), fijo con 12; sesgo de balanceo con ventana larga; bytes, contexto 512.
 - [Tareas sintéticas de la fase 1](issues/04-tareas-sinteticas.md) — seis tareas de dígitos (suma, multiplicación, inversión, orden, binario, resto); escenarios con y sin nombre de tarea; un orden por semilla; cada tarea entrena hasta dominarla al 88 %, sin tope de pasos (una alarma pausa y avisa si una tarea se estanca); datos al vuelo y evaluación exacta sobre 1.000 ejemplos fijos.
+- [Dónde vive el código del experimento](issues/02-donde-vive-el-codigo.md) — repo aparte `mf-moe`, privado hasta el paper, Apache 2.0, con Vigía como dependencia.
 
 ## Not yet specified
 

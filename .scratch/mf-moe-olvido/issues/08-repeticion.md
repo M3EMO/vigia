@@ -1,7 +1,7 @@
 # Cómo funciona la repetición de datos viejos
 
 Type: grilling
-Status: open
+Status: claimed
 
 ## Question
 
