@@ -28,10 +28,12 @@ no. El primer hito es una spec cerrada y lista para correr; después se construy
 - Presupuesto: hasta 300 unidades de Colab (usuario, 2026-10-14).
 - [Cómo crecen y se fusionan expertos en los trabajos publicados](issues/01-precedentes.md) — nadie dispara con la duda del router (eso es lo nuevo); fusión por similitud de salidas (HC-SMoE); el fijo arranca con los parámetros finales; fijo+repetición es el baseline fuerte; nadie reporta BWT.
 - [Qué enseñan los papers de DeepSeek sobre expertos finos, compartidos y balanceo](issues/10-deepseek-moe.md) — los expertos finos son una división fija (el control fijo usa la granularidad final del fractal); el compartido no es un ancla demostrada; balancear por lote en tareas en fila puede causar olvido; con sigmoide la entropía cambia de sentido.
+- [Arquitectura base del MoE de 80-100 M](issues/03-arquitectura-base.md) — dos bases con experimento completo cada una (Qwen2-MoE y MoE propio); d = 512, 8 capas, 1 compartido + ruteados finos, top-3; fractal 6 → 12 expertos (52,6 → 90,3 M), fijo con 12; sesgo de balanceo con ventana larga; bytes, contexto 512.
 
 ## Not yet specified
 
 - Fase 2 con texto: qué dominios, qué datos, qué tokenizer y cuánto cómputo; depende del resultado de la fase 1.
+- Adaptador de Vigía para el MoE propio (registrar su `model_type` y el atributo del router).
 - Construcción: módulos de división, fusión y repetición, y el bucle de entrenamiento secuencial; se tiquetea al cerrar la spec.
 - Corridas: orden, reintentos y cómo se guardan los resultados para que sobrevivan a una VM retirada.
 - Medida secundaria: si la huella topológica (JSD de uso de expertos) cambia durante el aprendizaje continuo.
