@@ -349,6 +349,38 @@ intervalo ancho (114 preguntas de test). La medición destapó dos defectos del 
 vLLM 0.31 entrega `routed_experts` como `.npy` en base64 con las filas del prompt, y los logprobs
 traen el canal `analysis` de gpt-oss.
 
+### 4.11 Réplica del protocolo de InnerExpert en OLMoE-1B-7B (L4, 2026-10-14)
+
+Mismo modelo, mismos datos y misma partición que InnerExpert (arXiv 2608.17687): OLMoE-1B-7B-0924-
+Instruct, dos respuestas por pregunta (sin y con evidencia), greedy, 65 tokens; entrenamiento con
+RealtimeQA 2024-2025 (2.318 preguntas) y test fuera de distribución en RealtimeQA 2026 (enero a junio,
+365 preguntas) y 200 preguntas de SQuAD, TruthfulQA, NQ-Open y FreshQA (`df.sample(n=200,
+random_state=42)`, como su pipeline). Etiquetas por fragmento de un juez. Scripts:
+`colab/innerexpert_prep.py` y `colab/innerexpert_eval.py`; datos: `docs/evidencia/olmoe_innerexpert_comparacion.txt`.
+
+| Test (AUROC por token, IC 95 % por pregunta) | Vigía F0+F1 | Solo router (F1) | Entropía de salida |
+|---|---|---|---|
+| RealtimeQA 2026 | 0,748 [0,729; 0,765] | 0,740 | 0,595 |
+| SQuAD | 0,650 [0,619; 0,682] | 0,632 | 0,603 |
+| TruthfulQA | 0,618 [0,582; 0,649] | 0,605 | 0,565 |
+| NQ-Open | 0,591 [0,558; 0,623] | 0,573 | 0,560 |
+| FreshQA | 0,649 [0,619; 0,678] | 0,643 | 0,532 |
+| **Promedio** | **0,651** | 0,639 | 0,571 |
+
+InnerExpert reporta 0,762 de promedio con regresión logística en OLMoE, y 0,639 para la entropía.
+Vigía queda 0,11 por debajo en el promedio y cerca en RealtimeQA (0,748). La ventaja sobre la entropía
+se mantiene en los cinco conjuntos, pero es menor que en el paper (+0,08 contra +0,12).
+
+La comparación no es exacta por cuatro diferencias:
+
+1. Juez: DeepSeek-v4-flash con el prompt de Vigía, no GLM-5.1 con el suyo (la cuenta de GLM se quedó sin saldo).
+2. Pesos en bf16; el paper cuantiza a 4 bits.
+3. Vigía usa solo F0 y F1; InnerExpert suma desacuerdo entre expertos y señales del transformer, con
+   más costo (la revisión del 2026-10-04 lo estima en +147 % solo para las señales MoE).
+4. La evidencia se corta en 10.000 caracteres; el paper trunca el prompt por la derecha.
+
+Rechazos del juez: 1,5 % de las 6.966 respuestas (formato), sin fallas de transporte.
+
 ## 5. Latencia
 
 La meta del plan es < 5 % de latencia agregada. La medición limpia corrió en la misma laptop
