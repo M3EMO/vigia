@@ -18,3 +18,13 @@ Resuelto con el usuario el 2026-10-14 (grilling).
 - Alarma operativa (aceptada por el usuario el mismo día): si la exactitud de validación de una tarea no mejora durante un tramo largo, la corrida se pausa y se avisa al usuario, que decide seguir o cortar. No es un tope del diseño. El largo del tramo se calibra en el ticket de referencia.
 - Datos: generación al vuelo (cada lote es nuevo); evaluación con 1.000 ejemplos fijos por tarea, apartados del entrenamiento, respuesta exacta con decodificación greedy.
 - Pendiente para el ticket de referencia: rangos de longitud de los números, calibrados para que el MoE fijo aprenda cada tarea y muestre olvido.
+
+## Comments
+
+- 2026-10-14, enmienda con el usuario (al empezar el código): el escenario sin nombre necesita una pista. Un símbolo como «+» equivale a un nombre, y una entrada idéntica para dos tareas las vuelve contradictorias (mide sobrescritura, no olvido).
+  - Decisión: pista implícita en los datos. Todas las tareas usan el mismo formato, y cada una usa números de un largo propio (y, en las compuestas, otra cantidad de números). Los dos escenarios comparten exactamente los mismos datos; solo cambia si el ejemplo empieza con el nombre de la tarea.
+  - Dificultad: el usuario pidió subirla por tres vías a la vez, para que haya presión de capacidad (si 12 expertos alcanzan sobrado, dividir no puede ayudar):
+    1. Números más largos, calibrados (por ejemplo, multiplicación de 4 por 4 dígitos).
+    2. Tareas compuestas de varios pasos, por ejemplo (a+b)×c, invertir y sumar, binario de una suma, resto de un producto.
+    3. Más tareas: de 6 a 10-12 en total (las seis base más las compuestas).
+  - La lista final y los largos se fijan con la prueba de capacidad del ticket "Medir el olvido de referencia y la velocidad real en una L4".
