@@ -329,6 +329,20 @@ pregunta. La cifra comparable es la de MKQA sola, con el detector reentrenado de
 | Con `--enable-return-routed-experts` | 22,57 |
 | Sin la opción | 22,61 |
 
+**Concurrencia.** De 1 a 32 requests simultáneos con tareas de código (hasta 256 tokens, dos
+rondas por nivel). "Directo" es vLLM sin logprobs ni expertos; "Vigía" es el proxy completo.
+
+| Requests | Directo, servidor sin la opción | Directo, con la opción | Vigía | Tokens/s: sin opción → Vigía |
+|---|---|---|---|---|
+| 1 | 17,2 ms/token | 17,1 | 17,5 | 58 → 57 |
+| 4 | 28,8 | 28,7 | 28,0 | 117 → 118 |
+| 16 | 45,2 | 45,3 | 43,7 | 279 → 284 |
+| 32 | 55,6 | 55,4 | 50,8 | 491 → 491 |
+
+Con carga, la opción de expertos y el proxy tampoco cuestan: el throughput coincide en cada nivel.
+Las diferencias de ms/token entran en el ruido de pocas rondas. `ignore_eos` no sirve en este modo:
+con gpt-oss, vLLM 0.31 rompe su parser harmony en respuestas no streaming (HTTP 500).
+
 Devolver los expertos no agrega latencia medible. En la misma L4, vLLM tarda unos 22,6 ms por token
 y HF 76,7 ms, con protocolos distintos. El modo vLLM conserva la mayor parte de la señal del router dentro de MKQA, con un
 intervalo ancho (114 preguntas de test). La medición destapó dos defectos del proxy, ya corregidos:
@@ -369,4 +383,4 @@ La corrida es reanudable. En una laptop con CPU i5-1035G1 y 8 GB de RAM tarda un
 1. La etiqueta es por respuesta; falta medir con etiquetas por span (juez validado o humanos).
 2. gpt-oss-20b ya se midió en una T4; falta gpt-oss-120b y un servidor de producción (vLLM con plugin).
 3. La sonda sobre H iguala a F1; falta medir si F1 transfiere mejor entre dominios o modelos.
-4. La latencia en GPU cumple la meta con HF y vLLM (§4.10); falta medir vLLM con batching concurrente.
+4. La latencia en GPU cumple la meta con HF y vLLM, también con 32 requests simultáneos (§4.10).

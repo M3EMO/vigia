@@ -316,7 +316,9 @@ con escritura.
 
 El modo vLLM es el default con un modelo real (decisión 2026-10-13). Medido en gpt-oss-20b sobre una
 L4 (informe §4.10): dentro de MKQA da AUROC 0,784 contra 0,837 del backend HF, y devolver los
-expertos no agrega latencia. El backend HF suma +4,7 % por token. Elegí HF con `VIGIA_BACKEND=hf`
+expertos no agrega latencia, ni con 32 requests simultáneos. El backend HF suma +4,7 % por token.
+En una L4, el throughput sube de 279 a 491 tokens/s entre 16 y 32 requests: con GPU de sobra,
+conviene subir `VIGIA_VLLM_MAX_CONCURRENCY` sobre el default de 16. Elegí HF con `VIGIA_BACKEND=hf`
 cuando la detección pesa más que la latencia.
 
 Con `VIGIA_BACKEND=vllm`, Vigía no carga el modelo. Hace de proxy hacia un vLLM lanzado con
