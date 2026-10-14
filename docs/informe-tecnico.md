@@ -379,7 +379,7 @@ La comparación no es exacta por cuatro diferencias:
    más costo (la revisión del 2026-10-04 lo estima en +147 % solo para las señales MoE).
 4. La evidencia se corta en 10.000 caracteres; el paper trunca el prompt por la derecha.
 
-Rechazos del juez: 1,5 % de las 6.966 respuestas (formato), sin fallas de transporte.
+Rechazos del juez: 89 de 6.966 respuestas (1,3 %, por formato), sin fallas de transporte.
 
 ## 5. Latencia
 
