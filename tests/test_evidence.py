@@ -481,6 +481,9 @@ def test_judge_labels_spans_and_rejections(backend, items, tmp_path):
     report = relabel(tmp_path, judge=judge)
     assert report["rejected_by_reason"] == {"span_inexistente": 1}
     assert report["judge_vs_gold"]["agree"] + report["judge_vs_gold"]["disagree"] == 3
+    sequential = [(r["id"], r["labels"]) for r in RunStore(tmp_path).load_rows()]
+    assert relabel(tmp_path, judge=judge, workers=4) == report  # en paralelo: mismo reporte y orden
+    assert [(r["id"], r["labels"]) for r in RunStore(tmp_path).load_rows()] == sequential
     assert json.loads((tmp_path / "labels_report.json").read_text(encoding="utf-8"))["n_rows"] == 4
 
 

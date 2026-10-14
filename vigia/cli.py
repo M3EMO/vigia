@@ -244,7 +244,9 @@ def cmd_extract(args: argparse.Namespace) -> int:
 def cmd_label(args: argparse.Namespace) -> int:
     from vigia.evidence import relabel
 
-    report = relabel(args.run, judge=_make_judge(args), allow_code_exec=args.allow_code_exec)
+    report = relabel(
+        args.run, judge=_make_judge(args), allow_code_exec=args.allow_code_exec, workers=args.judge_workers
+    )
     _print_json(report)
     return EXIT_OK
 
@@ -519,6 +521,7 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("label", help="re-etiqueta una corrida con reglas computables o con un juez")
     p.add_argument("--run", required=True, help="carpeta de la corrida (rows.jsonl)")
     _add_judge(p)
+    p.add_argument("--judge-workers", type=_positive, default=1, help="llamadas al juez en paralelo")
     p.add_argument("--allow-code-exec", action="store_true", help=CODE_EXEC_HELP)
     p.set_defaults(func=cmd_label)
 

@@ -33,6 +33,7 @@ import re
 import time
 from collections import Counter
 from collections.abc import Callable, Iterable, Mapping, Sequence
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
@@ -797,12 +798,12 @@ def build_features(out_dir: str | Path, rows: Sequence[Mapping[str, Any]] | None
 
 
 def relabel(
-    out_dir: str | Path, *, judge: Judge | None = None, allow_code_exec: bool = False
+    out_dir: str | Path, *, judge: Judge | None = None, allow_code_exec: bool = False, workers: int = 1
 ) -> dict[str, Any]:
     """Vuelve a etiquetar todas las filas (computable o juez), reescribe filas y `features.npz`.
 
     Las filas de código vuelven a ejecutar el código: sin `allow_code_exec=True`, falla antes de
-    tocar nada.
+    tocar nada. `workers` > 1 etiqueta filas en paralelo: un juez remoto tarda segundos por llamada.
     """
     store = RunStore(out_dir)
     manifest = store.manifest()
@@ -812,10 +813,11 @@ def relabel(
     require_code_permission([r for r in rows if not r.get("skipped")], allow_code_exec)
     rejected: Counter[str] = Counter()
     agree = disagree = 0
-    for row in rows:
-        if row.get("skipped"):
-            continue
-        row["labels"], row["label_info"] = label_row(row, judge, allow_code_exec=allow_code_exec)
+    todo = [r for r in rows if not r.get("skipped")]
+    with ThreadPoolExecutor(max(1, workers)) as pool:
+        results = list(pool.map(lambda r: label_row(r, judge, allow_code_exec=allow_code_exec), todo))
+    for row, (labels, info) in zip(todo, results, strict=True):
+        row["labels"], row["label_info"] = labels, info
         if row["label_info"].get("rejected"):
             rejected[row["label_info"]["rejected"]] += 1
         cc, jc = row["label_info"].get("computable_correct"), row["label_info"].get("correct")
