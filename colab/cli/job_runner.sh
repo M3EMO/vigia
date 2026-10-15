@@ -4,6 +4,7 @@
 CLI=$HOME/.local/bin/colab; C="timeout 180 $CLI"
 ZIP=${ZIP:-$(cd "$(dirname "$0")/.." && pwd)/vigia-colab.zip}  # otro proyecto: ZIP=ruta bash job_runner.sh ...
 S=$1; JOB=$2; MARK=$3; RLOG=$4; D=$5; shift 5
+EARLY=${EARLY:-}  # regex: archivos que se bajan apenas existen (p. ej. '\.safetensors$'), sin esperar al final
 mkdir -p $D; LOG=$D/runner.log
 log() { echo "$(date -u +%T) $*" >> $LOG; }
 start() {
@@ -21,6 +22,10 @@ for i in $(seq 1 200); do
   if $C status -s $S 2>&1 | grep -q "not found"; then log "VM retirada: relanzo"; start; continue; fi
   $C download -s $S $RLOG $D/$(basename $RLOG) >/dev/null 2>&1
   log "$(tail -1 $D/$(basename $RLOG) 2>/dev/null | cut -c1-100)"
+  # Un retiro de la VM borra lo que no se bajó; el job escribe estos archivos de forma atómica.
+  if [ -n "$EARLY" ]; then for f in "$@"; do
+    [[ $f =~ $EARLY ]] && [ ! -s $D/$(basename $f) ] && timeout 900 $CLI download -s $S $f $D/$(basename $f) >/dev/null 2>&1 && log "bajado $(basename $f)"
+  done; fi
   if grep -qE "$MARK" $D/$(basename $RLOG) 2>/dev/null; then
     for f in "$@"; do timeout 900 $CLI download -s $S $f $D/$(basename $f) >/dev/null 2>&1; done  # checkpoints de cientos de MB
     $C stop -s $S >> $LOG 2>&1; log "FIN"; exit 0
