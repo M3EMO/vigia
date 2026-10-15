@@ -44,6 +44,7 @@ no. El primer hito es una spec cerrada y lista para correr; después se construy
 - Construcción: módulos de división, fusión y repetición, y el bucle de entrenamiento secuencial; se tiquetea al cerrar la spec.
 - Corridas: orden, reintentos y cómo escribe cada VM en Google Drive (hoy `colab drivemount` pide login interactivo por VM).
 - Experimento aparte (pedido del usuario, 2026-10-14): micro-router jerárquico por padre, y la comparación router global contra jerárquico; también el clon con solo ruido contra el clon con fila de alta duda.
+- Experimento aparte (pedido del usuario, 2026-10-14): aprender las reglas de división y fusión por búsqueda de orden cero (idea tomada de DUST, qlabs.sh/research/dust), no el entrenamiento de los pesos; va después de la fase 1.
 - Medida secundaria: si la huella topológica (JSD de uso de expertos) cambia durante el aprendizaje continuo.
 - Escritura: cómo entra el resultado al paper y qué figuras lo cuentan.
 

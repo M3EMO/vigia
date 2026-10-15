@@ -22,7 +22,7 @@ for i in $(seq 1 200); do
   $C download -s $S $RLOG $D/$(basename $RLOG) >/dev/null 2>&1
   log "$(tail -1 $D/$(basename $RLOG) 2>/dev/null | cut -c1-100)"
   if grep -qE "$MARK" $D/$(basename $RLOG) 2>/dev/null; then
-    for f in "$@"; do $C download -s $S $f $D/$(basename $f) >/dev/null 2>&1; done
+    for f in "$@"; do timeout 900 $CLI download -s $S $f $D/$(basename $f) >/dev/null 2>&1; done  # checkpoints de cientos de MB
     $C stop -s $S >> $LOG 2>&1; log "FIN"; exit 0
   fi
   # Un cliente con traceback y sin EXIT puede quedar colgado ("Connection was lost"): cuenta como caído.
@@ -30,7 +30,7 @@ for i in $(seq 1 200); do
     # Sin EXIT se cayó el cliente (p. ej. ReadTimeout) y la VM sin cliente muere a los ~20 min: relanzar.
     if ! grep -q "EXIT" $D/exec.log; then log "cliente caído: relanzo"; start; continue; fi
     # Con EXIT el job terminó sin marcador: relanzar repetiría la falla.
-    for f in "$@"; do $C download -s $S $f $D/$(basename $f) >/dev/null 2>&1; done
+    for f in "$@"; do timeout 900 $CLI download -s $S $f $D/$(basename $f) >/dev/null 2>&1; done  # checkpoints de cientos de MB
     $C stop -s $S >> $LOG 2>&1; log "FALLA: exec terminó sin marcador: $(tail -c 150 $D/exec.log | tr '\n' ' ')"; exit 1
   fi
 done
