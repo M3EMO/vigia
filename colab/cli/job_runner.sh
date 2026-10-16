@@ -11,15 +11,15 @@ RESUME=${RESUME:-}; CK=$D/$(basename "${RESUME:-ckpt}")
 mkdir -p $D; LOG=$D/runner.log
 log() { echo "$(date -u +%T) $*" >> $LOG; }
 # Colab rechaza subir un archivo de 100 MB o más (400 o 500; 36 MB pasa, 2026-10-16): el checkpoint va en
-# partes de 32 MB con reintentos y se junta en la VM. Si falla, el runner corta: arrancar de cero pisaría
+# partes de 16 MB (con 32 MB hubo 408 por tiempo de espera) con reintentos y se junta en la VM. Si falla, el runner corta: arrancar de cero pisaría
 # después el checkpoint bueno.
 upload_ckpt() {
   local p n ok
   rm -f $CK.part.*
-  split -b 32M -d -a 3 $CK $CK.part.
+  split -b 16M -d -a 3 $CK $CK.part.
   for p in $CK.part.*; do
     ok=0
-    for n in 1 2 3; do timeout 600 $CLI upload -s $S $p /content/$(basename $p) >> $LOG 2>&1 && { ok=1; break; }; done
+    for n in 1 2 3 4 5; do timeout 600 $CLI upload -s $S $p /content/$(basename $p) >> $LOG 2>&1 && { ok=1; break; }; sleep 10; done
     [ $ok = 1 ] || return 1
   done
   printf 'import os, subprocess\nsubprocess.run("cat /content/%s.part.* > %s && rm /content/%s.part.*", shell=True, check=True)\nprint("JOIN_OK", os.path.getsize("%s"))\n' \
