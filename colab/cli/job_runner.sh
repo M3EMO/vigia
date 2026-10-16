@@ -14,14 +14,22 @@ log() { echo "$(date -u +%T) $*" >> $LOG; }
 # partes de 16 MB (con 32 MB hubo 408 por tiempo de espera) con reintentos y se junta en la VM. Si falla, el runner corta: arrancar de cero pisaría
 # después el checkpoint bueno.
 upload_ckpt() {
-  local p n ok
+  local p n ok ka
   rm -f $CK.part.*
   split -b 16M -d -a 3 $CK $CK.part.
+  # Sin cliente conectado, Colab retira la VM a los ~20 min, y subir 1 GB puede tardar más (2026-10-16:
+  # retirada en la parte 50 de 64). Un exec corto que se repite la mantiene viva; la subida va por otro canal.
+  printf 'import time\ntime.sleep(45)\n' > $D/keepalive.py
+  ( while true; do timeout 120 $CLI exec -s $S -f $D/keepalive.py > /dev/null 2>&1; sleep 5; done ) &
+  ka=$!
   for p in $CK.part.*; do
     ok=0
     for n in 1 2 3 4 5; do timeout 600 $CLI upload -s $S $p /content/$(basename $p) >> $LOG 2>&1 && { ok=1; break; }; sleep 10; done
-    [ $ok = 1 ] || return 1
+    [ $ok = 1 ] || break
   done
+  pkill -P $ka; kill $ka; wait $ka 2> /dev/null
+  [ $ok = 1 ] || return 1
+  sleep 50  # el último exec de la guardia puede seguir ocupando el kernel
   printf 'import os, subprocess\nsubprocess.run("cat /content/%s.part.* > %s && rm /content/%s.part.*", shell=True, check=True)\nprint("JOIN_OK", os.path.getsize("%s"))\n' \
     "$(basename $CK)" "$RESUME" "$(basename $CK)" "$RESUME" > $D/join_ckpt.py
   timeout 600 $CLI exec -s $S -f $D/join_ckpt.py > $D/join_ckpt.out 2>&1
