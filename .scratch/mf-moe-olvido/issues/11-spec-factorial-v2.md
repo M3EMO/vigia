@@ -92,3 +92,8 @@ Resuelto con el usuario el 2026-10-16.
 - Pasos antes de volver a encolar: terminar las dos corridas en curso; tests en CPU de la fusión alineada;
   humo corto en GPU de la condición nueva; lista nueva en el orden de este ticket; colas y supervisor como
   servicios de systemd.
+
+## Comments
+
+- 2026-10-16, humo de la fusión alineada en L4 (4 tareas, semilla 0, con nombre): corre sin errores. La VM se retiró y el humo se repitió, así que la misma condición corrió dos veces con la misma semilla: daño de la fusión 24 contra 11 puntos, BWT desde lo aprendido −0,71 contra −0,49, exactitud 36 % contra 52 %. La GPU no es determinista y la división amplifica las diferencias: el ruido entre corridas idénticas ronda los 15 puntos de exactitud. Con 6 pares, solo una diferencia grande va a ser significativa; revisar el tamaño de la muestra con las semillas 0 y 1.
+- 2026-10-16, corrida con recuperación (semilla 0, con nombre): falló dos veces. Primero por un bug (la división usaba la señal acumulada antes de fusionar; corregido en `Divider`, commit ae28cd2 de mf-moe). Después porque la VM se retiró durante la subida del checkpoint (45 min sin cliente); el runner ahora mantiene la VM viva con un exec corto repetido (commit cd37039 de Vigía).
