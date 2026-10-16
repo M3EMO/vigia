@@ -21,3 +21,4 @@ Resuelto con el usuario el 2026-10-14 (grilling, una pregunta por vez).
 - Balanceo: sesgo por experto sin gradiente estilo DeepSeek-V3, u = 0,001, con la carga contada sobre una ventana de varias tareas, nunca por lote. Requiere código propio en las dos bases.
 - Tokenizer de bytes (vocabulario 256), contexto 512. La fase 2 con texto define su propio tokenizer.
 - Corrección registrada: en la pregunta se dijo "6 expertos ≈ 62 M"; el valor real es 52,6 M. El usuario siguió adelante con la cifra corregida.
+- 2026-10-16 (usuario): queda una sola base, Qwen2-MoE; la segunda base (MoE propio) sale del factorial por presupuesto. Ver ticket 09.
