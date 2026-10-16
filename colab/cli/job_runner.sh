@@ -10,14 +10,30 @@ EARLY=${EARLY:-}  # regex: archivos que se bajan apenas existen (p. ej. '\.safet
 RESUME=${RESUME:-}; CK=$D/$(basename "${RESUME:-ckpt}")
 mkdir -p $D; LOG=$D/runner.log
 log() { echo "$(date -u +%T) $*" >> $LOG; }
+# Un archivo de 1 GB falla al subir (500 de Colab, 2026-10-16): va en partes de 200 MB con reintentos y se
+# junta en la VM. Si falla, el runner corta: arrancar de cero pisaría después el checkpoint bueno.
+upload_ckpt() {
+  local p n ok
+  rm -f $CK.part.*
+  split -b 200M -d $CK $CK.part.
+  for p in $CK.part.*; do
+    ok=0
+    for n in 1 2 3; do timeout 600 $CLI upload -s $S $p /content/$(basename $p) >> $LOG 2>&1 && { ok=1; break; }; done
+    [ $ok = 1 ] || return 1
+  done
+  printf 'import os, subprocess\nsubprocess.run("cat /content/%s.part.* > %s && rm /content/%s.part.*", shell=True, check=True)\nprint("JOIN_OK", os.path.getsize("%s"))\n' \
+    "$(basename $CK)" "$RESUME" "$(basename $CK)" "$RESUME" > $D/join_ckpt.py
+  timeout 600 $CLI exec -s $S -f $D/join_ckpt.py > $D/join_ckpt.out 2>&1
+  grep -q "JOIN_OK $(stat -c %s $CK)" $D/join_ckpt.out || return 1  # el tamaño junto tiene que coincidir
+  rm -f $CK.part.*
+  log "subido checkpoint $(cat $CK.step 2>/dev/null)"
+}
 start() {
   [ -f $D/exec.pid ] && kill $(cat $D/exec.pid) 2>/dev/null  # nunca pkill -f: el patrón aparece en la línea de comandos del propio runner
   $C stop -s $S >/dev/null 2>&1
   $C new -s $S --gpu L4 >> $LOG 2>&1
   $C upload -s $S $ZIP /content/vigia-colab.zip >> $LOG 2>&1
-  if [ -n "$RESUME" ] && [ -s $CK ]; then
-    timeout 900 $CLI upload -s $S $CK $RESUME >> $LOG 2>&1 && log "subido checkpoint $(cat $CK.step 2>/dev/null)"
-  fi
+  if [ -n "$RESUME" ] && [ -s $CK ]; then upload_ckpt || { log "FALLA: no se pudo subir el checkpoint"; exit 1; }; fi
   nohup $CLI exec -s $S -f $JOB --timeout 30000 > $D/exec.log 2>&1 &
   echo $! > $D/exec.pid
   log "lanzado"
