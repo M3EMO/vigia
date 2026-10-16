@@ -66,6 +66,9 @@ for i in $(seq 1 200); do
     if ! grep -q "EXIT" $D/exec.log; then log "cliente caído: relanzo"; start; continue; fi
     # Con EXIT el job terminó sin marcador: relanzar repetiría la falla.
     for f in "$@"; do timeout 900 $CLI download -s $S $f $D/$(basename $f) >/dev/null 2>&1; done  # checkpoints de cientos de MB
+    # El job pudo escribir el marcador después de la última bajada del log (carrera vista el 2026-10-16).
+    $C download -s $S $RLOG $D/$(basename $RLOG) >/dev/null 2>&1
+    if grep -qE "$MARK" $D/$(basename $RLOG) 2>/dev/null; then $C stop -s $S >> $LOG 2>&1; log "FIN"; exit 0; fi
     $C stop -s $S >> $LOG 2>&1; log "FALLA: exec terminó sin marcador: $(tail -c 150 $D/exec.log | tr '\n' ' ')"; exit 1
   fi
 done
