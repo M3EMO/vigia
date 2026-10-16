@@ -10,12 +10,13 @@ EARLY=${EARLY:-}  # regex: archivos que se bajan apenas existen (p. ej. '\.safet
 RESUME=${RESUME:-}; CK=$D/$(basename "${RESUME:-ckpt}")
 mkdir -p $D; LOG=$D/runner.log
 log() { echo "$(date -u +%T) $*" >> $LOG; }
-# Un archivo de 1 GB falla al subir (500 de Colab, 2026-10-16): va en partes de 200 MB con reintentos y se
-# junta en la VM. Si falla, el runner corta: arrancar de cero pisaría después el checkpoint bueno.
+# Colab rechaza subir un archivo de 100 MB o más (400 o 500; 36 MB pasa, 2026-10-16): el checkpoint va en
+# partes de 32 MB con reintentos y se junta en la VM. Si falla, el runner corta: arrancar de cero pisaría
+# después el checkpoint bueno.
 upload_ckpt() {
   local p n ok
   rm -f $CK.part.*
-  split -b 200M -d $CK $CK.part.
+  split -b 32M -d -a 3 $CK $CK.part.
   for p in $CK.part.*; do
     ok=0
     for n in 1 2 3; do timeout 600 $CLI upload -s $S $p /content/$(basename $p) >> $LOG 2>&1 && { ok=1; break; }; done
