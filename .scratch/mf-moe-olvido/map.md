@@ -41,6 +41,8 @@ no. El primer hito es una spec cerrada y lista para correr; después se construy
 
 ## Not yet specified
 
+- [Spec del factorial, etapa 2](issues/11-spec-factorial-v2.md) — abierto: qué se corre después del primer par (la fusión daña lo recién aprendido); ninguna corrida nueva entra a Colab hasta cerrarlo.
+
 - Fase 2 con texto: qué dominios, qué datos, qué tokenizer y cuánto cómputo; depende del resultado de la fase 1.
 - Adaptador de Vigía para el MoE propio (registrar su `model_type` y el atributo del router).
 - Construcción: módulos de división, fusión y repetición, y el bucle de entrenamiento secuencial; se tiquetea al cerrar la spec.
