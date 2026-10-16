@@ -1,7 +1,7 @@
 # Medir el olvido de referencia y la velocidad real en una L4
 
 Type: task
-Status: claimed
+Status: resolved
 Blocked by: 03, 04
 
 ## Question
@@ -28,3 +28,4 @@ Ampliado el 2026-10-14 (enmienda del ticket de tareas): además, calibrar la dif
 - 2026-10-15, corrida 5 (decisión del usuario: restos parciales): mod 94,5 % (250 pasos), modmult 89,6 % (15.000). Las doce tareas aprenden solas. Ojo: corridas 2 a 5 sin evaluación reservada; bin y modmult vieron casi toda su evaluación, así que la prueba de capacidad (ya con reserva) confirma si generalizan.
 - 2026-10-15: varias corridas en paralelo en una L4 no rinden (1 proceso ya usa 94 % de la GPU; 2 y 4 dan 8 % menos en total). Expertos multiplicando en bf16 con pesos fp32: 183 → 110 ms por paso (en verificación con una corrida de mult).
 - 2026-10-16, prueba de capacidad (reparto del lote según los pasos de cada tarea sola; evaluación reservada): las dos corridas en L4 en paralelo. La de 6 expertos, a los 122.000 pasos, domina las difíciles (mult 98 %, modmult 99 %, sumamult 99 %) y oscila en las fáciles (inv 83 → 53 %, digmult 27 → 74 %); con doce tareas que oscilan, la alarma quizás nunca salta. Decisión del usuario: la de 6 corre hasta que termine la de 12, y ahí se corta.
+- 2026-10-16, resultado de la capacidad (decisión del agente, con delegación del usuario): la de 6 expertos llegó a 129.750 pasos con 6 de 12 tareas sobre 88 %; la de 12, a 151.750 pasos con 3 de 12. Las dos fallan en las mismas tareas (ord, ordsuma, binsuma, bin: 1 % a 60 %) y oscilan en las fáciles. Duplicar los expertos no ayuda: la falla viene de la interferencia entre tareas en el entrenamiento conjunto, no de la capacidad. La prueba no muestra presión de capacidad entre 6 y 12 expertos; se cortaron las dos. El factorial sigue válido, porque compara condiciones con los mismos parámetros finales. Ticket cerrado.

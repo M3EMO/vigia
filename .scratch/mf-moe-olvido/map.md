@@ -27,7 +27,7 @@ no. El primer hito es una spec cerrada y lista para correr; después se construy
 - Destino: spec + experimento + resultado en el paper (usuario, 2026-10-14).
 - Tareas: sintéticas primero, texto después si hay señal (usuario, 2026-10-14).
 - Presupuesto: hasta 550 unidades de Colab (usuario, 2026-10-14; antes 300).
-- Diseño: factorial con 1 base (Qwen2-MoE) × 2 escenarios × 14 condiciones × 3 semillas = 84 corridas, unas 410 unidades (usuario, 2026-10-16; antes 2 bases y 168 corridas, que no entraban en el techo).
+- Diseño: 30 corridas en una base (Qwen2-MoE): principal contra fijo con repetición en 3 semillas × 2 escenarios, fijo y Lifelong-MoE igual, y las dos ablaciones con nombre (2026-10-16; el piloto midió ~14,5 unidades por corrida y las 84 corridas no entraban).
 - [Cómo crecen y se fusionan expertos en los trabajos publicados](issues/01-precedentes.md) — nadie dispara con la duda del router (eso es lo nuevo); fusión por similitud de salidas (HC-SMoE); el fijo arranca con los parámetros finales; fijo+repetición es el baseline fuerte; nadie reporta BWT.
 - [Qué enseñan los papers de DeepSeek sobre expertos finos, compartidos y balanceo](issues/10-deepseek-moe.md) — los expertos finos son una división fija (el control fijo usa la granularidad final del fractal); el compartido no es un ancla demostrada; balancear por lote en tareas en fila puede causar olvido; con sigmoide la entropía cambia de sentido.
 - [Arquitectura base del MoE de 80-100 M](issues/03-arquitectura-base.md) — dos bases con experimento completo cada una (Qwen2-MoE y MoE propio); d = 512, 8 capas, 1 compartido + ruteados finos, top-3; fractal 6 → 12 expertos (52,6 → 90,3 M), fijo con 12; sesgo de balanceo con ventana larga; bytes, contexto 512.
@@ -37,6 +37,7 @@ no. El primer hito es una spec cerrada y lista para correr; después se construy
 - [Qué dispara la división de un experto](issues/06-disparador-de-division.md) — tres disparadores (duda del router, pérdida, combinación); z-score > 2 sobre la capa cada 500 pasos; hijo clonado con fila de alta duda; router global.
 - [Cuándo y cómo se fusionan expertos](issues/07-criterio-de-fusion.md) — tres criterios como condiciones (salidas, pesos, ambos); al terminar cada tarea; z-score > 2 sobre los pares de la capa; promedio por frecuencia; nunca menos de 6 expertos.
 - [Condiciones, controles y criterio de éxito](issues/09-condiciones-y-criterio.md) — gana el fractal si su BWT supera al del fijo con repetición; variante principal duda + fusión por salidas, bootstrap pareado IC 95 % sobre 6 pares; 14 condiciones; 84 corridas en una base.
+- [Olvido de referencia, velocidad y capacidad](issues/05-olvido-de-referencia.md) — las doce tareas aprenden solas tras cinco calibraciones; la capacidad no muestra presión entre 6 y 12 expertos (las dos fallan las mismas tareas por interferencia).
 
 ## Not yet specified
 
