@@ -1,7 +1,7 @@
 # Spec del factorial, etapa 2: qué se corre después del primer par
 
 Type: grilling
-Status: open
+Status: resolved
 Blocked by: 09
 
 ## Question
@@ -81,3 +81,14 @@ Margen: unas 50 unidades sobre las 440 disponibles.
 2. ¿Se mantiene la regla de corte temprano?
 3. ¿Las preguntas 5 y 6 corren, o el presupuesto se guarda para repetir con otra semilla las que den
    señal?
+
+## Answer
+
+Resuelto con el usuario el 2026-10-16.
+
+- Entra la pregunta 4: fusión alineada por permutación (estilo MC-SMoE).
+- Se mantiene el corte temprano con los 4 pares de las semillas 0 y 1.
+- Las preguntas 5 y 6 corren al final, si queda presupuesto.
+- Pasos antes de volver a encolar: terminar las dos corridas en curso; tests en CPU de la fusión alineada;
+  humo corto en GPU de la condición nueva; lista nueva en el orden de este ticket; colas y supervisor como
+  servicios de systemd.
