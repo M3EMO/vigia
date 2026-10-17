@@ -1,7 +1,7 @@
 # Fase 2: ¿el MoE fractal funciona a escala, con un MoE preentrenado?
 
 Type: grilling
-Status: open
+Status: resolved
 Blocked by: 11
 
 ## Question
@@ -57,3 +57,15 @@ quedan unas 90 para la fase 2. Hace falta subir el techo, recortar la fase 1 o a
 1. ¿Modelo: Granite-1B con ajuste completo, u OLMoE con LoRA?
 2. ¿Presupuesto: subir el techo, recortar la fase 1 o achicar la fase 2?
 3. ¿Entra la condición D (congelar el padre)?
+
+## Answer
+
+Resuelto con el usuario el 2026-10-17.
+
+- Modelo: Granite-3.1-1B-A400M-base con ajuste completo de pesos (AdamW de 8 bits).
+- Presupuesto: sale de recortar las preguntas 5 y 6 de la fase 1 (fijo, Lifelong-MoE y sin repetición, 15
+  corridas, unas 114 unidades); esas corridas quedan reservadas para una VM inexistente y la cola las saltea.
+- La condición D (división con el padre congelado) entra.
+- Antes de Colab: código del adaptador de Granite (división, fusión alineada, congelado) con tests en CPU
+  sobre un modelo diminuto armado desde la config; datos y licencias verificados; piloto de 1 h que mida
+  tokens por hora, VRAM y olvido del control.
