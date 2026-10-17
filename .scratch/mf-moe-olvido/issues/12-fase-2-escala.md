@@ -69,3 +69,8 @@ Resuelto con el usuario el 2026-10-17.
 - Antes de Colab: código del adaptador de Granite (división, fusión alineada, congelado) con tests en CPU
   sobre un modelo diminuto armado desde la config; datos y licencias verificados; piloto de 1 h que mida
   tokens por hora, VRAM y olvido del control.
+
+## Comments
+
+- 2026-10-17, datos elegidos (abiertos y sin registro previo): matemática `open-web-math/open-web-math` (ODC-By 1.0); código `common-pile/stackv2` (licencias abiertas); legal `common-pile/caselaw_access_project` (CC0 o dominio público); biomédico un subconjunto de abstracts de PubMed con CC0 (p. ej. `slinusc/PubMedAbstractsSubset`); repetición general `HuggingFaceFW/fineweb-edu` (ODC-By). Descartados: The Stack (pide aceptar términos con cuenta) y Pile of Law (licencia poco clara). El piloto verifica que los cinco se lean en streaming desde la VM.
+- 2026-10-17, adaptador de Granite hecho (mf-moe fe77d60): router con buffers `bias` en cero y `load` de uso, y registro de la señal; división, fusión alineada y AdamW sirven sin cambios. Falta: datos en streaming, bucle por tokens con loss por dominio, condiciones A a D, retome, y el humo en CPU.
