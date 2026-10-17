@@ -41,6 +41,8 @@ no. El primer hito es una spec cerrada y lista para correr; después se construy
 
 ## Not yet specified
 
+- [Fase 2: ¿el fractal funciona a escala?](issues/12-fase-2-escala.md) — abierto: Granite-1B-A400M preentrenado, 4 dominios de texto, control / división / división + fusión alineada; ~109-137 unidades; falta decidir modelo, presupuesto y la condición D.
+
 - [Spec del factorial, etapa 2](issues/11-spec-factorial-v2.md) — resuelto: 40 corridas en 6 preguntas (principal, sin fusión, con recuperación, fusión alineada, contexto, sin repetición), unas 387 unidades, corte temprano con 4 pares.
 
 - Fase 2 con texto: qué dominios, qué datos, qué tokenizer y cuánto cómputo; depende del resultado de la fase 1.
