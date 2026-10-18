@@ -56,7 +56,7 @@ for i in $(seq 1 200); do
   if [ -n "$RESUME" ]; then
     timeout 120 $CLI download -s $S $RESUME.step $CK.step.new >/dev/null 2>&1
     if [ -s $CK.step.new ] && ! cmp -s $CK.step.new $CK.step; then
-      timeout 900 $CLI download -s $S $RESUME $CK.tmp >/dev/null 2>&1 && mv $CK.tmp $CK && mv $CK.step.new $CK.step \
+      timeout ${CKPT_TIMEOUT:-900} $CLI download -s $S $RESUME $CK.tmp >/dev/null 2>&1 && mv $CK.tmp $CK && mv $CK.step.new $CK.step \
         && log "bajado checkpoint $(cat $CK.step)"
     fi
   fi
