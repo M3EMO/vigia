@@ -37,6 +37,25 @@ upload_ckpt() {
   rm -f $CK.part.*
   log "subido checkpoint $(cat $CK.step 2>/dev/null)"
 }
+# Bajar el checkpoint entero con `colab download` lo carga en RAM: con 3,6 GB el runner usó 10 GB y el OOM killer
+# lo mató en cada cierre de dominio (fase 2 de mf-moe, 2026-10-19). Se parte en la VM y se baja en partes de 64 MB.
+download_ckpt() {
+  local n i ok size
+  printf 'import os, subprocess\nsubprocess.run("rm -f /content/ckdl.part.* && split -b 64M -d -a 3 %s /content/ckdl.part.", shell=True, check=True)\nprint("PARTES", len([f for f in os.listdir("/content") if f.startswith("ckdl.part.")]), os.path.getsize("%s"))\n' \
+    "$RESUME" "$RESUME" > $D/split_ckpt.py
+  timeout 600 $CLI exec -s $S -f $D/split_ckpt.py > $D/split_ckpt.out 2>&1
+  read -r n size < <(grep -o 'PARTES [0-9]* [0-9]*' $D/split_ckpt.out | cut -d' ' -f2-)
+  [ -n "$n" ] || return 1
+  rm -f $CK.dl.*
+  for i in $(seq -f %03g 0 $((n - 1))); do
+    ok=0
+    for _ in 1 2 3 4 5; do timeout 600 $CLI download -s $S /content/ckdl.part.$i $CK.dl.$i >/dev/null 2>&1 && { ok=1; break; }; sleep 10; done
+    [ $ok = 1 ] || { rm -f $CK.dl.*; return 1; }
+  done
+  cat $CK.dl.* > $CK.tmp && rm -f $CK.dl.*
+  [ "$(stat -c %s $CK.tmp)" = "$size" ] || { rm -f $CK.tmp; return 1; }  # el tamaño junto tiene que coincidir
+  mv $CK.tmp $CK
+}
 start() {
   [ -f $D/exec.pid ] && kill $(cat $D/exec.pid) 2>/dev/null  # nunca pkill -f: el patrón aparece en la línea de comandos del propio runner
   $C stop -s $S >/dev/null 2>&1
@@ -56,8 +75,7 @@ for i in $(seq 1 200); do
   if [ -n "$RESUME" ]; then
     timeout 120 $CLI download -s $S $RESUME.step $CK.step.new >/dev/null 2>&1
     if [ -s $CK.step.new ] && ! cmp -s $CK.step.new $CK.step; then
-      timeout ${CKPT_TIMEOUT:-900} $CLI download -s $S $RESUME $CK.tmp >/dev/null 2>&1 && mv $CK.tmp $CK && mv $CK.step.new $CK.step \
-        && log "bajado checkpoint $(cat $CK.step)"
+      download_ckpt && mv $CK.step.new $CK.step && log "bajado checkpoint $(cat $CK.step)"
     fi
   fi
   # Un retiro de la VM borra lo que no se bajó; el job escribe estos archivos de forma atómica.
