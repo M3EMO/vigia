@@ -381,6 +381,45 @@ La comparación no es exacta por cuatro diferencias:
 
 Rechazos del juez: 89 de 6.966 respuestas (1,3 %, por formato), sin fallas de transporte.
 
+### 4.12 MoE fractal: ¿dividir y fusionar expertos reduce el olvido? (L4, 2026-10-15 a 2026-10-19)
+
+Hipótesis: un MoE que divide expertos donde el router duda, repite datos viejos y fusiona expertos redundantes
+olvida menos que un MoE fijo con los mismos parámetros y la misma repetición. Código: repo `mf-moe`; diseño y
+decisiones: mapa `.scratch/mf-moe-olvido` (tickets 05 a 12).
+
+**Fase 1 (MoE Qwen2 de ~90 M desde cero, 12 tareas aritméticas en fila, semillas 0-2 × nombre de tarea sí/no).**
+Métrica primaria: BWT desde lo aprendido (exactitud final menos exactitud al terminar cada tarea, medida antes de
+fusionar). Desvío del preregistro: el BWT clásico se mide después de fusionar y esconde el daño de la fusión; con
+él, el fractal "gana" (+0,17) solo porque la fusión baja lo aprendido. Diferencia pareada contra fijo+repetición,
+bootstrap IC 95 %:
+
+| Variante (pares) | BWT desde lo aprendido | Exactitud media final |
+|---|---|---|
+| fijo+repetición (control, 6 corridas) | −0,674 | 30,5 % |
+| división + fusión por salidas (5) | −0,081 [−0,119; −0,033], pierde | −12,4 pts [−19,7; −5,1], pierde |
+| división + fusión alineada por permutación (5) | −0,096 [−0,162; −0,038], pierde | −12,1 pts [−20,9; −5,3], pierde |
+| división + fusión con recuperación (3) | −0,013 [−0,035; +0,007], empate | −1,4 pts [−3,2; +0,2], empate |
+| división sin fusión (6) | −0,011 [−0,055; +0,039], empate | −2,0 pts [−7,1; +3,3], empate |
+
+Lectura: fusionar daña (25-35 puntos de exactitud en el momento de la fusión, aun con alineación al estilo
+MC-SMoE); recuperar después de fusionar solo devuelve lo perdido; dividir por duda no mejora al MoE fijo. El ruido
+entre corridas idénticas llega a 15 puntos de exactitud. Con 6 a 12 expertos no hubo presión de capacidad.
+
+**Fase 2 (Granite-3.1-1B-A400M preentrenado, en curso).** Pregunta: ¿la escala cambia el resultado? Capas 12-23
+entrenables (fp32), de 32 a 48 expertos. Seis pilotos fijaron el protocolo:
+
+1. Los dominios en inglés (matemática, código, biomedicina, derecho) no sirven: Granite ya los sabe y entrenarlos
+   solo sube su pérdida, con cualquier lote y lr. Se reemplazan por idiomas fuera de Granite (FineWeb-2: finés,
+   turco, indonesio y suajili): con 1,6 M tokens el finés baja 0,23 nats y al aprender turco olvida 0,62.
+2. Un experto nuevo que el router elige desde el primer paso desplaza a otros y daña al modelo preentrenado
+   (+0,5 nats aun como clon). Los nuevos nacen silenciosos (sesgo −1) y un balanceo solo para nacidos los recluta;
+   el daño baja a +0,06-0,08.
+3. El umbral de duda de la fase 1 (z 3,5) no se dispara en los idiomas: la división pasa a un calendario fijo y la
+   duda decide qué experto se divide. Un brazo divide al azar con el mismo calendario para aislar el aporte de la duda.
+
+Diseño: 5 brazos (control, división, división+fusión alineada, división+padre congelado, azar+padre congelado)
+× 3 semillas; métrica primaria: olvido medio en nats. Resultados pendientes.
+
 ## 5. Latencia
 
 La meta del plan es < 5 % de latencia agregada. La medición limpia corrió en la misma laptop
