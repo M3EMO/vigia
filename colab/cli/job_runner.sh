@@ -38,18 +38,20 @@ upload_ckpt() {
   log "subido checkpoint $(cat $CK.step 2>/dev/null)"
 }
 # Bajar el checkpoint entero con `colab download` lo carga en RAM: con 3,6 GB el runner usó 10 GB y el OOM killer
-# lo mató en cada cierre de dominio (fase 2 de mf-moe, 2026-10-19). Se parte en la VM y se baja en partes de 64 MB.
+# lo mató en cada cierre de dominio (fase 2 de mf-moe, 2026-10-19). Si el job escribe `<ruta>.partes` ("n bytes")
+# y `<ruta>.part.NNN`, se baja por partes; partir con otro exec no sirve, porque queda en cola detrás del job.
 download_ckpt() {
-  local n i ok size
-  printf 'import os, subprocess\nsubprocess.run("rm -f /content/ckdl.part.* && split -b 64M -d -a 3 %s /content/ckdl.part.", shell=True, check=True)\nprint("PARTES", len([f for f in os.listdir("/content") if f.startswith("ckdl.part.")]), os.path.getsize("%s"))\n' \
-    "$RESUME" "$RESUME" > $D/split_ckpt.py
-  timeout 600 $CLI exec -s $S -f $D/split_ckpt.py > $D/split_ckpt.out 2>&1
-  read -r n size < <(grep -o 'PARTES [0-9]* [0-9]*' $D/split_ckpt.out | cut -d' ' -f2-)
-  [ -n "$n" ] || return 1
-  rm -f $CK.dl.*
+  local n size i ok
+  rm -f $CK.partes $CK.dl.*
+  timeout 120 $CLI download -s $S $RESUME.partes $CK.partes >/dev/null 2>&1
+  if [ ! -s $CK.partes ]; then  # checkpoint chico, sin partes: de una vez
+    timeout ${CKPT_TIMEOUT:-900} $CLI download -s $S $RESUME $CK.tmp >/dev/null 2>&1 && mv $CK.tmp $CK
+    return
+  fi
+  read -r n size < $CK.partes
   for i in $(seq -f %03g 0 $((n - 1))); do
     ok=0
-    for _ in 1 2 3 4 5; do timeout 600 $CLI download -s $S /content/ckdl.part.$i $CK.dl.$i >/dev/null 2>&1 && { ok=1; break; }; sleep 10; done
+    for _ in 1 2 3 4 5; do timeout 600 $CLI download -s $S $RESUME.part.$i $CK.dl.$i >/dev/null 2>&1 && { ok=1; break; }; sleep 10; done
     [ $ok = 1 ] || { rm -f $CK.dl.*; return 1; }
   done
   cat $CK.dl.* > $CK.tmp && rm -f $CK.dl.*
