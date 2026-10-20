@@ -63,4 +63,27 @@ menor es mejor: fijo+repetición 1,12; división sin fusión 1,14; principal 1,3
 
 ## Comments
 
+- 2026-10-20 (usuario), datos: "los dos", pero con dos objeciones. Las tareas aritméticas son cortas y quizás
+  no tienen estructura que valga la pena subdividir. Y propone partir de los expertos de un MoE grande, como
+  DeepSeek, y armar el árbol desde ahí. Decisión (usuario): por ahora solo el análisis; la aritmética espera.
+- 2026-10-20, SPEC DEL ANÁLISIS "¿existe un árbol natural de expertos?" (`colab/expert_tree_analysis.py`,
+  solo inferencia, ~2-3 unidades):
+  - Modelos: Granite-3.1-1B-A400M (32 expertos, top-8, bf16), OLMoE-1B-7B (64 expertos, top-8, bf16, entra
+    entero en la L4) y DeepSeek-V2-Lite (64 ruteados + 2 compartidos, top-6, cuantizado a 4 bits). Entrenar
+    DeepSeek en una L4 solo se puede con LoRA, que cambia el método; analizarlo cuantizado sí entra. Si un
+    modelo no carga en transformers 5.19, el script lo saltea y lo reporta.
+  - Dominios (12, 32 secuencias de 512 tokens cada uno, con el tokenizer de cada modelo): tres familias de
+    idiomas de FineWeb-2 (urálica: finés, estonio, húngaro; túrquica latina: turco, azerí, uzbeko; romance:
+    español, portugués, italiano) y tres dominios en inglés (web educativa, código, matemática).
+  - Medidas por capa: uso de cada experto por dominio, coactivación de pares de expertos, información mutua
+    normalizada experto-dominio, similitud entre dominios (coseno de sus perfiles de uso) y agrupamiento
+    jerárquico de los dominios y de los expertos.
+  - Predicciones si existe un árbol natural: (a) la similitud de uso entre idiomas de una misma familia supera
+    a la de idiomas de familias distintas; (b) el agrupamiento jerárquico de los dominios recupera las familias
+    (índice de Rand ajustado contra las 4 familias); (c) el agrupamiento de los expertos es jerárquico (correlación
+    cofenética alta).
+  - Lectura: si (a) y (b) se cumplen en las capas del medio de al menos dos modelos, el árbol natural existe y
+    el paso siguiente (armar el árbol en Granite desde sus familias) tiene punto de partida. Si no se cumplen,
+    la idea pierde su punto de partida en modelos preentrenados.
+
 - 2026-10-20, prototipo construido y con tests (mf-moe, ver commit del día). Ninguna corrida en GPU todavía.
