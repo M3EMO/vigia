@@ -93,7 +93,15 @@ for i in $(seq 1 200); do
   # Un cliente con traceback y sin EXIT puede quedar colgado ("Connection was lost"): cuenta como caído.
   if ! kill -0 $(cat $D/exec.pid) 2>/dev/null || { grep -q "Traceback" $D/exec.log && ! grep -q "EXIT" $D/exec.log; }; then
     # Sin EXIT se cayó el cliente (p. ej. ReadTimeout) y la VM sin cliente muere a los ~20 min: relanzar.
-    if ! grep -q "EXIT" $D/exec.log; then log "cliente caído: relanzo"; start; continue; fi
+    # La celda del job sigue en el kernel aunque se corte el cliente (mf-moe fase 2, 2026-10-20: "Connection was
+    # lost" al guardar 7 GB de checkpoint). Un exec nuevo queda en cola detrás del job y mantiene viva la VM.
+    if ! grep -q "EXIT" $D/exec.log && [ ${REENGANCHES:-0} -lt 6 ]; then
+      REENGANCHES=$(( ${REENGANCHES:-0} + 1 )); log "cliente caído: reengancho ($REENGANCHES)"
+      printf 'print("REENGANCHE")\n' > $D/reengancho.py
+      nohup $CLI exec -s $S -f $D/reengancho.py --timeout 30000 > $D/exec.log 2>&1 &
+      echo $! > $D/exec.pid; continue
+    fi
+    if ! grep -q "EXIT" $D/exec.log; then log "cliente caído: relanzo"; REENGANCHES=0; start; continue; fi
     # Con EXIT el job terminó sin marcador: relanzar repetiría la falla.
     for f in "$@"; do timeout 900 $CLI download -s $S $f $D/$(basename $f) >/dev/null 2>&1; done  # checkpoints de cientos de MB
     # El job pudo escribir el marcador después de la última bajada del log (carrera vista el 2026-10-16).
