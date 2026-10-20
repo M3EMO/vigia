@@ -38,20 +38,22 @@ upload_ckpt() {
   log "subido checkpoint $(cat $CK.step 2>/dev/null)"
 }
 # Bajar el checkpoint entero con `colab download` lo carga en RAM: con 3,6 GB el runner usó 10 GB y el OOM killer
-# lo mató en cada cierre de dominio (fase 2 de mf-moe, 2026-10-19). Si el job escribe `<ruta>.partes` ("n bytes")
-# y `<ruta>.part.NNN`, se baja por partes; partir con otro exec no sirve, porque queda en cola detrás del job.
+# lo mató en cada cierre de dominio (fase 2 de mf-moe, 2026-10-19). Con CKPT_PARTS=1 el job deja cada checkpoint
+# en `<ruta>.partes.<d-s>/` (partes NNN e `info` con "n bytes", donde d:s es el marcador) y guarda las dos últimas
+# carpetas: una bajada lenta (hasta 3 h) baja siempre un checkpoint entero, nunca partes de dos.
 download_ckpt() {
-  local n size i ok
-  rm -f $CK.partes $CK.dl.*
-  timeout 120 $CLI download -s $S $RESUME.partes $CK.partes >/dev/null 2>&1
-  if [ ! -s $CK.partes ]; then  # checkpoint chico, sin partes: de una vez
+  local n size i ok tag
+  if [ "${CKPT_PARTS:-0}" != 1 ]; then  # checkpoint chico: de una vez
     timeout ${CKPT_TIMEOUT:-900} $CLI download -s $S $RESUME $CK.tmp >/dev/null 2>&1 && mv $CK.tmp $CK
     return
   fi
-  read -r n size < $CK.partes
+  tag=$(tr ':' '-' < $CK.step.new | tr -d '[:space:]')
+  rm -f $CK.info $CK.dl.*
+  timeout 120 $CLI download -s $S $RESUME.partes.$tag/info $CK.info >/dev/null 2>&1 || return 1
+  read -r n size < $CK.info
   for i in $(seq -f %03g 0 $((n - 1))); do
     ok=0
-    for _ in 1 2 3 4 5; do timeout 600 $CLI download -s $S $RESUME.part.$i $CK.dl.$i >/dev/null 2>&1 && { ok=1; break; }; sleep 10; done
+    for _ in 1 2 3 4 5; do timeout 600 $CLI download -s $S $RESUME.partes.$tag/$i $CK.dl.$i >/dev/null 2>&1 && { ok=1; break; }; sleep 10; done
     [ $ok = 1 ] || { rm -f $CK.dl.*; return 1; }
   done
   cat $CK.dl.* > $CK.tmp && rm -f $CK.dl.*
