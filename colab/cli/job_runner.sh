@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Corre un job en una VM L4 de Colab; si Colab retira la VM, crea otra y lo vuelve a lanzar.
 # Uso: job_runner.sh NOMBRE JOB.py MARCADOR_LOG LOG_REMOTO DIR_LOCAL [archivos remotos a bajar...]
-CLI=$HOME/.local/bin/colab; C="timeout 180 $CLI"
+CLI=$HOME/.local/bin/colab; C="timeout -k 30 180 $CLI"
 ZIP=${ZIP:-$(cd "$(dirname "$0")/.." && pwd)/vigia-colab.zip}  # otro proyecto: ZIP=ruta bash job_runner.sh ...
 S=$1; JOB=$2; MARK=$3; RLOG=$4; D=$5; shift 5
 EARLY=${EARLY:-}  # regex: archivos que se bajan apenas existen (p. ej. '\.safetensors$'), sin esperar al final
@@ -20,11 +20,11 @@ upload_ckpt() {
   # Sin cliente conectado, Colab retira la VM a los ~20 min, y subir 1 GB puede tardar más (2026-10-16:
   # retirada en la parte 50 de 64). Un exec corto que se repite la mantiene viva; la subida va por otro canal.
   printf 'import time\ntime.sleep(45)\n' > $D/keepalive.py
-  ( while true; do timeout 120 $CLI exec -s $S -f $D/keepalive.py > /dev/null 2>&1; sleep 5; done ) &
+  ( while true; do timeout -k 30 120 $CLI exec -s $S -f $D/keepalive.py > /dev/null 2>&1; sleep 5; done ) &
   ka=$!
   for p in $CK.part.*; do
     ok=0
-    for n in 1 2 3 4 5; do timeout 600 $CLI upload -s $S $p /content/$(basename $p) >> $LOG 2>&1 && { ok=1; break; }; sleep 10; done
+    for n in 1 2 3 4 5; do timeout -k 30 600 $CLI upload -s $S $p /content/$(basename $p) >> $LOG 2>&1 && { ok=1; break; }; sleep 10; done
     [ $ok = 1 ] || break
   done
   pkill -P $ka; kill $ka; wait $ka 2> /dev/null
@@ -32,7 +32,7 @@ upload_ckpt() {
   sleep 50  # el último exec de la guardia puede seguir ocupando el kernel
   printf 'import os, subprocess\nsubprocess.run("cat /content/%s.part.* > %s && rm /content/%s.part.*", shell=True, check=True)\nprint("JOIN_OK", os.path.getsize("%s"))\n' \
     "$(basename $CK)" "$RESUME" "$(basename $CK)" "$RESUME" > $D/join_ckpt.py
-  timeout 600 $CLI exec -s $S -f $D/join_ckpt.py > $D/join_ckpt.out 2>&1
+  timeout -k 30 600 $CLI exec -s $S -f $D/join_ckpt.py > $D/join_ckpt.out 2>&1
   grep -q "JOIN_OK $(stat -c %s $CK)" $D/join_ckpt.out || return 1  # el tamaño junto tiene que coincidir
   rm -f $CK.part.*
   log "subido checkpoint $(cat $CK.step 2>/dev/null)"
@@ -44,23 +44,28 @@ upload_ckpt() {
 download_ckpt() {
   local n size i ok tag
   if [ "${CKPT_PARTS:-0}" != 1 ]; then  # checkpoint chico: de una vez
-    timeout ${CKPT_TIMEOUT:-900} $CLI download -s $S $RESUME $CK.tmp >/dev/null 2>&1 && mv $CK.tmp $CK
+    timeout -k 30 ${CKPT_TIMEOUT:-900} $CLI download -s $S $RESUME $CK.tmp >/dev/null 2>&1 && mv $CK.tmp $CK
     return
   fi
-  tag=$(tr ':' '-' < $CK.step.new | tr -d '[:space:]')
+  tag=$(tr ':' '-' < $CK.step.dl | tr -d '[:space:]')
   rm -f $CK.info $CK.dl.*
-  timeout 120 $CLI download -s $S $RESUME.partes.$tag/info $CK.info >/dev/null 2>&1 || return 1
+  timeout -k 30 120 $CLI download -s $S $RESUME.partes.$tag/info $CK.info >/dev/null 2>&1 || return 1
   read -r n size < $CK.info
   for i in $(seq -f %03g 0 $((n - 1))); do
     ok=0
-    for _ in 1 2 3 4 5; do timeout 600 $CLI download -s $S $RESUME.partes.$tag/$i $CK.dl.$i >/dev/null 2>&1 && { ok=1; break; }; sleep 10; done
+    for _ in 1 2 3 4 5; do timeout -k 30 600 $CLI download -s $S $RESUME.partes.$tag/$i $CK.dl.$i >/dev/null 2>&1 && { ok=1; break; }; sleep 10; done
     [ $ok = 1 ] || { rm -f $CK.dl.*; return 1; }
   done
   cat $CK.dl.* > $CK.tmp && rm -f $CK.dl.*
   [ "$(stat -c %s $CK.tmp)" = "$size" ] || { rm -f $CK.tmp; return 1; }  # el tamaño junto tiene que coincidir
   mv $CK.tmp $CK
 }
+stop_dl() {  # corta una bajada en curso: una VM nueva no tiene esas partes y la subida lee el checkpoint local
+  [ -f $D/dl.pid ] && { pkill -P "$(cat $D/dl.pid)"; kill "$(cat $D/dl.pid)"; } 2>/dev/null
+  rm -f $D/dl.pid $CK.tmp $CK.dl.*
+}
 start() {
+  stop_dl
   [ -f $D/exec.pid ] && kill $(cat $D/exec.pid) 2>/dev/null  # nunca pkill -f: el patrón aparece en la línea de comandos del propio runner
   $C stop -s $S >/dev/null 2>&1
   $C new -s $S --gpu L4 >> $LOG 2>&1
@@ -77,18 +82,21 @@ for i in $(seq 1 200); do
   $C download -s $S $RLOG $D/$(basename $RLOG) >/dev/null 2>&1
   log "$(tail -1 $D/$(basename $RLOG) 2>/dev/null | cut -c1-100)"
   if [ -n "$RESUME" ]; then
-    timeout 120 $CLI download -s $S $RESUME.step $CK.step.new >/dev/null 2>&1
-    if [ -s $CK.step.new ] && ! cmp -s $CK.step.new $CK.step; then
-      download_ckpt && mv $CK.step.new $CK.step && log "bajado checkpoint $(cat $CK.step)"
+    timeout -k 30 120 $CLI download -s $S $RESUME.step $CK.step.new >/dev/null 2>&1
+    # La bajada puede tardar horas: corre en segundo plano y el bucle sigue vigilando la VM y el cliente.
+    if [ -s $CK.step.new ] && ! cmp -s $CK.step.new $CK.step && ! kill -0 "$(cat $D/dl.pid 2>/dev/null)" 2>/dev/null; then
+      cp $CK.step.new $CK.step.dl
+      ( download_ckpt && mv $CK.step.dl $CK.step && log "bajado checkpoint $(cat $CK.step)" ) > /dev/null 2>&1 &
+      echo $! > $D/dl.pid
     fi
   fi
   # Un retiro de la VM borra lo que no se bajó; el job escribe estos archivos de forma atómica.
   if [ -n "$EARLY" ]; then for f in "$@"; do
-    [[ $f =~ $EARLY ]] && [ ! -s $D/$(basename $f) ] && timeout 900 $CLI download -s $S $f $D/$(basename $f) >/dev/null 2>&1 && log "bajado $(basename $f)"
+    [[ $f =~ $EARLY ]] && [ ! -s $D/$(basename $f) ] && timeout -k 30 900 $CLI download -s $S $f $D/$(basename $f) >/dev/null 2>&1 && log "bajado $(basename $f)"
   done; fi
   if grep -qE "$MARK" $D/$(basename $RLOG) 2>/dev/null; then
-    for f in "$@"; do timeout 900 $CLI download -s $S $f $D/$(basename $f) >/dev/null 2>&1; done  # checkpoints de cientos de MB
-    $C stop -s $S >> $LOG 2>&1; log "FIN"; exit 0
+    for f in "$@"; do timeout -k 30 900 $CLI download -s $S $f $D/$(basename $f) >/dev/null 2>&1; done  # checkpoints de cientos de MB
+    stop_dl; $C stop -s $S >> $LOG 2>&1; log "FIN"; exit 0
   fi
   # Un cliente con traceback y sin EXIT puede quedar colgado ("Connection was lost"): cuenta como caído.
   if ! kill -0 $(cat $D/exec.pid) 2>/dev/null || { grep -q "Traceback" $D/exec.log && ! grep -q "EXIT" $D/exec.log; }; then
@@ -103,7 +111,7 @@ for i in $(seq 1 200); do
     fi
     if ! grep -q "EXIT" $D/exec.log; then log "cliente caído: relanzo"; REENGANCHES=0; start; continue; fi
     # Con EXIT el job terminó sin marcador: relanzar repetiría la falla.
-    for f in "$@"; do timeout 900 $CLI download -s $S $f $D/$(basename $f) >/dev/null 2>&1; done  # checkpoints de cientos de MB
+    for f in "$@"; do timeout -k 30 900 $CLI download -s $S $f $D/$(basename $f) >/dev/null 2>&1; done  # checkpoints de cientos de MB
     # El job pudo escribir el marcador después de la última bajada del log (carrera vista el 2026-10-16).
     $C download -s $S $RLOG $D/$(basename $RLOG) >/dev/null 2>&1
     if grep -qE "$MARK" $D/$(basename $RLOG) 2>/dev/null; then $C stop -s $S >> $LOG 2>&1; log "FIN"; exit 0; fi
