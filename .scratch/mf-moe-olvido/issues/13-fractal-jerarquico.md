@@ -87,3 +87,10 @@ menor es mejor: fijo+repetición 1,12; división sin fusión 1,14; principal 1,3
     la idea pierde su punto de partida en modelos preentrenados.
 
 - 2026-10-20, prototipo construido y con tests (mf-moe, ver commit del día). Ninguna corrida en GPU todavía.
+- 2026-10-21, ANÁLISIS, primera corrida (11 dominios: el estonio falló por código, es `ekk_Latn`, ya corregido; DeepSeek-V2-Lite no entró: en transformers 5 sus expertos son tensores fusionados que bitsandbytes no cuantiza, y en bf16 pesa ~31 GB). Resultados por capa, Granite (24 capas) y OLMoE (16 capas):
+  - (a) Se cumple en todas las capas de los dos modelos: los idiomas de una misma familia usan expertos más parecidos que los de familias distintas (brecha de similitud +0,03 a +0,21 en Granite y +0,10 a +0,26 en OLMoE).
+  - (b) A medias: el agrupamiento en 4 grupos recupera las familias con Rand ajustado 0,41-0,58 en Granite y 0,14-0,58 en OLMoE. Granite, capa 20: {finés, húngaro, turco, azerí, uzbeko}, {español, portugués, italiano}, {web, matemática}, {código}. OLMoE, capa 10: {los 8 idiomas}, {web}, {código}, {matemática}.
+  - Vecino más parecido de cada idioma (las dos capas): azerí ↔ uzbeko, español ↔ portugués, italiano → español o portugués, finés → húngaro. Húngaro ↔ turco también se parecen mucho (0,99): urálicas y túrquicas se juntan (las dos aglutinantes y fuera del entrenamiento de Granite).
+  - (c) Correlación cofenética de los expertos 0,59-0,82 en Granite y 0,61-0,86 en OLMoE: estructura moderadamente jerárquica.
+  - Especialización baja: información mutua experto-dominio 0,02-0,09 (Granite) y 0,04-0,16 (OLMoE); crece en las capas altas.
+  - Lectura: hay un árbol natural, con niveles: primero código, prosa en inglés y matemática contra idiomas extranjeros; dentro de los idiomas, romances contra aglutinantes; y dentro de cada grupo, pares de parientes cercanos. No copia las familias lingüísticas al pie de la letra: agrupa por parecido de uso. Pendiente: repetir con el estonio y con DeepSeek cargado con descarga a CPU, cuando haya una VM libre.
