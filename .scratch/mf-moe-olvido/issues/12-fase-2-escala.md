@@ -122,3 +122,4 @@ Resuelto con el usuario el 2026-10-17.
 - 2026-10-22, decisión: la etapa A del ticket 14 entra a esta misma cola (6 corridas: control+consolidacion_uso y control+consolidacion_azar, semillas 0-2), detrás de la semilla 2. Commit db4edd9 de mf-moe; saldo 207 unidades.
 - 2026-10-22, division s2: olvido 0,718 contra 0,725 del control. Con 3 pares, la división sola empata con el control (ver analysis2).
 - 2026-10-22, division+padre_congelado s2: olvido 0,709 contra 0,725 del control. Con 3 pares, padre congelado contra control: −0,012 (p_t 0,51), empate. Arranca azar+padre_congelado s2 (g2).
+- 2026-10-22, division+fusion_alineada s2: olvido 0,804 contra 0,725 del control. Con 3 pares, la fusión olvida 0,078 más que el control en las 3 semillas (p_t 0,042; Holm 0,25 entre todas las preguntas). Arranca division+consolidacion_uso s2 (g3).
