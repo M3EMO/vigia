@@ -140,3 +140,30 @@ Brazos y pares:
 - 2026-10-22 (usuario): ¿sirve "Fractal Generative Models" (Li, Sun, Fan, He 2025)? Nota en el vault. No
   reemplaza al transformer: lo anida (un autorregresivo genera parches con autorregresivos más chicos). Sirve como
   precedente de "misma regla en cada escala, módulos más chicos abajo"; no trata el olvido.
+- 2026-10-22, PILOTO 8 (configuración del piloto 7: finés y turco, 1.600 secuencias; los controles crecen con
+  `grow_row` "clon", no silencioso, así que su L inicial general es 2,40 contra 2,14 del árbol).
+  - El árbol dio NaN en las tres corridas del barrido (×1, ×3, ×10). Causa: el paso directo p / p.detach() de la
+    compuerta; el sesgo de balanceo elegía una hija con p ~ 0 y el gradiente valía 1/p. Arreglo (mf-moe a2d8e65):
+    escala 1 + p − p.detach() y sesgo de compuerta acotado a ±1; test de regresión con p = 0 en fp32. Ningún test
+    lo vio antes porque el modelo diminuto no produce compuertas tan filosas. Se repite solo el árbol (piloto 8b),
+    con g3 liberada de la etapa A.
+  - Controles sanos. `control_bajo_rango+consolidacion` (V1) aprende 0,01-0,03 nats peor que
+    `control+consolidacion_uso` (finés 3,004 contra 2,993; turco 2,892 contra 2,861) y olvida igual (0,26 contra
+    0,25). El lr de los deltas ×10 casi no cambia al control de bajo rango (2,999 y 2,886).
+  - R5 al límite: los tokens del finés que van a expertos congelados bajan de 64 % a 52 % al aprender turco (−19 %,
+    la regla pide menos de 20 %); la deriva top-8 (Jaccard) es 0,61-0,64. El router aleja una parte del tráfico
+    viejo de lo protegido: proteger también el ruteo es un candidato a mejora.
+  - Inferencia dispar: train contra eval 1,00 en todos; bf16 contra fp32 0,990 en el control plano. La regla del
+    piloto baja a 0,985 (el bf16 cambia ~1 % de los top-8 en cualquier brazo).
+- 2026-10-22, ÁRBOL NATURAL POR DOCUMENTO Y TERRITORIOS (Granite y OLMoE, 12 dominios con estonio, 16 documentos
+  por dominio; DeepSeek no se corrió).
+  - Información por nivel, exceso sobre el nulo (familia, dominio | familia, documento | dominio): Granite 0,074,
+    0,027, 0,008; OLMoE 0,113, 0,060, 0,025. Cada nivel resuelve entre un tercio y la mitad del anterior: una caída
+    geométrica, más lenta en OLMoE (64 expertos). Autosimilitud (mínimo / máximo) 0,06-0,25 en Granite y 0,10-0,47
+    en OLMoE.
+  - Territorios: la dimensión de correlación es ~12-14 en Granite y ~18-22 en OLMoE, la mitad que el nulo
+    gaussiano (24-44): la nube de estados tiene estructura no lineal fuerte. La dimensión casi no cambia entre los
+    niveles del dendrograma (todo, 2, 4, 8 grupos, expertos solos).
+  - Trampa detectada: una dimensión igual en cada nivel también sale de una partición al azar (cualquier submuestra
+    conserva la dimensión). Se agregó la extensión y un nulo de partición al azar (mf-moe, commit de hoy). H11 queda
+    sin decidir hasta repetir el análisis (~0,5 unidades) en una VM libre.
