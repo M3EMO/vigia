@@ -125,7 +125,7 @@ Brazos y pares:
 - Costo: piloto ~1,5 unidades; brazos ~36 unidades.
 - 2026-10-22, CONSTRUIDO (mf-moe 85bb72e, c248fd8): `fractal_tree.py` (router en árbol sobre Granite, hojas de
   bajo rango rango 16, compuertas con balanceo propio, congelado de hija vieja y copias base, retome) y los
-  brazos `arbol+consolidacion` y `arbol_azar+consolidacion`. 105 tests en CPU, incluido el retome a mitad de
+  brazos `arbol+consolidacion` y `arbol_azar+consolidacion`. 100 tests en CPU pasan, incluido el retome a mitad de
   dominio. Todo brazo nuevo reporta `ruteo`: entropía de uso, hojas muertas, fractal por documento, train contra
   eval, bf16 contra fp32 y deriva del ruteo de cada dominio terminado.
   - Decisión: el calendario dice cuándo (mismo presupuesto, 16 mitosis por capa) y la duda dice dónde. Un umbral
