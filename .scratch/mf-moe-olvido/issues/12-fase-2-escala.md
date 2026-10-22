@@ -124,3 +124,14 @@ Resuelto con el usuario el 2026-10-17.
 - 2026-10-22, division+padre_congelado s2: olvido 0,709 contra 0,725 del control. Con 3 pares, padre congelado contra control: −0,012 (p_t 0,51), empate. Arranca azar+padre_congelado s2 (g2).
 - 2026-10-22, division+fusion_alineada s2: olvido 0,804 contra 0,725 del control. Con 3 pares, la fusión olvida 0,078 más que el control en las 3 semillas (p_t 0,042; Holm 0,25 entre todas las preguntas). Arranca division+consolidacion_uso s2 (g3).
 - 2026-10-22, azar+padre_congelado s2: olvido 0,722 contra 0,725 del control. Con 3 pares: azar contra control −0,038 (p_t 0,26); duda contra azar +0,026 en las 3 semillas (0,019; 0,047; 0,013), p_t 0,13, Holm 0,53. La duda elige un poco mejor que el azar, pero ninguno protege. El piloto 8 arrancó en la VM que liberó g2 (10:45 UTC).
+- 2026-10-22, FASE 2 COMPLETA (18 corridas, datos idénticos; `analysis2`, salida en mf-moe `.cache/runs/fase2/analisis2.jsonl`).
+  division+consolidacion_uso s2: olvido 0,547 contra 0,725 del control (finés 0,753/0,978, turco 0,561/0,733,
+  indonesio 0,326/0,464). Veredictos con 3 pares (positivo = el brazo olvida menos; p de la t, entre paréntesis Holm sobre 7 preguntas):
+  - division: +0,018, p 0,41 (0,81), empate.
+  - division+padre_congelado: −0,012, p 0,51 (0,81), empate.
+  - azar+padre_congelado: −0,038, p 0,26 (0,78), empate.
+  - division+fusion_alineada: −0,078, p 0,042 (0,21), peor en las 3 semillas.
+  - division+consolidacion_uso: +0,169 [0,145; 0,182], p 0,005 (0,029), MEJOR; aprende 0,025 nats peor (p 0,008); general +0,008.
+  - duda contra azar (padre congelado): +0,026, p 0,13 (0,53).
+  - consolidación contra padre congelado: +0,180, p 0,004 (0,025).
+  Paper §4.12 actualizado con la tabla. Sigue el ticket 14 (etapa A en fase2b, piloto 8 en curso).

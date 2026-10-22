@@ -381,7 +381,7 @@ La comparación no es exacta por cuatro diferencias:
 
 Rechazos del juez: 89 de 6.966 respuestas (1,3 %, por formato), sin fallas de transporte.
 
-### 4.12 MoE fractal: ¿dividir y fusionar expertos reduce el olvido? (L4, 2026-10-15 a 2026-10-19)
+### 4.12 MoE fractal: ¿dividir y fusionar expertos reduce el olvido? (L4, 2026-10-15 a 2026-10-22)
 
 Hipótesis: un MoE que divide expertos donde el router duda, repite datos viejos y fusiona expertos redundantes
 olvida menos que un MoE fijo con los mismos parámetros y la misma repetición. Código: repo `mf-moe`; diseño y
@@ -405,7 +405,7 @@ Lectura: fusionar daña (25-35 puntos de exactitud en el momento de la fusión, 
 MC-SMoE); recuperar después de fusionar solo devuelve lo perdido; dividir por duda no mejora al MoE fijo. El ruido
 entre corridas idénticas llega a 15 puntos de exactitud. Con 6 a 12 expertos no hubo presión de capacidad.
 
-**Fase 2 (Granite-3.1-1B-A400M preentrenado, en curso).** Pregunta: ¿la escala cambia el resultado? Capas 12-23
+**Fase 2 (Granite-3.1-1B-A400M preentrenado, 2026-10-20 a 2026-10-22).** Pregunta: ¿la escala cambia el resultado? Capas 12-23
 entrenables (fp32), de 32 a 48 expertos. Seis pilotos fijaron el protocolo:
 
 1. Los dominios en inglés (matemática, código, biomedicina, derecho) no sirven: Granite ya los sabe y entrenarlos
@@ -417,8 +417,43 @@ entrenables (fp32), de 32 a 48 expertos. Seis pilotos fijaron el protocolo:
 3. El umbral de duda de la fase 1 (z 3,5) no se dispara en los idiomas: la división pasa a un calendario fijo y la
    duda decide qué experto se divide. Un brazo divide al azar con el mismo calendario para aislar el aporte de la duda.
 
-Diseño: 5 brazos (control, división, división+fusión alineada, división+padre congelado, azar+padre congelado)
-× 3 semillas; métrica primaria: olvido medio en nats. Resultados pendientes.
+4. Un diagnóstico sobre el control ubicó el olvido: devolver solo los expertos a su estado anterior recupera 96 %
+   del olvido del finés; la atención sola, 69 %; el router solo, 6 %; las normas, 0 %. De ahí sale un sexto brazo,
+   la consolidación por uso: al cerrar cada idioma (menos el último) congela los 8 expertos por capa que ese idioma
+   más usó.
+
+Diseño: 6 brazos × 3 semillas, 4 idiomas en fila (finés → turco → indonesio → suajili, ~10 M tokens cada uno,
+152 pasos de 64 secuencias, lr 6e-5, 5 % de repetición de FineWeb-Edu). Métrica primaria: olvido medio en nats
+(pérdida final menos pérdida al terminar cada idioma, promedio de los tres primeros; menos es mejor). Datos
+idénticos en las 18 corridas (sha256). Diferencia pareada por semilla, `brazo − control` con el signo invertido
+(positivo = el brazo olvida menos); IC 95 % por bootstrap, p de la t pareada y p corregido por Holm entre las 7
+preguntas:
+
+| Brazo (3 pares) | Olvido medio | Diferencia contra control | p (Holm) | Pérdida aprendida |
+|---|---|---|---|---|
+| control: 48 expertos desde el inicio | 0,729 | — | — | 2,401 |
+| división (32 → 48 por duda) | 0,711 | +0,018 [−0,005; +0,051] | 0,41 (0,81), empate | 2,403 |
+| división + padre congelado | 0,741 | −0,012 [−0,034; +0,016] | 0,51 (0,81), empate | 2,398 |
+| azar + padre congelado | 0,767 | −0,038 [−0,082; +0,003] | 0,26 (0,78), empate | 2,403 |
+| división + fusión alineada | 0,807 | −0,078 [−0,106; −0,049] | 0,042 (0,21), peor en las 3 semillas | 2,403 |
+| **división + consolidación por uso** | **0,561** | **+0,169 [+0,145; +0,182]** | **0,005 (0,029), mejor** | 2,426 |
+
+Lectura:
+- La consolidación por uso es la única que gana y sobrevive a Holm: olvida 23 % menos que el control en las tres
+  semillas (finés 0,75 contra 0,98 en la semilla 2). Paga un costo chico en plasticidad: aprende cada idioma
+  0,025 nats peor (p 0,008). La pérdida general (FineWeb-Edu) no empeora (+0,008 a favor).
+- Dividir, solo o congelando al padre, empata con el control: la escala no cambia el resultado de la fase 1.
+- Fusionar empeora el olvido, igual que en la fase 1.
+- La duda elige un poco mejor que el azar qué padre congelar (+0,026 en las tres semillas, p 0,13, Holm 0,53),
+  pero congelar al padre no protege: lo que protege es congelar lo que el idioma viejo usó.
+- Límites: un solo orden de idiomas; las semillas cambian el orden de los lotes y la repetición, no los datos, así
+  que el ruido entre semillas (±0,01 en el control) puede subestimar la varianza real; con 3 pares, el IC del
+  bootstrap es casi el rango de las diferencias, por eso se informa también la t con Holm.
+
+Siguiente (ticket 14 y spec del MoE fractal): ¿la consolidación necesita dividir? (consolidación sobre el control
+fijo, por uso y al azar); ¿un árbol de expertos con hijas de bajo rango, que se repite en cada nivel, suma algo
+sobre la consolidación plana? (árbol, árbol al azar, árbol de un solo nivel y control con los mismos parámetros
+nuevos); y ¿los territorios de los expertos son autosimilares?
 
 ## 5. Latencia
 
