@@ -26,7 +26,7 @@ Los tickets del mapa (`map.md`) guardan las decisiones; este documento junta los
 | H7 | El árbol fractal olvida menos, o aprende mejor con el mismo olvido, que el plano con la misma consolidación | `arbol+consolidacion` contra `control+consolidacion_uso` | piloto 8 en cola |
 | H8 | El árbol se vuelve más autosimilar que el plano | `ruteo.fractal.autosimilitud` del árbol > la del plano | piloto 8 en cola |
 | H9 | La duda elige dónde abrir rama mejor que el azar | `arbol+consolidacion` < `arbol_azar+consolidacion` | depende del piloto 8 |
-| H10 | La recursión (lo fractal) suma algo sobre un árbol de un solo nivel | `arbol+consolidacion` < `arbol_un_nivel+consolidacion` (las hijas no pueden volver a dividirse), con la misma cantidad de mitosis | propuesta (2026-10-22), sin presupuesto asignado |
+| H10 | La recursión (lo fractal) suma algo sobre un árbol de un solo nivel | `arbol+consolidacion` < `arbol_un_nivel+consolidacion` (las hijas no pueden volver a dividirse), con la misma cantidad de mitosis | brazo `arbol_un_nivel+consolidacion` hecho (mf-moe 26c002b); 3 semillas en la etapa C (decisión del usuario 2026-10-22: reemplaza a V4) |
 | H11 | Los territorios de expertos son autosimilares | `territorios`: el perfil de escalas se repite en los niveles 1, 2, 4, 8 y en los expertos solos, y se aparta del nulo gaussiano | corre en la VM del piloto 8 (Granite, OLMoE) |
 
 ### Cómo se lee el conjunto (eficiencia de buscar una arquitectura fractal)
@@ -48,7 +48,7 @@ paso (`segundos_por_paso`), con la pérdida aprendida dentro de 0,02 nats del co
 | V1 | Control con los mismos parámetros entrenables que el árbol | una hoja de bajo rango tiene ~57 mil parámetros y un experto entero ~1,5 M; sin este control, "olvida menos" puede ser "aprende menos" | brazo `control_bajo_rango+consolidacion`: los 16 expertos nuevos son copias fijas + U·V (rango 16), ruteo plano; `parametros_entrenables_expertos` en el resultado | mismos parámetros nuevos que el árbol; el conteo final se compara | hecho (mf-moe 54f1f51; test `test_low_rank_control_matches_the_tree...`) |
 | V2 | Mismo cómputo por token | las compuertas suman cómputo | `segundos_por_paso` en el resultado | diferencia < 5 % o reportada | hecho (54f1f51) |
 | V3 | Poder estadístico | el ruido entre semillas del control es ±0,01 nats | bootstrap pareado y t pareada | con 2-3 pares el IC del bootstrap es casi el rango de las diferencias y ningún p sobrevive a Holm (consolidación contra control: p_t 0,07, Holm 0,44 con 2 pares). Las comparaciones clave pasan a 5 semillas | decidido; las semillas 3 y 4 entran al plan de presupuesto |
-| V4 | Más de un orden de dominios | hoy todas las semillas usan finés → turco → indonesio → suajili; el olvido depende del orden | `ORDERS` en `phase2.py` (f2, f2o1, f2o2), elegido por el tercer campo de la cola | el signo del efecto se mantiene en los 3 órdenes | mecanismo hecho (54f1f51); corridas según presupuesto |
+| V4 | Más de un orden de dominios | hoy todas las semillas usan finés → turco → indonesio → suajili; el olvido depende del orden | `ORDERS` en `phase2.py` (f2, f2o1, f2o2), elegido por el tercer campo de la cola | el signo del efecto se mantiene en los 3 órdenes | mecanismo hecho (54f1f51); corridas postergadas: H10 tomó su presupuesto (decisión del usuario 2026-10-22). Límite declarado en el paper: un solo orden de idiomas |
 | V5 | Comparaciones múltiples | hay ~11 comparaciones | t pareada y Holm sobre la métrica primaria en `analysis2` | las conclusiones del paper sobreviven a Holm; el resto se marca exploratorio | hecho (54f1f51) |
 | V6 | Mismos datos en todas las corridas | | sha256 en `result.json` y chequeo en `analysis2` | idénticos | hecho |
 | V7 | Evaluación sin fuga | | split por documento (`prepare_phase2`) | ningún documento en train y eval | hecho |
@@ -157,11 +157,11 @@ paso (`segundos_por_paso`), con la pérdida aprendida dentro de 0,02 nats del co
 | Fase 2, semilla 2 restante | 4 | ~23 | en curso |
 | Piloto 8 (barrido V8, control V1, reglas de corte) | 6 cortas | ~3 | en cola (mfmoe-etapac) |
 | Etapa A, semillas 0-2 | 6 | ~34 | en cola (fase2b) |
-| Etapa C: árbol, árbol al azar, control de bajo rango, semillas 0-2 | 9 | ~51 | después del piloto 8 |
+| Etapa C: árbol, árbol al azar, control de bajo rango y árbol de un nivel (H10), semillas 0-2 | 12 | ~68 | después del piloto 8 |
 | V3: semillas 3 y 4 de control, division+consolidacion_uso, control+consolidacion_uso y árbol | 8 | ~46 | después de la etapa C |
-| V4: órdenes f2o1 y f2o2 del par que decida el paper, 1 semilla cada uno | 4 | ~23 | si queda saldo |
+| V4: órdenes f2o1 y f2o2 | 0 | 0 | postergado (H10 tomó su lugar) |
 
-Total ~180 unidades: entra justo en el saldo. Un piloto que falla libera las 51 de la etapa C.
+Total ~174 unidades: entra en el saldo de 203. Un piloto que falla libera las 68 de la etapa C.
 
 ## Camino crítico
 
