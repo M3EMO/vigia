@@ -119,3 +119,4 @@ Resuelto con el usuario el 2026-10-17.
 - 2026-10-21, azar+padre_congelado s1: olvido 0,823. La duda le gana al azar en las dos semillas (0,738 vs 0,757; 0,775 vs 0,823), pero ninguno le gana al control. Arranca control s2 (g2).
 - 2026-10-22, control s2: olvido 0,725 (s0 0,721; s1 0,741). El control es estable entre semillas (±0,01). Arranca division s2 (g2).
 - 2026-10-22, division+consolidacion_uso s1: olvido 0,596 contra 0,741 del control (−20 %). Por idioma: finés 0,797/0,975, turco 0,560/0,689, indonesio 0,431/0,560. Aprende un poco peor: aprendido medio 2,423 contra 2,403. La ventaja se repite en las dos semillas (−0,182 y −0,145); la VM se retiró a mitad del suajili y la corrida retomó desde 3:0.
+- 2026-10-22, decisión: la etapa A del ticket 14 entra a esta misma cola (6 corridas: control+consolidacion_uso y control+consolidacion_azar, semillas 0-2), detrás de la semilla 2. Commit db4edd9 de mf-moe; saldo 207 unidades.
