@@ -123,3 +123,20 @@ Brazos y pares:
   aprende mejor cada idioma con el mismo olvido, y su autosimilitud supera a la del plano.
 - Piloto antes: finés y turco, 1.600 secuencias (configuración del piloto 7), con las reglas de corte.
 - Costo: piloto ~1,5 unidades; brazos ~36 unidades.
+- 2026-10-22, CONSTRUIDO (mf-moe 85bb72e, c248fd8): `fractal_tree.py` (router en árbol sobre Granite, hojas de
+  bajo rango rango 16, compuertas con balanceo propio, congelado de hija vieja y copias base, retome) y los
+  brazos `arbol+consolidacion` y `arbol_azar+consolidacion`. 105 tests en CPU, incluido el retome a mitad de
+  dominio. Todo brazo nuevo reporta `ruteo`: entropía de uso, hojas muertas, fractal por documento, train contra
+  eval, bf16 contra fp32 y deriva del ruteo de cada dominio terminado.
+  - Decisión: el calendario dice cuándo (mismo presupuesto, 16 mitosis por capa) y la duda dice dónde. Un umbral
+    absoluto nunca dispara: z > 3 en 0 de 192 revisiones de `division` s0, z > 2 en 9 %. El "cuándo" guiado por
+    datos (desacuerdo de gradientes entre las dos mitades) queda pendiente.
+  - Nota de capacidad: una hoja de bajo rango suma ~57 mil parámetros contra ~1,5 M de un experto entero; el árbol
+    compite con menos parámetros entrenables que el control de 48 expertos. Es parte del diseño (hijos baratos).
+  - Piloto 8 (`colab/pilot8_phase2.py`): `arbol+consolidacion` y `control+consolidacion_uso` en la configuración
+    del piloto 7, con las reglas de corte. Corre en la primera VM que libera la fase 2 (unidad mfmoe-etapac).
+  - La etapa A pasó a `colab/fase2b.txt` con el código nuevo (mide ruteo) y arranca al terminar fase 2 y piloto.
+  - Los brazos del árbol se suman a fase2b.txt solo si el piloto pasa las reglas de corte.
+- 2026-10-22 (usuario): ¿sirve "Fractal Generative Models" (Li, Sun, Fan, He 2025)? Nota en el vault. No
+  reemplaza al transformer: lo anida (un autorregresivo genera parches con autorregresivos más chicos). Sirve como
+  precedente de "misma regla en cada escala, módulos más chicos abajo"; no trata el olvido.
