@@ -52,7 +52,7 @@ paso (`segundos_por_paso`), con la pérdida aprendida dentro de 0,02 nats del co
 | V5 | Comparaciones múltiples | hay ~11 comparaciones | t pareada y Holm sobre la métrica primaria en `analysis2` | las conclusiones del paper sobreviven a Holm; el resto se marca exploratorio | hecho (54f1f51) |
 | V6 | Mismos datos en todas las corridas | | sha256 en `result.json` y chequeo en `analysis2` | idénticos | hecho |
 | V7 | Evaluación sin fuga | | split por documento (`prepare_phase2`) | ningún documento en train y eval | hecho |
-| V8 | Hiperparámetros justos para cada brazo | el lr (6e-5) se calibró para expertos enteros; los deltas U·V pueden pedir otro | `Cfg2.lowrank_lr_mult` (grupo propio en AdamW); el piloto 8 barre ×1, ×3 y ×10 | el árbol usa el mejor de los tres, elegido por pérdida aprendida, no por olvido | mecanismo hecho; barrido en el piloto 8 |
+| V8 | Hiperparámetros justos para cada brazo | el lr (6e-5) se calibró para expertos enteros; los deltas U·V pueden pedir otro | `Cfg2.lowrank_lr_mult` (grupo propio en AdamW); el piloto 8b barrió ×1, ×3 y ×10 | el árbol usa el mejor de los tres, elegido por pérdida aprendida, no por olvido | hecho: empate (2,971/2,864 contra 2,971/2,866 y 2,973/2,865); queda ×1 |
 | V9 | Retomes registrados | retomar pone los momentos de AdamW en cero y cambia la trayectoria | `retomes` en el resultado | los brazos no difieren en retomes de forma sistemática, o se reporta | hecho (54f1f51) |
 | V10 | Todo resultado se publica | evita reportar solo lo que gana | tabla completa en §4.12 del paper | todas las corridas en la tabla | hecho (fase 1), en curso (fase 2) |
 
@@ -87,7 +87,7 @@ paso (`segundos_por_paso`), con la pérdida aprendida dentro de 0,02 nats del co
 |---|---|---|---|
 | O1 | Filas congeladas no se mueven (gradiente y momentos en cero, sin weight decay) | `test_training_moves_only_the_low_rank_delta_and_the_gates`, tests de consolidación | hecho |
 | O2 | Deltas nacen en cero (U = 0) | test de mitosis | hecho |
-| O3 | lr de los deltas calibrado | ver V8 | barrido en el piloto 8 |
+| O3 | lr de los deltas calibrado | ver V8 | hecho (×1) |
 | O4 | Actualizaciones en fp32, multiplicación en bf16 | `_Bf16Weights` | hecho |
 | O5 | Recalentamiento del lr por dominio y al retomar | `run2` | hecho |
 | O6 | Retome exacto de la estructura | `test_resume_mid_domain...[arbol+consolidacion]` | hecho |

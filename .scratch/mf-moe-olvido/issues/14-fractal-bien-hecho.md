@@ -167,3 +167,17 @@ Brazos y pares:
   - Trampa detectada: una dimensión igual en cada nivel también sale de una partición al azar (cualquier submuestra
     conserva la dimensión). Se agregó la extensión y un nulo de partición al azar (mf-moe, commit de hoy). H11 queda
     sin decidir hasta repetir el análisis (~0,5 unidades) en una VM libre.
+- 2026-10-22, PILOTO 8b (solo el árbol, con el arreglo de la compuerta; misma configuración): pasa todas las reglas
+  de corte. 120 mitosis (10 por capa), sin NaN.
+  - Pérdida aprendida: finés 2,971, turco 2,864 (×1); ×3 y ×10 empatan (2,971-2,973 y 2,865-2,866). Decisión
+    (regla V8): ×1, el más simple. Olvido del finés 0,265-0,273.
+  - Hojas muertas como máximo 23,8 % (regla: 25 %); compuerta más torcida 93 % (regla: 95 %); train contra eval
+    1,00; bf16 contra fp32 0,994; 1.300 s por corrida (1,24 veces el piloto 7); 18,5 GB.
+  - Ruteo de lo viejo mucho más estable que en los controles: deriva top-8 (Jaccard) del finés 0,87 contra 0,61-0,64,
+    y los tokens del finés que van a congelados pasan de 66 % a 66 % (−1 %) contra −19 % en los controles. La
+    partición de la compuerta deja los tokens viejos con la hija vieja congelada: el árbol protege también el ruteo.
+  - Forma: crecimiento en cadena. La duda vuelve a elegir a la hija nueva y algunas raíces bajan hasta 7 niveles
+    (p. ej. hojas por profundidad 31, 1, 0, 1, 4, 3, 2), mientras ~30 raíces nunca se dividen.
+  - No se compara la pérdida con los controles del piloto 8: crecieron con clones no silenciosos (L general inicial
+    2,40 contra 2,14). La comparación justa es la de la etapa C, con la configuración PRODUCTION.
+  - Decisión: la etapa C entra a la cola fase2b (12 corridas, mf-moe 5b1b2f6, zip f43f3ab).
