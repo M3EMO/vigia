@@ -54,8 +54,7 @@ consolidación, o aprende cada idioma nuevo mejor con el mismo olvido.
 
 ## Preguntas abiertas para el usuario
 
-1. Si la etapa A muestra que dividir no aporta nada sobre la consolidación, ¿se construye la etapa C igual
-   (es la última prueba de la idea fractal) o se cierra la fase 2 con ese resultado?
+(ninguna por ahora)
 
 ## Comments
 - 2026-10-22 (usuario): si dividir no es la solución, ¿otro mecanismo podría "evolucionar" un fractal?
@@ -69,3 +68,58 @@ consolidación, o aprende cada idioma nuevo mejor con el mismo olvido.
   4. Búsqueda de orden cero sobre las reglas (idea DUST del 2026-10-14): evolucionar la regla, no los pesos.
   Requisito previo para cualquiera: una medida de "fractal" (misma estadística de ramificación y de
   especialización en cada nivel del árbol); sin esa medida no hay predicción que falsar.
+- 2026-10-22 (usuario), decisiones: la etapa C se construye aunque dividir no sirva; se exploran los
+  candidatos 1 + 2 juntos; el candidato 3 (árbol aprendido por gradiente) también interesa.
+- 2026-10-22 (usuario): "¿habría que tener en cuenta la inferencia dispar y el colapso del enrutador?". Sí:
+  entran a la spec como medidas obligatorias y reglas de corte (abajo).
+- 2026-10-22, MEDIDA DE FRACTAL (`expert_tree.fractal`, mf-moe 5586ab3). Por nivel de la jerarquía de los
+  datos (familia, idioma | familia, documento | idioma): información condicional experto-nivel normalizada,
+  menos un nulo multinomial (cada hijo sortea sus tokens con el perfil del padre). Autosimilitud = exceso mínimo
+  / exceso máximo: 1 = cada nivel se resuelve tanto como el anterior. Descartado: conteo de cajas sobre el
+  dendrograma de expertos (r2 ~0,9 también en el nulo, no discrimina).
+  - Árbol natural, dos niveles (sin documentos todavía): Granite exceso medio familia 0,076, idioma | familia
+    0,031, autosimilitud por capa 0,23-0,52; OLMoE 0,119 y 0,068, autosimilitud 0,36-0,88. Lectura: los dos
+    modelos resuelven el segundo nivel a la mitad del primero; hay estructura en dos escalas, más en OLMoE.
+  - Falta el nivel documento | idioma: el análisis registra por dominio; hay que registrar por documento
+    (inferencia, ~2 unidades).
+
+## SPEC DE LA ETAPA C (2026-10-22, sin correr)
+
+Un solo mecanismo con la misma regla en cada escala ("la duda asigna, el uso protege"), en Granite, sobre la
+configuración PRODUCTION de la fase 2.
+
+1. Hojas de bajo rango (candidato 1). Cada experto de Granite es la raíz de un subárbol. Una mitosis convierte
+   una hoja en nodo interno con dos hijas: la vieja (los mismos pesos, congelada) y la nueva = vieja + U·V
+   (rango 16, U en cero: la salida no cambia al nacer). Una nieta suma su propio U'·V' sobre su madre. Lo
+   nuevo se aprende en deltas chicos y lo viejo queda intacto en cada nivel.
+2. Asignación a cualquier profundidad (candidato 2). La compuerta de cada nodo parte sus tokens por la
+   dirección de la duda (prototipo `tree.py` del ticket 13). La mitosis se abre en la hoja donde los tokens
+   del dominio nuevo concentran la duda (z > 3 sobre las hojas de la capa), en cualquier profundidad; sin
+   calendario. Tope: 16 mitosis por capa (igual que la fase 2).
+3. Consolidación recursiva. Al cerrar un dominio se congelan las hojas que más usó (incluidas las de bajo
+   rango); la próxima mitosis sobre una hoja congelada nace como nieta.
+4. Fusión solo como poda aceptada: queda fuera del primer piloto.
+5. Candidato 3, árbol aprendido (brazo aparte, después del piloto de 1 + 2): el router elige primero un grupo
+   y después un experto del grupo; la pertenencia de los expertos a los grupos es una matriz suave que se
+   aprende con un prior de entropía (se endurece con el tiempo). Al nacer, los grupos salen del árbol natural.
+
+Medidas obligatorias en cada corrida (además del olvido):
+- Colapso del enrutador: entropía normalizada del uso por capa, fracción de hojas muertas (menos del 1 % de
+  su parte justa) y reparto de cada compuerta. Balanceo en dos niveles: sesgo por experto (como ahora) y por
+  compuerta (solo nodos nacidos en la corrida). Corte del piloto: más del 25 % de hojas muertas, o una
+  compuerta que manda más del 95 % a una hija en dos revisiones seguidas.
+- Inferencia dispar (ruteo de entrenamiento distinto del de evaluación): coincidencia top-k (Jaccard) del
+  mismo lote en modo train y en modo eval, y en fp32 contra bf16; se exige 0,99 o más. Hoy el sesgo de
+  balanceo solo se actualiza en train y la compuerta usa argmax en los dos modos.
+- Deriva del ruteo de lo viejo: coincidencia top-k de los tokens de evaluación de cada dominio terminado,
+  antes y después de cada dominio nuevo. Si la consolidación protege expertos pero el router deja de mandarles
+  los tokens viejos, la protección no sirve (el diagnóstico atribuyó 6 % del olvido al router solo).
+- Fractal: `expert_tree.fractal` sobre el uso por hoja al final, con niveles familia / idioma / documento.
+
+Brazos y pares:
+- `arbol+consolidacion` (1 + 2 + 3 de arriba) y `arbol_azar+consolidacion` (mitosis en hojas al azar con la
+  misma cantidad), 3 semillas, pareados con `control+consolidacion_uso` y `division+consolidacion_uso`.
+- Predicción si la idea fractal es cierta: el árbol olvida menos que el plano con la misma consolidación, o
+  aprende mejor cada idioma con el mismo olvido, y su autosimilitud supera a la del plano.
+- Piloto antes: finés y turco, 1.600 secuencias (configuración del piloto 7), con las reglas de corte.
+- Costo: piloto ~1,5 unidades; brazos ~36 unidades.
