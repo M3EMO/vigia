@@ -123,3 +123,4 @@ Resuelto con el usuario el 2026-10-17.
 - 2026-10-22, division s2: olvido 0,718 contra 0,725 del control. Con 3 pares, la división sola empata con el control (ver analysis2).
 - 2026-10-22, division+padre_congelado s2: olvido 0,709 contra 0,725 del control. Con 3 pares, padre congelado contra control: −0,012 (p_t 0,51), empate. Arranca azar+padre_congelado s2 (g2).
 - 2026-10-22, division+fusion_alineada s2: olvido 0,804 contra 0,725 del control. Con 3 pares, la fusión olvida 0,078 más que el control en las 3 semillas (p_t 0,042; Holm 0,25 entre todas las preguntas). Arranca division+consolidacion_uso s2 (g3).
+- 2026-10-22, azar+padre_congelado s2: olvido 0,722 contra 0,725 del control. Con 3 pares: azar contra control −0,038 (p_t 0,26); duda contra azar +0,026 en las 3 semillas (0,019; 0,047; 0,013), p_t 0,13, Holm 0,53. La duda elige un poco mejor que el azar, pero ninguno protege. El piloto 8 arrancó en la VM que liberó g2 (10:45 UTC).
