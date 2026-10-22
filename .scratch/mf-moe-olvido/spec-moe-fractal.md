@@ -31,15 +31,15 @@ Los tickets del mapa (`map.md`) guardan las decisiones; este documento junta los
 
 | ID | Requisito | Porqué | Medida o test | Aceptación | Estado |
 |---|---|---|---|---|---|
-| V1 | Control con los mismos parámetros entrenables que el árbol | una hoja de bajo rango tiene ~57 mil parámetros y un experto entero ~1,5 M; sin este control, "olvida menos" puede ser "aprende menos" | brazo `control+lora_dominio`: un delta de bajo rango nuevo por dominio sobre los expertos más usados, sin árbol | mismo número de parámetros entrenables (±10 %) que `arbol+consolidacion` | **falta, obligatorio para H7** |
-| V2 | Mismo cómputo por token | las compuertas suman cómputo | FLOPs por token y segundos por paso en el resultado | diferencia < 5 % o reportada | parcial (segundos en pilotos) |
-| V3 | Poder estadístico | el ruido entre semillas del control es ±0,01 nats | bootstrap pareado | 3 pares alcanzan para efectos ≥ 0,05; efectos menores (H3, H9) piden 5 semillas | parcial |
-| V4 | Más de un orden de dominios | hoy todas las semillas usan finés → turco → indonesio → suajili; el olvido depende del orden | 2 órdenes más para los brazos que ganen | el signo del efecto se mantiene en los 3 órdenes | **falta** |
-| V5 | Comparaciones múltiples | hay ~11 comparaciones | corrección de Holm sobre los p del bootstrap | las conclusiones del paper sobreviven a Holm; el resto se marca exploratorio | **falta** |
+| V1 | Control con los mismos parámetros entrenables que el árbol | una hoja de bajo rango tiene ~57 mil parámetros y un experto entero ~1,5 M; sin este control, "olvida menos" puede ser "aprende menos" | brazo `control_bajo_rango+consolidacion`: los 16 expertos nuevos son copias fijas + U·V (rango 16), ruteo plano; `parametros_entrenables_expertos` en el resultado | mismos parámetros nuevos que el árbol; el conteo final se compara | hecho (mf-moe 54f1f51; test `test_low_rank_control_matches_the_tree...`) |
+| V2 | Mismo cómputo por token | las compuertas suman cómputo | `segundos_por_paso` en el resultado | diferencia < 5 % o reportada | hecho (54f1f51) |
+| V3 | Poder estadístico | el ruido entre semillas del control es ±0,01 nats | bootstrap pareado y t pareada | con 2-3 pares el IC del bootstrap es casi el rango de las diferencias y ningún p sobrevive a Holm (consolidación contra control: p_t 0,07, Holm 0,44 con 2 pares). Las comparaciones clave pasan a 5 semillas | decidido; las semillas 3 y 4 entran al plan de presupuesto |
+| V4 | Más de un orden de dominios | hoy todas las semillas usan finés → turco → indonesio → suajili; el olvido depende del orden | `ORDERS` en `phase2.py` (f2, f2o1, f2o2), elegido por el tercer campo de la cola | el signo del efecto se mantiene en los 3 órdenes | mecanismo hecho (54f1f51); corridas según presupuesto |
+| V5 | Comparaciones múltiples | hay ~11 comparaciones | t pareada y Holm sobre la métrica primaria en `analysis2` | las conclusiones del paper sobreviven a Holm; el resto se marca exploratorio | hecho (54f1f51) |
 | V6 | Mismos datos en todas las corridas | | sha256 en `result.json` y chequeo en `analysis2` | idénticos | hecho |
 | V7 | Evaluación sin fuga | | split por documento (`prepare_phase2`) | ningún documento en train y eval | hecho |
-| V8 | Hiperparámetros justos para cada brazo | el lr (6e-5) se calibró para expertos enteros; los deltas U·V pueden pedir otro | barrido chico del lr de los deltas (×1, ×3, ×10) en un piloto | el árbol usa el mejor de los tres, elegido por pérdida aprendida, no por olvido | **falta** |
-| V9 | Retomes registrados | retomar pone los momentos de AdamW en cero y cambia la trayectoria | cantidad de retomes por corrida (runner.log) | los brazos no difieren en retomes de forma sistemática, o se reporta | parcial |
+| V8 | Hiperparámetros justos para cada brazo | el lr (6e-5) se calibró para expertos enteros; los deltas U·V pueden pedir otro | `Cfg2.lowrank_lr_mult` (grupo propio en AdamW); el piloto 8 barre ×1, ×3 y ×10 | el árbol usa el mejor de los tres, elegido por pérdida aprendida, no por olvido | mecanismo hecho; barrido en el piloto 8 |
+| V9 | Retomes registrados | retomar pone los momentos de AdamW en cero y cambia la trayectoria | `retomes` en el resultado | los brazos no difieren en retomes de forma sistemática, o se reporta | hecho (54f1f51) |
 | V10 | Todo resultado se publica | evita reportar solo lo que gana | tabla completa en §4.12 del paper | todas las corridas en la tabla | hecho (fase 1), en curso (fase 2) |
 
 ## M. Medidas
@@ -50,7 +50,7 @@ Los tickets del mapa (`map.md`) guardan las decisiones; este documento junta los
 | M2 | Pérdida aprendida media | plasticidad: ¿aprende cada idioma nuevo? | hecho |
 | M3 | Pérdida general final (FineWeb-Edu) | ¿daña lo que el modelo ya sabía? | hecho |
 | M4 | Frontera estabilidad-plasticidad | un brazo que olvida menos pero aprende peor no gana solo por M1; se grafica M1 contra M2 | **falta (figura)** |
-| M5 | Transferencia hacia adelante | ¿aprende más rápido el idioma nuevo? pérdida a los 50 y 100 pasos | parcial (el log la tiene, falta el análisis) |
+| M5 | Transferencia hacia adelante | ¿aprende más rápido el idioma nuevo? `curva`: pérdida media cada 50 pasos | medida hecha (54f1f51); falta el análisis |
 | M6 | Evaluación externa | la pérdida no es todo; una tarea (p. ej. Belebele por idioma) confirma | falta, opcional |
 | M7 | Especialización y fractal | `ruteo.fractal` (familia/idioma/documento), exceso sobre nulo multinomial | hecho (fase 2b en adelante) |
 | M8 | Costo | parámetros entrenables, VRAM, segundos por paso, unidades de Colab | parcial |
@@ -60,10 +60,10 @@ Los tickets del mapa (`map.md`) guardan las decisiones; este documento junta los
 | ID | Requisito | Medida o test | Aceptación | Estado |
 |---|---|---|---|---|
 | R1 | Sin colapso del enrutador | `ruteo.entropia_uso`, `ruteo.hojas_muertas` | hojas muertas ≤ 25 % por capa | hecho (medida); regla de corte en el piloto 8 |
-| R2 | Compuertas balanceadas | sesgo por compuerta; test `test_gate_balancing_pushes_a_lopsided_gate_toward_both_daughters` | ninguna compuerta > 95 % a una hija en dos revisiones seguidas | hecho (mecanismo); falta registrar el reparto por revisión |
+| R2 | Compuertas balanceadas | sesgo por compuerta (test); `ruteo.forma.compuerta_reparto_max` al final | ninguna compuerta > 95 % a una hija | hecho; regla de corte del piloto 8 |
 | R3 | Sin inferencia dispar | `ruteo.train_vs_eval`, `ruteo.bf16_vs_fp32` | ≥ 0,99 | hecho |
 | R4 | Deriva del ruteo de lo viejo medida | `ruteo.deriva` (Jaccard top-k al cerrar el dominio contra el final) | se reporta; la consolidación sin deriva baja es sospechosa | hecho |
-| R5 | El balanceo no aleja tokens de los expertos congelados | uso de los congelados en los dominios viejos, al cerrar y al final | la caída de uso < 20 % | **falta** |
+| R5 | El balanceo no aleja tokens de los expertos congelados | `ruteo.uso_congelados`: parte de los tokens de cada dominio viejo que va a congelados, al cerrarlo y al final | la caída de uso < 20 % | hecho (54f1f51) |
 | R6 | Árbol sin mitosis = Granite | test `test_without_mitosis_the_tree_routes_like_granite` | logits iguales | hecho |
 | R7 | Mitosis sin cambio de salida | test `test_mitosis_and_nested_mitosis_keep_the_output...` | logits iguales | hecho |
 
@@ -73,7 +73,7 @@ Los tickets del mapa (`map.md`) guardan las decisiones; este documento junta los
 |---|---|---|---|
 | O1 | Filas congeladas no se mueven (gradiente y momentos en cero, sin weight decay) | `test_training_moves_only_the_low_rank_delta_and_the_gates`, tests de consolidación | hecho |
 | O2 | Deltas nacen en cero (U = 0) | test de mitosis | hecho |
-| O3 | lr de los deltas calibrado | ver V8 | **falta** |
+| O3 | lr de los deltas calibrado | ver V8 | barrido en el piloto 8 |
 | O4 | Actualizaciones en fp32, multiplicación en bf16 | `_Bf16Weights` | hecho |
 | O5 | Recalentamiento del lr por dominio y al retomar | `run2` | hecho |
 | O6 | Retome exacto de la estructura | `test_resume_mid_domain...[arbol+consolidacion]` | hecho |
@@ -92,7 +92,7 @@ Los tickets del mapa (`map.md`) guardan las decisiones; este documento junta los
 |---|---|---|
 | F1 | Definición operativa: autosimilitud por niveles de la jerarquía de los datos, contra un nulo multinomial | hecho (`expert_tree.fractal`) |
 | F2 | Nivel documento en el árbol natural (inferencia, ~2 unidades) | falta |
-| F3 | Forma del árbol: profundidad de las hojas, factor de ramificación, mitosis por nivel | **falta (agregar al reporte)** |
+| F3 | Forma del árbol: hojas por profundidad y reparto máximo de compuerta | hecho (`ruteo.forma`, 54f1f51) |
 | F4 | Árbol natural con estonio y DeepSeek-V2-Lite (descarga a CPU) | falta |
 | F5 | Árbol aprendido por gradiente (candidato 3) | falta, después del piloto 8 |
 | F6 | Árbol natural como punto de partida (principio 1 de la síntesis) | falta: hoy las raíces son los 32 expertos sin agrupar |
@@ -127,7 +127,7 @@ Los tickets del mapa (`map.md`) guardan las decisiones; este documento junta los
 | I3 | A lo sumo 2 sesiones de Colab a la vez | hecho (lanzadores) |
 | I4 | Presupuesto antes de cada lote (saldo 207 unidades el 2026-10-22) | parcial |
 | I5 | El reporte de ruteo nunca tira una corrida | hecho (`try`, error en el resultado) |
-| I6 | Código de cada corrida identificable | parcial: el zip no guarda el commit; **agregar el hash al resultado** |
+| I6 | Código de cada corrida identificable | hecho: `colab/build_zip.sh` arma el zip desde HEAD con `COMMIT`; `result.json` guarda `commit` |
 
 ## P. Paper
 
@@ -135,10 +135,23 @@ Los tickets del mapa (`map.md`) guardan las decisiones; este documento junta los
 - Figuras: frontera estabilidad-plasticidad (M4), árbol natural con niveles, autosimilitud por brazo.
 - Los resultados negativos (H1, H2) entran con el mismo detalle que los positivos.
 
+## Presupuesto (saldo 203 unidades el 2026-10-22; ~5,7 unidades por corrida completa)
+
+| Bloque | Corridas | Unidades | Estado |
+|---|---|---|---|
+| Fase 2, semilla 2 restante | 4 | ~23 | en curso |
+| Piloto 8 (barrido V8, control V1, reglas de corte) | 6 cortas | ~3 | en cola (mfmoe-etapac) |
+| Etapa A, semillas 0-2 | 6 | ~34 | en cola (fase2b) |
+| Etapa C: árbol, árbol al azar, control de bajo rango, semillas 0-2 | 9 | ~51 | después del piloto 8 |
+| V3: semillas 3 y 4 de control, division+consolidacion_uso, control+consolidacion_uso y árbol | 8 | ~46 | después de la etapa C |
+| V4: órdenes f2o1 y f2o2 del par que decida el paper, 1 semilla cada uno | 4 | ~23 | si queda saldo |
+
+Total ~180 unidades: entra justo en el saldo. Un piloto que falla libera las 51 de la etapa C.
+
 ## Camino crítico
 
 1. Cerrar la semilla 2 de la fase 2 y escribir §4.12.
 2. Leer el piloto 8 contra las reglas de corte.
-3. Hacer V1, V8, I6 y F3 antes de las 3 semillas del árbol.
+3. V1, V2, V4 (mecanismo), V5, V8 (mecanismo), V9, I6, R5, F3 y M5 (medida): hechos el 2026-10-22 (mf-moe 54f1f51).
 4. Correr la etapa A y la etapa C; decidir H5 a H9.
 5. Hacer V4 (órdenes) y V5 (Holm) solo sobre los brazos que ganen.
