@@ -51,6 +51,7 @@ no. El primer hito es una spec cerrada y lista para correr; después se construy
 - Corridas: orden, reintentos y cómo escribe cada VM en Google Drive (hoy `colab drivemount` pide login interactivo por VM).
 - [MoE fractal jerárquico](issues/13-fractal-jerarquico.md) — abierto: prototipo con router en árbol y mitosis con partición, con tests; falta elegir datos (aritmética o idiomas emparentados) y correr. Retoma el pedido del 2026-10-14 (micro-router jerárquico por padre).
 - [Fractal bien hecho](issues/14-fractal-bien-hecho.md) — abierto: etapa A en la cola (consolidación sin división, por uso y al azar, 3 semillas); etapas B (atención lenta) y C (árbol desde el árbol natural, mitosis guiada por datos, fusión solo aceptada) en spec.
+- [Spec del MoE fractal](spec-moe-fractal.md) — requisitos con ID, medida, aceptación y estado (hipótesis H1-H9, validez, medidas, ruteo, optimización, olvido, fractal, literatura, infraestructura); un brazo entra a Colab solo con sus requisitos obligatorios hechos.
 - Experimento aparte (pedido del usuario, 2026-10-14): aprender las reglas de división y fusión por búsqueda de orden cero (idea tomada de DUST, qlabs.sh/research/dust), no el entrenamiento de los pesos; va después de la fase 1.
 - Medida secundaria: si la huella topológica (JSD de uso de expertos) cambia durante el aprendizaje continuo.
 - Escritura: cómo entra el resultado al paper y qué figuras lo cuentan.
