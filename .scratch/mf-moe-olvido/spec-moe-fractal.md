@@ -27,7 +27,7 @@ Los tickets del mapa (`map.md`) guardan las decisiones; este documento junta los
 | H8 | El árbol se vuelve más autosimilar que el plano | `ruteo.fractal.autosimilitud` del árbol > la del plano | piloto 8 en cola |
 | H9 | La duda elige dónde abrir rama mejor que el azar | `arbol+consolidacion` < `arbol_azar+consolidacion` | depende del piloto 8 |
 | H10 | La recursión (lo fractal) suma algo sobre un árbol de un solo nivel | `arbol+consolidacion` < `arbol_un_nivel+consolidacion` (las hijas no pueden volver a dividirse), con la misma cantidad de mitosis | brazo `arbol_un_nivel+consolidacion` hecho (mf-moe 26c002b); 3 semillas en la etapa C (decisión del usuario 2026-10-22: reemplaza a V4) |
-| H11 | Los territorios de expertos son autosimilares | `territorios`: el perfil de escalas se repite en los niveles 1, 2, 4, 8 y en los expertos solos, y se aparta del nulo gaussiano | corre en la VM del piloto 8 (Granite, OLMoE) |
+| H11 | Los territorios de expertos son autosimilares | `territorios`: el perfil de escalas se repite en los niveles 1, 2, 4, 8 y en los expertos solos, y se aparta del nulo gaussiano | primera corrida: dimensión ~13 (Granite) y ~20 (OLMoE), mitad del nulo gaussiano, igual en cada nivel; sin decidir: falta el nulo de partición al azar (agregado en mf-moe f43f3ab) |
 
 ### Cómo se lee el conjunto (eficiencia de buscar una arquitectura fractal)
 
@@ -77,7 +77,7 @@ paso (`segundos_por_paso`), con la pérdida aprendida dentro de 0,02 nats del co
 | R2 | Compuertas balanceadas | sesgo por compuerta (test); `ruteo.forma.compuerta_reparto_max` al final | ninguna compuerta > 95 % a una hija | hecho; regla de corte del piloto 8 |
 | R3 | Sin inferencia dispar | `ruteo.train_vs_eval`, `ruteo.bf16_vs_fp32` | ≥ 0,99 | hecho |
 | R4 | Deriva del ruteo de lo viejo medida | `ruteo.deriva` (Jaccard top-k al cerrar el dominio contra el final) | se reporta; la consolidación sin deriva baja es sospechosa | hecho |
-| R5 | El balanceo no aleja tokens de los expertos congelados | `ruteo.uso_congelados`: parte de los tokens de cada dominio viejo que va a congelados, al cerrarlo y al final | la caída de uso < 20 % | hecho (54f1f51) |
+| R5 | El balanceo no aleja tokens de los expertos congelados | `ruteo.uso_congelados`: parte de los tokens de cada dominio viejo que va a congelados, al cerrarlo y al final | la caída de uso < 20 % | hecho (54f1f51); piloto 8: −19 % en los controles, al límite |
 | R6 | Árbol sin mitosis = Granite | test `test_without_mitosis_the_tree_routes_like_granite` | logits iguales | hecho |
 | R7 | Mitosis sin cambio de salida | test `test_mitosis_and_nested_mitosis_keep_the_output...` | logits iguales | hecho |
 
