@@ -58,3 +58,14 @@ consolidación, o aprende cada idioma nuevo mejor con el mismo olvido.
    (es la última prueba de la idea fractal) o se cierra la fase 2 con ese resultado?
 
 ## Comments
+- 2026-10-22 (usuario): si dividir no es la solución, ¿otro mecanismo podría "evolucionar" un fractal?
+  Candidatos anotados (sin decidir; dependen de la etapa A):
+  1. Consolidación recursiva: el experto consolidado queda congelado y aprende lo nuevo con hijos chicos
+     adentro (adaptadores de bajo rango), que a su vez se consolidan. El fractal está en la protección.
+  2. Asignación a cualquier profundidad (proceso del restaurante chino anidado): un dato nuevo baja por el
+     árbol y abre rama donde deja de encajar. El árbol crece con los datos, no con un calendario.
+  3. Árbol aprendido por gradiente con un prior jerárquico (árboles de decisión suaves); el ticket 13 ya
+     muestra que los MoE preentrenados forman un árbol implícito sin ayuda.
+  4. Búsqueda de orden cero sobre las reglas (idea DUST del 2026-10-14): evolucionar la regla, no los pesos.
+  Requisito previo para cualquiera: una medida de "fractal" (misma estadística de ramificación y de
+  especialización en cada nivel del árbol); sin esa medida no hay predicción que falsar.
