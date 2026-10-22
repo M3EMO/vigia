@@ -18,9 +18,9 @@ Los tickets del mapa (`map.md`) guardan las decisiones; este documento junta los
 | ID | Hipótesis | Predicción medible | Estado del dato |
 |---|---|---|---|
 | H1 | Dividir expertos (MoE plano) olvida menos que un MoE fijo con repetición | olvido medio de `division` < `control`, IC 95 % pareado sobre 0 | refutada: empate con 3 pares (+0,018, IC [−0,005; +0,051]) |
-| H2 | Fusionar expertos ayuda | `division+fusion_alineada` < `division` | refutada en fase 1 y fase 2 (empeora) |
-| H3 | La duda elige mejor qué dividir que el azar | `division+padre_congelado` < `azar+padre_congelado` | a favor, chico (+0,033 con 2 pares); falta la semilla 2 |
-| H4 | Proteger lo usado reduce el olvido | `division+consolidacion_uso` < `control` | a favor (+0,164 con 2 pares) |
+| H2 | Fusionar expertos ayuda | `division+fusion_alineada` < `division` | refutada en fase 1 y fase 2: −0,078, peor en las 3 semillas, p 0,042 (Holm 0,21) |
+| H3 | La duda elige mejor qué dividir que el azar | `division+padre_congelado` < `azar+padre_congelado` | a favor pero no significativo: +0,026 en las 3 semillas, p 0,13, Holm 0,53 |
+| H4 | Proteger lo usado reduce el olvido | `division+consolidacion_uso` < `control` | confirmada: +0,169 [0,145; 0,182], p 0,005, Holm 0,029; aprende 0,025 peor (p 0,008) |
 | H5 | La división aporta algo sobre la consolidación | `division+consolidacion_uso` < `control+consolidacion_uso` | en cola (etapa A) |
 | H6 | Elegir por uso importa | `control+consolidacion_uso` < `control+consolidacion_azar` | en cola (etapa A) |
 | H7 | El árbol fractal olvida menos, o aprende mejor con el mismo olvido, que el plano con la misma consolidación | `arbol+consolidacion` contra `control+consolidacion_uso` | piloto 8 en cola |
