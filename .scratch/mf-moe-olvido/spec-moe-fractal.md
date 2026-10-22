@@ -91,11 +91,12 @@ Los tickets del mapa (`map.md`) guardan las decisiones; este documento junta los
 | ID | Requisito | Estado |
 |---|---|---|
 | F1 | Definición operativa: autosimilitud por niveles de la jerarquía de los datos, contra un nulo multinomial | hecho (`expert_tree.fractal`) |
-| F2 | Nivel documento en el árbol natural (inferencia, ~2 unidades) | falta |
+| F2 | Nivel documento en el árbol natural | código hecho (758e2d6); corre en la VM del piloto 8 |
 | F3 | Forma del árbol: hojas por profundidad y reparto máximo de compuerta | hecho (`ruteo.forma`, 54f1f51) |
 | F4 | Árbol natural con estonio y DeepSeek-V2-Lite (descarga a CPU) | falta |
 | F5 | Árbol aprendido por gradiente (candidato 3) | falta, después del piloto 8 |
 | F6 | Árbol natural como punto de partida (principio 1 de la síntesis) | falta: hoy las raíces son los 32 expertos sin agrupar |
+| F7 | La figura de cada experto: `territory_shape` mide la nube de estados que el router le manda (dimensión intrínseca, de correlación y lineal, perfil de escalas, nulo gaussiano). Autosimilitud de territorios: el mismo perfil en cada nivel del dendrograma de expertos | medida hecha (mf-moe 758e2d6, probada con plano, Sierpinski y gaussiana); corre sobre Granite y OLMoE en la VM del piloto 8 |
 
 ## C. Mecanismos (en orden)
 
