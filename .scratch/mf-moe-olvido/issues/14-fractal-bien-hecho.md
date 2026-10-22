@@ -181,3 +181,4 @@ Brazos y pares:
   - No se compara la pérdida con los controles del piloto 8: crecieron con clones no silenciosos (L general inicial
     2,40 contra 2,14). La comparación justa es la de la etapa C, con la configuración PRODUCTION.
   - Decisión: la etapa C entra a la cola fase2b (12 corridas, mf-moe 5b1b2f6, zip f43f3ab).
+- 2026-10-22, etapa A, control+consolidacion_azar s0: olvido 0,625 (control 0,721; division+consolidacion_uso 0,539). Congelar al azar la misma cantidad también ayuda (−13 %), menos que por uso. Ruteo: deriva top-8 0,65-0,69; tokens viejos a congelados ~42-46 %, estable. control+consolidacion_uso s0 perdió su VM a las 19:02 UTC tras 1,5 h sin log (la PC se durmió con la tapa o a mano: systemd-inhibit ya cubre el sueño por inactividad); retoma desde 2:0.
