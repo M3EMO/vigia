@@ -26,6 +26,20 @@ Los tickets del mapa (`map.md`) guardan las decisiones; este documento junta los
 | H7 | El árbol fractal olvida menos, o aprende mejor con el mismo olvido, que el plano con la misma consolidación | `arbol+consolidacion` contra `control+consolidacion_uso` | piloto 8 en cola |
 | H8 | El árbol se vuelve más autosimilar que el plano | `ruteo.fractal.autosimilitud` del árbol > la del plano | piloto 8 en cola |
 | H9 | La duda elige dónde abrir rama mejor que el azar | `arbol+consolidacion` < `arbol_azar+consolidacion` | depende del piloto 8 |
+| H10 | La recursión (lo fractal) suma algo sobre un árbol de un solo nivel | `arbol+consolidacion` < `arbol_un_nivel+consolidacion` (las hijas no pueden volver a dividirse), con la misma cantidad de mitosis | propuesta (2026-10-22), sin presupuesto asignado |
+| H11 | Los territorios de expertos son autosimilares | `territorios`: el perfil de escalas se repite en los niveles 1, 2, 4, 8 y en los expertos solos, y se aparta del nulo gaussiano | corre en la VM del piloto 8 (Granite, OLMoE) |
+
+### Cómo se lee el conjunto (eficiencia de buscar una arquitectura fractal)
+
+Eficiencia = olvido evitado por parámetro nuevo entrenable (`parametros_entrenables_expertos`) y por segundo de
+paso (`segundos_por_paso`), con la pérdida aprendida dentro de 0,02 nats del control.
+
+| H11 (¿hay fractal en los datos?) | H7 y H10 (¿construirlo ayuda?) | Conclusión |
+|---|---|---|
+| sí | sí | la arquitectura fractal es eficiente: copia una estructura que existe y la protege con hijos baratos |
+| sí | no | el fractal describe al modelo pero no sirve como regla de diseño: el MoE plano ya lo aprende solo |
+| no | sí | la ventaja viene de otra cosa (proteger, hijos de bajo rango), no de la autosimilitud |
+| no | no | la idea fractal pierde su base; queda la consolidación como resultado |
 
 ## V. Validez del experimento
 
