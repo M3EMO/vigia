@@ -198,3 +198,15 @@ Brazos y pares:
   las corridas escribían en mfmoe:mf-moe/fase2/ (la clave del checkpoint evitó cargar uno ajeno). Arreglado (vigia
   81b798a). El checkpoint 2:0 de control_bajo_rango s0, cortado a las 16:27 por un corte de cola mío, quedó
   rescatado en mfmoe:mf-moe/rescate/ y vuelve a su carpeta cuando la VM de arbol_un_nivel s0 purgue la carpeta común.
+- 2026-10-23, T4 ARREGLADO (mf-moe 48056ac; pregunta del usuario: "¿no debería arreglarse?"). Dos causas:
+  1. Crecimiento en cadena: la duda media elige siempre a la hija nueva, porque la compuerta le manda los tokens
+     dudosos por construcción. Cada mitosis parte su tráfico a la mitad: hojas profundas casi sin tokens (muertas).
+     Arreglo: el árbol elige la hoja con más duda total (suma sobre sus tokens), así divide donde hay más trabajo
+     dudoso; la recursión aparece cuando una hija junta más duda que las raíces. Test con una hoja chica y dudosa.
+  2. Compuerta saturada: el sesgo de balanceo de la compuerta está acotado a ±1 (arreglo del NaN), y con p = 0 o 1
+     exactos no alcanza para dar vuelta la elección. Arreglo: logits de la compuerta acotados a ±4 (p ≥ 3e-4); se
+     conserva el signo, así la mitosis no cambia la salida. Test con una compuerta saturada.
+  - arbol s0 (versión con cadenas) pasa a `.cache/runs/fase2_obsoleto/`; arbol_un_nivel s0 (cortado a mitad) se
+    repite con el código nuevo. Las otras corridas del árbol todavía no habían corrido.
+  - Saldo: 96,5 unidades. Quedan ~13 corridas (~75 unidades): entra, con poco margen. Si falta, arbol_azar (H9)
+    queda para el final.

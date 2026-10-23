@@ -162,10 +162,10 @@ paso (`segundos_por_paso`), con la pérdida aprendida dentro de 0,02 nats del co
 
 | ID | Pieza | Riesgo | Cómo se verifica |
 |---|---|---|---|
-| T1 | Drive desde la VM (`drive_sync`, `phase2_vm.py`, runner) | rclone de apt viejo, apt sin red, token vencido | `runner.log` dice "checkpoint en Drive" en un relanzo; `fase2.log` dice "checkpoint ... desde Drive"; `rclone lsf` muestra la carpeta de la corrida |
+| T1 | Drive desde la VM (`drive_sync`, `phase2_vm.py`, runner) | rclone de apt viejo, apt sin red, token vencido; bug encontrado y arreglado: carpeta común por `$5` (vigia 81b798a) | `runner.log` dice "checkpoint en Drive" en un relanzo; `fase2.log` dice "checkpoint ... desde Drive"; `rclone lsf` muestra la carpeta de la corrida |
 | T2 | `arbol_un_nivel+consolidacion` (H10) | solo probado en CPU | `ruteo.forma`: ninguna hoja por debajo de la profundidad 1 |
 | T3 | `arbol_azar+consolidacion` (H9) | solo probado en CPU | sin NaN y con las reglas de corte del piloto 8b |
-| T4 | Árbol con la configuración PRODUCTION (48 hojas, 4 idiomas, clones silenciosos) | el piloto 8b usó 2 idiomas y otra configuración | reglas de corte sobre el `ruteo` de cada corrida |
+| T4 | Árbol con la configuración PRODUCTION (48 hojas, 4 idiomas, clones silenciosos) | el piloto 8b usó 2 idiomas y otra configuración | arbol s0 rompió R1 y R2 (cadenas de 11 niveles, 31 % de hojas muertas, compuerta al 100 %); arreglado en mf-moe 48056ac (duda total y compuertas acotadas); se verifica otra vez en la nueva arbol s0 |
 | T5 | Territorios con nulo de partición (H11) | código probado solo en CPU | `territorios` trae `extension_azar` y `correlacion_azar` |
 
 ## P. Paper
