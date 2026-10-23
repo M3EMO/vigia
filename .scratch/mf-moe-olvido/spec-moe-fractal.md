@@ -21,8 +21,8 @@ Los tickets del mapa (`map.md`) guardan las decisiones; este documento junta los
 | H2 | Fusionar expertos ayuda | `division+fusion_alineada` < `division` | refutada en fase 1 y fase 2: −0,078, peor en las 3 semillas, p 0,042 (Holm 0,21) |
 | H3 | La duda elige mejor qué dividir que el azar | `division+padre_congelado` < `azar+padre_congelado` | a favor pero no significativo: +0,026 en las 3 semillas, p 0,13, Holm 0,53 |
 | H4 | Proteger lo usado reduce el olvido | `division+consolidacion_uso` < `control` | confirmada: +0,169 [0,145; 0,182], p 0,005, Holm 0,029; aprende 0,025 peor (p 0,008) |
-| H5 | La división aporta algo sobre la consolidación | `division+consolidacion_uso` < `control+consolidacion_uso` | en curso (etapa A): 0 de 3 corridas; s0 y s1 se reintentan tras dos retiros de VM |
-| H6 | Elegir por uso importa | `control+consolidacion_uso` < `control+consolidacion_azar` | en curso (etapa A): azar s0 = 0,625 (control 0,721) |
+| H5 | La división aporta algo sobre la consolidación | `division+consolidacion_uso` < `control+consolidacion_uso` | en curso (etapa A): s2 = 0,508 contra 0,547 de division+consolidacion_uso (sin división olvida igual o menos); s0 y s1 corren de nuevo |
+| H6 | Elegir por uso importa | `control+consolidacion_uso` < `control+consolidacion_azar` | en curso (etapa A): azar 0,625 / 0,636 / 0,583 (control 0,721 / 0,741 / 0,725); uso s2 0,508 contra azar s2 0,583 |
 | H7 | El árbol fractal olvida menos, o aprende mejor con el mismo olvido, que el plano con la misma consolidación | `arbol+consolidacion` contra `control+consolidacion_uso` | piloto 8 en cola |
 | H8 | El árbol se vuelve más autosimilar que el plano | `ruteo.fractal.autosimilitud` del árbol > la del plano | en cola (etapa C, fase2b) |
 | H9 | La duda elige dónde abrir rama mejor que el azar | `arbol+consolidacion` < `arbol_azar+consolidacion` | en cola (etapa C); el piloto 8b pasó |
@@ -157,12 +157,23 @@ paso (`segundos_por_paso`), con la pérdida aprendida dentro de 0,02 nats del co
 | I4 | Presupuesto antes de cada lote (saldo 207 unidades el 2026-10-22) | parcial |
 | I5 | El reporte de ruteo nunca tira una corrida | hecho (`try`, error en el resultado) |
 | I6 | Código de cada corrida identificable | hecho: `colab/build_zip.sh` arma el zip desde HEAD con `COMMIT`; `result.json` guarda `commit` |
+| I7 | Checkpoints que sobreviven al retiro de la VM | hecho: copia a Drive desde la VM (rclone, scope drive.file, autorizado por el usuario 2026-10-23); la PC ya no sube 3,5 GB si Drive tiene uno igual o más nuevo |
+| I8 | Un job trabado no queda horas gastando | hecho: el runner relanza si el log remoto no cambia en 75 min (vigia 69b02f9) |
+| I9 | Reintento de corridas fallidas antes del resto de la lista | hecho a mano (`.cache/jobs/reintentar.sh`): corta la cola al terminar su corrida y la cola relee la lista desde arriba |
+
+## Registro de cambios de la spec
+
+- 2026-10-22: creación; huecos V1, V2, V4, V5, V8, V9, I6, R5, F3, M5 resueltos; H10 reemplaza a V4 (usuario).
+- 2026-10-22: F7 (figura del territorio) y H11; tabla de lectura de la eficiencia fractal.
+- 2026-10-23: fase 2 completa (H1-H4); primero se cierra el circuito (usuario); sistema candidato; sección T.
+- 2026-10-23: T4 roto en PRODUCTION y arreglado (duda total, compuertas acotadas); T1 con dos fallas arregladas;
+  I7-I9 (Drive, detector de cuelgues, reintentos); presupuesto rehecho.
 
 ## T. Lo que nunca corrió en GPU (se verifica en su primera corrida real)
 
 | ID | Pieza | Riesgo | Cómo se verifica |
 |---|---|---|---|
-| T1 | Drive desde la VM (`drive_sync`, `phase2_vm.py`, runner) | rclone de apt viejo, apt sin red, token vencido; bug encontrado y arreglado: carpeta común por `$5` (vigia 81b798a) | `runner.log` dice "checkpoint en Drive" en un relanzo; `fase2.log` dice "checkpoint ... desde Drive"; `rclone lsf` muestra la carpeta de la corrida |
+| T1 | Drive desde la VM (`drive_sync`, `phase2_vm.py`, runner) | dos fallas encontradas y arregladas: carpeta común por `$5` (vigia 81b798a) y un cuelgue de 3,5 h en el bloque de Drive antes de entrenar (timeouts, mf-moe 24f64ca). Primera retoma real desde Drive: control_bajo_rango s0 (2:0) | `runner.log` dice "checkpoint en Drive" en un relanzo; `fase2.log` dice "checkpoint ... desde Drive"; `rclone lsf` muestra la carpeta de la corrida |
 | T2 | `arbol_un_nivel+consolidacion` (H10) | solo probado en CPU | `ruteo.forma`: ninguna hoja por debajo de la profundidad 1 |
 | T3 | `arbol_azar+consolidacion` (H9) | solo probado en CPU | sin NaN y con las reglas de corte del piloto 8b |
 | T4 | Árbol con la configuración PRODUCTION (48 hojas, 4 idiomas, clones silenciosos) | el piloto 8b usó 2 idiomas y otra configuración | arbol s0 rompió R1 y R2 (cadenas de 11 niveles, 31 % de hojas muertas, compuerta al 100 %); arreglado en mf-moe 48056ac (duda total y compuertas acotadas); se verifica otra vez en la nueva arbol s0 |
@@ -186,6 +197,12 @@ paso (`segundos_por_paso`), con la pérdida aprendida dentro de 0,02 nats del co
 | V4: órdenes f2o1 y f2o2 | 0 | 0 | postergado (H10 tomó su lugar) |
 
 Total ~174 unidades: entra en el saldo de 203. Un piloto que falla libera las 68 de la etapa C.
+
+Actualización 2026-10-23 20:40 UTC: saldo 94 unidades. Las pérdidas de la noche y la tarde (retiros de VM,
+subida a ~70 KB/s, un cuelgue de 3,5 h, tapa cerrada cuatro veces, arbol s0 repetida por el arreglo de T4)
+costaron ~50 unidades. Quedan ~13 corridas (~75 unidades): consolidación por uso s0 y s1; control de bajo rango
+s0 (desde 2:0), s1 y s2; árbol, árbol de un nivel y árbol al azar, semillas 0-2. Orden de corte si falta saldo:
+primero arbol_azar (H9), después V3 entera.
 
 Decisión del usuario (2026-10-23): primero se cierra el circuito (etapa A, etapa C y H11, ~98 unidades); la
 robustez de V3 (semillas 3 y 4) se decide después según el saldo. Si el árbol no gana, V3 se concentra en la
