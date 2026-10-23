@@ -183,3 +183,18 @@ Brazos y pares:
   - Decisión: la etapa C entra a la cola fase2b (12 corridas, mf-moe 5b1b2f6, zip f43f3ab).
 - 2026-10-22, etapa A, control+consolidacion_azar s0: olvido 0,625 (control 0,721; division+consolidacion_uso 0,539). Congelar al azar la misma cantidad también ayuda (−13 %), menos que por uso. Ruteo: deriva top-8 0,65-0,69; tokens viejos a congelados ~42-46 %, estable. control+consolidacion_uso s0 perdió su VM a las 19:02 UTC tras 1,5 h sin log (la PC se durmió con la tapa o a mano: systemd-inhibit ya cubre el sueño por inactividad); retoma desde 2:0.
 - 2026-10-23, Drive para checkpoints (usuario autorizó; rclone, remoto mfmoe con scope drive.file en ~/.config/rclone/mfmoe.conf). Ida y vuelta probada desde la PC. El job copia cada checkpoint a mfmoe:mf-moe/fase2/<corrida> desde la VM y lo borra al terminar; el runner no sube el local si Drive tiene uno igual o más nuevo (mf-moe 23b726e, vigia 779b389). Rige para las corridas que arrancan desde ahora. Riesgo: rclone avisa que su client_id compartido de Google se retira durante 2026; si deja de andar, todo vuelve al camino viejo (bajada a la PC).
+- 2026-10-23, la noche: dos retiros de VM sin checkpoint local (Colab sin capacidad y una subida a ~70 KB/s) hicieron
+  fallar uso s0 y s1; se reinician de cero. Resultados nuevos (olvido medio):
+  - control+consolidacion_uso s2: 0,508 (division+consolidacion_uso s2: 0,547; azar s2: 0,583; control s2: 0,725).
+    Primera señal de H5: consolidar sin dividir olvida igual o menos. Falta s0 y s1.
+  - control+consolidacion_azar: 0,625 / 0,636 / 0,583 (control 0,721 / 0,741 / 0,725): −13 a −20 %.
+  - arbol+consolidacion s0 (T4, primera corrida con PRODUCTION): olvido 0,511 (division+consolidacion s0 0,539),
+    aprendido 2,445 (peor: 2,429), general 2,238 (mejor: 2,285). Sin NaN, pero viola R1 y R2: hasta 31 % de hojas
+    muertas en una capa y una compuerta al 100 %. Crece en cadena hasta 11 niveles. El ruteo viejo ya no queda
+    protegido como en el piloto: los tokens del finés a congelados bajan de 76 % a 61 % (−19 %).
+  - Decisión: la etapa C sigue. Las reglas de corte decidían el piloto; en las corridas largas se informan. H7 mide
+    "el árbol tal como está construido", con la violación declarada.
+- 2026-10-23, T1 (Drive) encontró un bug: el runner armaba la carpeta con $5 después de `shift 5`, así que todas
+  las corridas escribían en mfmoe:mf-moe/fase2/ (la clave del checkpoint evitó cargar uno ajeno). Arreglado (vigia
+  81b798a). El checkpoint 2:0 de control_bajo_rango s0, cortado a las 16:27 por un corte de cola mío, quedó
+  rescatado en mfmoe:mf-moe/rescate/ y vuelve a su carpeta cuando la VM de arbol_un_nivel s0 purgue la carpeta común.
