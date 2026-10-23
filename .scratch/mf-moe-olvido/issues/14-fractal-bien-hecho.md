@@ -210,3 +210,4 @@ Brazos y pares:
     repite con el código nuevo. Las otras corridas del árbol todavía no habían corrido.
   - Saldo: 96,5 unidades. Quedan ~13 corridas (~75 unidades): entra, con poco margen. Si falta, arbol_azar (H9)
     queda para el final.
+- 2026-10-23, etapa A: control+consolidacion_uso s1 = 0,507 (finés 0,618, turco 0,554, indonesio 0,349); division+consolidacion_uso s1 0,596; azar s1 0,636; control s1 0,741. Con s1 y s2: sin división olvida menos que con división (0,507/0,508 contra 0,596/0,547) y el uso le gana al azar (contra 0,636/0,583). Aprendido igual (2,423/2,419 contra 2,423/2,426). Ruteo estable: tokens del finés a congelados 60 % → 62 %. Falta s0 (corre desde 20:34 UTC).
