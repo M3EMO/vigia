@@ -163,6 +163,10 @@ paso (`segundos_por_paso`), con la pérdida aprendida dentro de 0,02 nats del co
 
 Total ~174 unidades: entra en el saldo de 203. Un piloto que falla libera las 68 de la etapa C.
 
+Decisión del usuario (2026-10-23): primero se cierra el circuito (etapa A, etapa C y H11, ~98 unidades); la
+robustez de V3 (semillas 3 y 4) se decide después según el saldo. Si el árbol no gana, V3 se concentra en la
+consolidación. H11 corre sola al terminar la cola fase2b (unidad `mfmoe-h11`, zip caf49a8).
+
 ## Camino crítico
 
 1. Cerrar la semilla 2 de la fase 2 y escribir §4.12.
