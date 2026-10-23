@@ -8,6 +8,10 @@ EARLY=${EARLY:-}  # regex: archivos que se bajan apenas existen (p. ej. '\.safet
 # Ruta remota de un checkpoint para retomar (p. ej. /content/ckpt.pt): se baja cuando cambia su marcador
 # `<ruta>.step` y se sube a cada VM nueva antes de lanzar el job.
 RESUME=${RESUME:-}; CK=$D/$(basename "${RESUME:-ckpt}")
+# Con DRIVE_CONF (rclone.conf local, remoto con scope drive.file) y DRIVE_ROOT (p. ej. mfmoe:mf-moe/fase2), el job
+# guarda cada checkpoint también en $DRIVE_ROOT/<carpeta local> desde la VM: sobrevive a un retiro sin esperar la
+# bajada a la PC. Al relanzar, si Drive tiene un checkpoint igual o más nuevo que el local, no se sube el local.
+DRIVE_CONF=${DRIVE_CONF:-}; DRIVE=${DRIVE_ROOT:+$DRIVE_ROOT/$(basename "$5")}
 mkdir -p $D; LOG=$D/runner.log
 log() { echo "$(date -u +%T) $*" >> $LOG; }
 # Colab rechaza subir un archivo de 100 MB o más (400 o 500; 36 MB pasa, 2026-10-16): el checkpoint va en
@@ -64,13 +68,30 @@ stop_dl() {  # corta una bajada en curso: una VM nueva no tiene esas partes y la
   [ -f $D/dl.pid ] && { pkill -P "$(cat $D/dl.pid)"; kill "$(cat $D/dl.pid)"; } 2>/dev/null
   rm -f $D/dl.pid $CK.tmp $CK.dl.*
 }
+step_ge() { [ "$(printf '%s\n%s\n' "$1" "$2" | tr : . | sort -V | tail -1)" = "$(echo "$1" | tr : .)" ]; }  # $1 >= $2
+drive_has_newer() {  # Drive tiene un checkpoint igual o más nuevo que el local
+  local r
+  [ -n "$DRIVE_CONF" ] && [ -n "$DRIVE" ] || return 1
+  r=$(timeout -k 10 60 rclone --config "$DRIVE_CONF" cat "$DRIVE/ckpt.pt.step" 2>/dev/null | tr -d '[:space:]')
+  [ -n "$r" ] && step_ge "$r" "$(tr -d '[:space:]' < $CK.step 2>/dev/null)"
+}
 start() {
   stop_dl
   [ -f $D/exec.pid ] && kill $(cat $D/exec.pid) 2>/dev/null  # nunca pkill -f: el patrón aparece en la línea de comandos del propio runner
   $C stop -s $S >/dev/null 2>&1
   $C new -s $S --gpu L4 >> $LOG 2>&1
   $C upload -s $S $ZIP /content/vigia-colab.zip >> $LOG 2>&1
-  if [ -n "$RESUME" ] && [ -s $CK ]; then upload_ckpt || { log "FALLA: no se pudo subir el checkpoint"; exit 1; }; fi
+  if [ -n "$DRIVE_CONF" ] && [ -n "$DRIVE" ]; then
+    $C upload -s $S $DRIVE_CONF /content/rclone.conf >> $LOG 2>&1
+    echo "$DRIVE" > $D/drive_dir && $C upload -s $S $D/drive_dir /content/drive_dir >> $LOG 2>&1
+  fi
+  if [ -n "$RESUME" ] && [ -s $CK ]; then
+    if drive_has_newer; then log "checkpoint en Drive: no subo el local ($(cat $CK.step 2>/dev/null))"
+    else
+      upload_ckpt || { log "FALLA: no se pudo subir el checkpoint"; exit 1; }
+      [ -s $CK.step ] && $C upload -s $S $CK.step $RESUME.step >> $LOG 2>&1  # el job compara este marcador con Drive
+    fi
+  fi
   nohup $CLI exec -s $S -f $JOB --timeout 30000 > $D/exec.log 2>&1 &
   echo $! > $D/exec.pid
   log "lanzado"
