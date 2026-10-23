@@ -41,6 +41,20 @@ paso (`segundos_por_paso`), con la pérdida aprendida dentro de 0,02 nats del co
 | no | sí | la ventaja viene de otra cosa (proteger, hijos de bajo rango), no de la autosimilitud |
 | no | no | la idea fractal pierde su base; queda la consolidación como resultado |
 
+### Sistema candidato en lugar de dividir y fusionar (2026-10-23)
+
+"Consolidar, proteger el ruteo y brotar barato". Cada pieza tiene su evidencia o su prueba:
+
+| Pieza | Evidencia hoy | La decide |
+|---|---|---|
+| Repetición de datos viejos (5 %) | base de todos los brazos | — |
+| Consolidación por uso al cerrar cada dominio | H4: −23 %, Holm 0,029 | H5 (¿sin división?), H6 (¿uso o azar?) |
+| Proteger el ruteo de lo congelado | R5: el plano pierde 19 % del tráfico viejo; el árbol, 1 % (piloto 8b) | H7 (árbol contra plano) |
+| Capacidad nueva de bajo rango, no expertos enteros | V1: aprende 0,01-0,03 peor con ~26 veces menos parámetros nuevos (piloto 8) | H7 con V1 |
+| Recursión (lo fractal) | sin datos | H10 |
+| Proteger la atención (69 % del olvido en el diagnóstico) | sin datos | etapa B, después del circuito |
+| Fusión y división por calendario | refutadas (H1, H2) | se descartan |
+
 ## V. Validez del experimento
 
 | ID | Requisito | Porqué | Medida o test | Aceptación | Estado |
