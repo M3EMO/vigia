@@ -21,11 +21,11 @@ Los tickets del mapa (`map.md`) guardan las decisiones; este documento junta los
 | H2 | Fusionar expertos ayuda | `division+fusion_alineada` < `division` | refutada en fase 1 y fase 2: −0,078, peor en las 3 semillas, p 0,042 (Holm 0,21) |
 | H3 | La duda elige mejor qué dividir que el azar | `division+padre_congelado` < `azar+padre_congelado` | a favor pero no significativo: +0,026 en las 3 semillas, p 0,13, Holm 0,53 |
 | H4 | Proteger lo usado reduce el olvido | `division+consolidacion_uso` < `control` | confirmada: +0,169 [0,145; 0,182], p 0,005, Holm 0,029; aprende 0,025 peor (p 0,008) |
-| H5 | La división aporta algo sobre la consolidación | `division+consolidacion_uso` < `control+consolidacion_uso` | en cola (etapa A) |
-| H6 | Elegir por uso importa | `control+consolidacion_uso` < `control+consolidacion_azar` | en cola (etapa A) |
+| H5 | La división aporta algo sobre la consolidación | `division+consolidacion_uso` < `control+consolidacion_uso` | en curso (etapa A): 0 de 3 corridas; s0 y s1 se reintentan tras dos retiros de VM |
+| H6 | Elegir por uso importa | `control+consolidacion_uso` < `control+consolidacion_azar` | en curso (etapa A): azar s0 = 0,625 (control 0,721) |
 | H7 | El árbol fractal olvida menos, o aprende mejor con el mismo olvido, que el plano con la misma consolidación | `arbol+consolidacion` contra `control+consolidacion_uso` | piloto 8 en cola |
-| H8 | El árbol se vuelve más autosimilar que el plano | `ruteo.fractal.autosimilitud` del árbol > la del plano | piloto 8 en cola |
-| H9 | La duda elige dónde abrir rama mejor que el azar | `arbol+consolidacion` < `arbol_azar+consolidacion` | depende del piloto 8 |
+| H8 | El árbol se vuelve más autosimilar que el plano | `ruteo.fractal.autosimilitud` del árbol > la del plano | en cola (etapa C, fase2b) |
+| H9 | La duda elige dónde abrir rama mejor que el azar | `arbol+consolidacion` < `arbol_azar+consolidacion` | en cola (etapa C); el piloto 8b pasó |
 | H10 | La recursión (lo fractal) suma algo sobre un árbol de un solo nivel | `arbol+consolidacion` < `arbol_un_nivel+consolidacion` (las hijas no pueden volver a dividirse), con la misma cantidad de mitosis | brazo `arbol_un_nivel+consolidacion` hecho (mf-moe 26c002b); 3 semillas en la etapa C (decisión del usuario 2026-10-22: reemplaza a V4) |
 | H11 | Los territorios de expertos son autosimilares | `territorios`: el perfil de escalas se repite en los niveles 1, 2, 4, 8 y en los expertos solos, y se aparta del nulo gaussiano | primera corrida: dimensión ~13 (Granite) y ~20 (OLMoE), mitad del nulo gaussiano, igual en cada nivel; sin decidir: falta el nulo de partición al azar (agregado en mf-moe f43f3ab) |
 
@@ -121,15 +121,15 @@ paso (`segundos_por_paso`), con la pérdida aprendida dentro de 0,02 nats del co
 | F1 | Definición operativa: autosimilitud por niveles de la jerarquía de los datos, contra un nulo multinomial | hecho (`expert_tree.fractal`) |
 | F2 | Nivel documento en el árbol natural | código hecho (758e2d6); corre en la VM del piloto 8 |
 | F3 | Forma del árbol: hojas por profundidad y reparto máximo de compuerta | hecho (`ruteo.forma`, 54f1f51) |
-| F4 | Árbol natural con estonio y DeepSeek-V2-Lite (descarga a CPU) | falta |
-| F5 | Árbol aprendido por gradiente (candidato 3) | falta, después del piloto 8 |
+| F4 | Árbol natural con estonio y DeepSeek-V2-Lite (descarga a CPU) | estonio hecho (piloto 8); DeepSeek no entra en la L4: postergado |
+| F5 | Árbol aprendido por gradiente (candidato 3) | falta, después del circuito |
 | F6 | Árbol natural como punto de partida (principio 1 de la síntesis) | falta: hoy las raíces son los 32 expertos sin agrupar |
 | F7 | La figura de cada experto: `territory_shape` mide la nube de estados que el router le manda (dimensión intrínseca, de correlación y lineal, perfil de escalas, nulo gaussiano). Autosimilitud de territorios: el mismo perfil en cada nivel del dendrograma de expertos | medida hecha (mf-moe 758e2d6, probada con plano, Sierpinski y gaussiana); corre sobre Granite y OLMoE en la VM del piloto 8 |
 
 ## C. Mecanismos (en orden)
 
-1. Etapa A: consolidación sin división, por uso y al azar (en cola, `fase2b.txt`).
-2. Piloto 8: árbol + consolidación, con reglas de corte (en cola, unidad `mfmoe-etapac`).
+1. Etapa A: consolidación sin división, por uso y al azar (en curso, `fase2b.txt`).
+2. Piloto 8 y 8b: árbol + consolidación, con reglas de corte (hecho: el 8 encontró el NaN de la compuerta, el 8b pasó).
 3. V1 y V8: control con los mismos parámetros y barrido del lr de los deltas (antes de las 3 semillas del árbol).
 4. Etapa C: `arbol+consolidacion` y `arbol_azar+consolidacion`, 3 semillas.
 5. Etapa B: atención lenta sobre el ganador.
@@ -158,6 +158,16 @@ paso (`segundos_por_paso`), con la pérdida aprendida dentro de 0,02 nats del co
 | I5 | El reporte de ruteo nunca tira una corrida | hecho (`try`, error en el resultado) |
 | I6 | Código de cada corrida identificable | hecho: `colab/build_zip.sh` arma el zip desde HEAD con `COMMIT`; `result.json` guarda `commit` |
 
+## T. Lo que nunca corrió en GPU (se verifica en su primera corrida real)
+
+| ID | Pieza | Riesgo | Cómo se verifica |
+|---|---|---|---|
+| T1 | Drive desde la VM (`drive_sync`, `phase2_vm.py`, runner) | rclone de apt viejo, apt sin red, token vencido | `runner.log` dice "checkpoint en Drive" en un relanzo; `fase2.log` dice "checkpoint ... desde Drive"; `rclone lsf` muestra la carpeta de la corrida |
+| T2 | `arbol_un_nivel+consolidacion` (H10) | solo probado en CPU | `ruteo.forma`: ninguna hoja por debajo de la profundidad 1 |
+| T3 | `arbol_azar+consolidacion` (H9) | solo probado en CPU | sin NaN y con las reglas de corte del piloto 8b |
+| T4 | Árbol con la configuración PRODUCTION (48 hojas, 4 idiomas, clones silenciosos) | el piloto 8b usó 2 idiomas y otra configuración | reglas de corte sobre el `ruteo` de cada corrida |
+| T5 | Territorios con nulo de partición (H11) | código probado solo en CPU | `territorios` trae `extension_azar` y `correlacion_azar` |
+
 ## P. Paper
 
 - §4.12 del informe técnico: fase 1 hecha; fase 2 con la tabla completa al cerrar las 3 semillas.
@@ -169,8 +179,8 @@ paso (`segundos_por_paso`), con la pérdida aprendida dentro de 0,02 nats del co
 | Bloque | Corridas | Unidades | Estado |
 |---|---|---|---|
 | Fase 2, semilla 2 restante | 4 | ~23 | en curso |
-| Piloto 8 (barrido V8, control V1, reglas de corte) | 6 cortas | ~3 | en cola (mfmoe-etapac) |
-| Etapa A, semillas 0-2 | 6 | ~34 | en cola (fase2b) |
+| Pilotos 8 y 8b (barrido V8, control V1, reglas de corte) | 9 cortas | ~5 | hecho |
+| Etapa A, semillas 0-2 | 6 (+3 repetidas por retiros) | ~45 | en curso |
 | Etapa C: árbol, árbol al azar, control de bajo rango y árbol de un nivel (H10), semillas 0-2 | 12 | ~68 | después del piloto 8 |
 | V3: semillas 3 y 4 de control, division+consolidacion_uso, control+consolidacion_uso y árbol | 8 | ~46 | después de la etapa C |
 | V4: órdenes f2o1 y f2o2 | 0 | 0 | postergado (H10 tomó su lugar) |
