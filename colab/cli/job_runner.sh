@@ -102,6 +102,13 @@ for i in $(seq 1 200); do
   if $C status -s $S 2>&1 | grep -q "not found"; then log "VM retirada: relanzo"; start; continue; fi
   $C download -s $S $RLOG $D/$(basename $RLOG) >/dev/null 2>&1
   log "$(tail -1 $D/$(basename $RLOG) 2>/dev/null | cut -c1-100)"
+  # Un job trabado (mf-moe uso s0, 2026-10-23: 3,5 h colgado en un paso previo al entrenamiento) no retira la VM ni
+  # corta el cliente: si el log remoto no cambia en STALL_MIN minutos, se relanza desde el último checkpoint.
+  h=$(md5sum < $D/$(basename $RLOG) 2>/dev/null)
+  if [ "$h" != "${LAST_H:-}" ]; then LAST_H=$h; LAST_T=$(date +%s)
+  elif [ $(( $(date +%s) - ${LAST_T:-$(date +%s)} )) -gt $(( ${STALL_MIN:-75} * 60 )) ]; then
+    log "sin avance en ${STALL_MIN:-75} min: relanzo"; LAST_H=; start; continue
+  fi
   if [ -n "$RESUME" ]; then
     timeout -k 30 120 $CLI download -s $S $RESUME.step $CK.step.new >/dev/null 2>&1
     # La bajada puede tardar horas: corre en segundo plano y el bucle sigue vigilando la VM y el cliente.
