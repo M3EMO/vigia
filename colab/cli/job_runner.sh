@@ -11,7 +11,7 @@ RESUME=${RESUME:-}; CK=$D/$(basename "${RESUME:-ckpt}")
 # Con DRIVE_CONF (rclone.conf local, remoto con scope drive.file) y DRIVE_ROOT (p. ej. mfmoe:mf-moe/fase2), el job
 # guarda cada checkpoint también en $DRIVE_ROOT/<carpeta local> desde la VM: sobrevive a un retiro sin esperar la
 # bajada a la PC. Al relanzar, si Drive tiene un checkpoint igual o más nuevo que el local, no se sube el local.
-DRIVE_CONF=${DRIVE_CONF:-}; DRIVE=${DRIVE_ROOT:+$DRIVE_ROOT/$(basename "$5")}
+DRIVE_CONF=${DRIVE_CONF:-}; DRIVE=${DRIVE_ROOT:+$DRIVE_ROOT/$(basename "$D")}  # $D: después de `shift 5`, $5 ya no es la carpeta
 mkdir -p $D; LOG=$D/runner.log
 log() { echo "$(date -u +%T) $*" >> $LOG; }
 # Colab rechaza subir un archivo de 100 MB o más (400 o 500; 36 MB pasa, 2026-10-16): el checkpoint va en
