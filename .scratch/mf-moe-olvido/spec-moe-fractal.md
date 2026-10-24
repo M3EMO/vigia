@@ -25,7 +25,7 @@ Los tickets del mapa (`map.md`) guardan las decisiones; este documento junta los
 | H6 | Elegir por uso importa | `control+consolidacion_uso` < `control+consolidacion_azar` | a favor en las 3 semillas (+0,110, p 0,025, Holm 0,17); el azar solo ya baja 16 % |
 | H7 | El árbol fractal olvida menos, o aprende mejor con el mismo olvido, que el plano con la misma consolidación | `arbol+consolidacion` contra `control+consolidacion_uso` | piloto 8 en cola |
 | H8 | El árbol se vuelve más autosimilar que el plano | `ruteo.fractal.autosimilitud` del árbol > la del plano | en cola (etapa C, fase2b) |
-| H9 | La duda elige dónde abrir rama mejor que el azar | `arbol+consolidacion` < `arbol_azar+consolidacion` | en cola (etapa C); el piloto 8b pasó |
+| H9 | La duda elige dónde abrir rama mejor que el azar | `arbol+consolidacion` < `arbol_azar+consolidacion` | solo s0 por saldo: duda 0,495 contra azar 0,528 (s1 y s2 en pausa, 2026-10-24) |
 | H10 | La recursión (lo fractal) suma algo sobre un árbol de un solo nivel | `arbol+consolidacion` < `arbol_un_nivel+consolidacion` (las hijas no pueden volver a dividirse), con la misma cantidad de mitosis | brazo `arbol_un_nivel+consolidacion` hecho (mf-moe 26c002b); 3 semillas en la etapa C (decisión del usuario 2026-10-22: reemplaza a V4) |
 | H11 | Los territorios de expertos son autosimilares | `territorios`: el perfil de escalas se repite en los niveles 1, 2, 4, 8 y en los expertos solos, y se aparta del nulo gaussiano | primera corrida: dimensión ~13 (Granite) y ~20 (OLMoE), mitad del nulo gaussiano, igual en cada nivel; sin decidir: falta el nulo de partición al azar (agregado en mf-moe f43f3ab) |
 
@@ -166,6 +166,7 @@ paso (`segundos_por_paso`), con la pérdida aprendida dentro de 0,02 nats del co
 - 2026-10-22: creación; huecos V1, V2, V4, V5, V8, V9, I6, R5, F3, M5 resueltos; H10 reemplaza a V4 (usuario).
 - 2026-10-22: F7 (figura del territorio) y H11; tabla de lectura de la eficiencia fractal.
 - 2026-10-23: fase 2 completa (H1-H4); primero se cierra el circuito (usuario); sistema candidato; sección T.
+- 2026-10-24: etapa A completa (H5 refutada, H6 a favor); T1 y T4 verificados; H9 recortada a s0 por saldo.
 - 2026-10-23: T4 roto en PRODUCTION y arreglado (duda total, compuertas acotadas); T1 con dos fallas arregladas;
   I7-I9 (Drive, detector de cuelgues, reintentos); presupuesto rehecho.
 
