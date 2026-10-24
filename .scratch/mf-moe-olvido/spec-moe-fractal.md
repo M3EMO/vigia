@@ -173,7 +173,7 @@ paso (`segundos_por_paso`), con la pérdida aprendida dentro de 0,02 nats del co
 
 | ID | Pieza | Riesgo | Cómo se verifica |
 |---|---|---|---|
-| T1 | Drive desde la VM (`drive_sync`, `phase2_vm.py`, runner) | dos fallas encontradas y arregladas: carpeta común por `$5` (vigia 81b798a) y un cuelgue de 3,5 h en el bloque de Drive antes de entrenar (timeouts, mf-moe 24f64ca). Primera retoma real desde Drive: control_bajo_rango s0 (2:0) | `runner.log` dice "checkpoint en Drive" en un relanzo; `fase2.log` dice "checkpoint ... desde Drive"; `rclone lsf` muestra la carpeta de la corrida |
+| T1 | Drive desde la VM (`drive_sync`, `phase2_vm.py`, runner) | dos fallas encontradas y arregladas: carpeta común por `$5` (vigia 81b798a) y un cuelgue de 3,5 h en el bloque de Drive antes de entrenar (timeouts, mf-moe 24f64ca). Primera retoma real desde Drive: control_bajo_rango s0 (2:0) | `runner.log` dice "checkpoint en Drive" en un relanzo; `fase2.log` dice "checkpoint ... desde Drive"; `rclone lsf` muestra la carpeta de la corrida Verificado 2026-10-24: uso s0 perdió la VM a las 22:20 UTC y retomó 1:0 desde Drive en 30 s, sin subir nada; control_bajo_rango s0 retomó 2:0 desde Drive. |
 | T2 | `arbol_un_nivel+consolidacion` (H10) | solo probado en CPU | `ruteo.forma`: ninguna hoja por debajo de la profundidad 1 |
 | T3 | `arbol_azar+consolidacion` (H9) | solo probado en CPU | sin NaN y con las reglas de corte del piloto 8b |
 | T4 | Árbol con la configuración PRODUCTION (48 hojas, 4 idiomas, clones silenciosos) | el piloto 8b usó 2 idiomas y otra configuración | arbol s0 rompió R1 y R2 (cadenas de 11 niveles, 31 % de hojas muertas, compuerta al 100 %); arreglado en mf-moe 48056ac (duda total y compuertas acotadas); se verifica otra vez en la nueva arbol s0 |
