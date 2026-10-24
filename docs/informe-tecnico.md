@@ -450,10 +450,31 @@ Lectura:
   que el ruido entre semillas (±0,01 en el control) puede subestimar la varianza real; con 3 pares, el IC del
   bootstrap es casi el rango de las diferencias, por eso se informa también la t con Holm.
 
-Siguiente (ticket 14 y spec del MoE fractal): ¿la consolidación necesita dividir? (consolidación sobre el control
-fijo, por uso y al azar); ¿un árbol de expertos con hijas de bajo rango, que se repite en cada nivel, suma algo
-sobre la consolidación plana? (árbol, árbol al azar, árbol de un solo nivel y control con los mismos parámetros
-nuevos); y ¿los territorios de los expertos son autosimilares?
+**Etapa A (ticket 14, 2026-10-22 a 2026-10-24): ¿la consolidación necesita dividir?** Dos brazos más, con la misma
+configuración y los mismos datos: la consolidación por uso sobre el control fijo (48 expertos desde el inicio, sin
+división) y un control que congela al azar tantos expertos nuevos como el uso, en el mismo dominio y capa.
+Holm entre las 11 preguntas:
+
+| Comparación (3 pares) | Olvido medio | Diferencia | p (Holm) |
+|---|---|---|---|
+| consolidación por uso sin división contra control | 0,505 | +0,224 [+0,216; +0,234] | 0,0005 (0,006), mejor |
+| consolidación al azar contra control | 0,615 | +0,114 [+0,096; +0,142] | 0,014 (0,12) |
+| por uso contra al azar (sin división) | | +0,110 [+0,075; +0,129] | 0,025 (0,17), las 3 semillas a favor del uso |
+| con división contra sin división (por uso) | 0,561 contra 0,505 | −0,056 [−0,089; −0,038] | 0,08 (0,40), las 3 semillas en contra de dividir |
+
+Lectura:
+- El mejor sistema plano es consolidar por uso sobre un MoE fijo: olvida 31 % menos que el control, el resultado
+  más fuerte de la fase 2. Aprende cada idioma 0,022 nats peor (p 0,011); la pérdida general mejora (2,277 contra
+  2,299).
+- Dividir no le suma nada a la consolidación: con división olvida más en las tres semillas.
+- Congelar al azar ya reduce el olvido 16 %: parte del efecto es reservar capacidad. Elegir por uso suma otro
+  15 % sobre el azar, en las tres semillas; con 3 pares no sobrevive a Holm.
+- Sin división, el ruteo viejo queda en los congelados: la parte de los tokens del finés que va a expertos
+  congelados pasa de 62 % a 63 % (semilla 0).
+
+Siguiente (ticket 14, etapa C): ¿un árbol de expertos con hijas de bajo rango, que se repite en cada nivel, suma
+algo sobre la consolidación plana? (árbol, árbol al azar, árbol de un solo nivel y control con los mismos
+parámetros nuevos); y ¿los territorios de los expertos son autosimilares?
 
 ## 5. Latencia
 

@@ -21,8 +21,8 @@ Los tickets del mapa (`map.md`) guardan las decisiones; este documento junta los
 | H2 | Fusionar expertos ayuda | `division+fusion_alineada` < `division` | refutada en fase 1 y fase 2: −0,078, peor en las 3 semillas, p 0,042 (Holm 0,21) |
 | H3 | La duda elige mejor qué dividir que el azar | `division+padre_congelado` < `azar+padre_congelado` | a favor pero no significativo: +0,026 en las 3 semillas, p 0,13, Holm 0,53 |
 | H4 | Proteger lo usado reduce el olvido | `division+consolidacion_uso` < `control` | confirmada: +0,169 [0,145; 0,182], p 0,005, Holm 0,029; aprende 0,025 peor (p 0,008) |
-| H5 | La división aporta algo sobre la consolidación | `division+consolidacion_uso` < `control+consolidacion_uso` | en curso (etapa A): s2 = 0,508 contra 0,547 de division+consolidacion_uso (sin división olvida igual o menos); s0 y s1 corren de nuevo |
-| H6 | Elegir por uso importa | `control+consolidacion_uso` < `control+consolidacion_azar` | en curso (etapa A): azar 0,625 / 0,636 / 0,583 (control 0,721 / 0,741 / 0,725); uso s2 0,508 contra azar s2 0,583 |
+| H5 | La división aporta algo sobre la consolidación | `division+consolidacion_uso` < `control+consolidacion_uso` | refutada: con división olvida más en las 3 semillas (−0,056, p 0,08, Holm 0,40) |
+| H6 | Elegir por uso importa | `control+consolidacion_uso` < `control+consolidacion_azar` | a favor en las 3 semillas (+0,110, p 0,025, Holm 0,17); el azar solo ya baja 16 % |
 | H7 | El árbol fractal olvida menos, o aprende mejor con el mismo olvido, que el plano con la misma consolidación | `arbol+consolidacion` contra `control+consolidacion_uso` | piloto 8 en cola |
 | H8 | El árbol se vuelve más autosimilar que el plano | `ruteo.fractal.autosimilitud` del árbol > la del plano | en cola (etapa C, fase2b) |
 | H9 | La duda elige dónde abrir rama mejor que el azar | `arbol+consolidacion` < `arbol_azar+consolidacion` | en cola (etapa C); el piloto 8b pasó |
@@ -48,7 +48,7 @@ paso (`segundos_por_paso`), con la pérdida aprendida dentro de 0,02 nats del co
 | Pieza | Evidencia hoy | La decide |
 |---|---|---|
 | Repetición de datos viejos (5 %) | base de todos los brazos | — |
-| Consolidación por uso al cerrar cada dominio | H4: −23 %, Holm 0,029 | H5 (¿sin división?), H6 (¿uso o azar?) |
+| Consolidación por uso al cerrar cada dominio, sobre un MoE fijo | sin división: −31 %, Holm 0,006; dividir resta (H5) y el uso suma sobre el azar (H6) | hecho |
 | Proteger el ruteo de lo congelado | R5: el plano pierde 19 % del tráfico viejo; el árbol, 1 % (piloto 8b) | H7 (árbol contra plano) |
 | Capacidad nueva de bajo rango, no expertos enteros | V1: aprende 0,01-0,03 peor con ~26 veces menos parámetros nuevos (piloto 8) | H7 con V1 |
 | Recursión (lo fractal) | sin datos | H10 |
