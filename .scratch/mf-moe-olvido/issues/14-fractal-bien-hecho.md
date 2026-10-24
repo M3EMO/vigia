@@ -223,3 +223,4 @@ Brazos y pares:
     tensión entre evitar el colapso y proteger el ruteo.
   - Especialización: el exceso de información por idioma es 0,125 contra 0,049 del plano (las hojas se especializan
     2,5 veces más por idioma); por documento, igual (0,003). Autosimilitud ~0,02: H8 no se ve.
+- 2026-10-24, arbol_azar+consolidacion s0: olvido 0,528 (árbol con duda 0,495); aprendido 2,447; hojas muertas 17 %; una compuerta con carga 100 % (hoja al azar con poco tráfico: el sesgo se mueve lento); profundidad 6. Primera señal de H9: la duda elige mejor dónde abrir rama. Nota: los controles planos también tienen ~27 % de expertos muertos (clones silenciosos que el balanceo nunca recluta).
