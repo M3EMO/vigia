@@ -213,3 +213,13 @@ Brazos y pares:
 - 2026-10-23, etapa A: control+consolidacion_uso s1 = 0,507 (finés 0,618, turco 0,554, indonesio 0,349); division+consolidacion_uso s1 0,596; azar s1 0,636; control s1 0,741. Con s1 y s2: sin división olvida menos que con división (0,507/0,508 contra 0,596/0,547) y el uso le gana al azar (contra 0,636/0,583). Aprendido igual (2,423/2,419 contra 2,423/2,426). Ruteo estable: tokens del finés a congelados 60 % → 62 %. Falta s0 (corre desde 20:34 UTC).
 - 2026-10-24, ETAPA A COMPLETA. control+consolidacion_uso s0 = 0,499. Veredictos (3 pares, Holm entre 11 preguntas): sin división contra control +0,224 (p 0,0005, Holm 0,006); azar contra control +0,114 (p 0,014, Holm 0,12); uso contra azar +0,110 (p 0,025, Holm 0,17, las 3 a favor); con división contra sin división −0,056 (p 0,08, Holm 0,40, las 3 en contra de dividir). H5 refutada, H6 a favor. Paper §4.12 y spec actualizados.
 - 2026-10-24, control_bajo_rango+consolidacion s0 (retomó 2:0 desde Drive): olvido 0,539 contra 0,499 de control+consolidacion_uso s0; aprendido 2,466 contra 2,428; general 2,207 contra 2,264. Con capacidad nueva de bajo rango olvida y aprende un poco peor, pero conserva mejor lo general. T1 verificado: uso s0 perdió la VM a las 22:20 y retomó desde Drive en 30 s.
+- 2026-10-24, ARBOL s0 CON EL ARREGLO (48056ac+): olvido 0,495 (control+consolidacion_uso s0 0,499; control_bajo_rango
+  s0 0,539; versión con cadenas 0,511); aprendido 2,448 (2,428 / 2,466); general 2,243 (2,264 / 2,207).
+  - T4 verificado: hojas muertas como máximo 4 % (antes 31 %), entropía de uso ≥ 0,94, compuerta más torcida 56 %
+    (antes 100 %), forma ancha y corta (p. ej. 21, 18, 7, 2 hojas por profundidad: hasta 3 niveles).
+  - Nuevo problema, R5: la deriva del ruteo viejo empeora (Jaccard del finés 0,33 contra 0,61-0,62 en los planos) y
+    los tokens del finés a congelados bajan de 82 % a 59 % (−28 %, la regla pide menos de 20 %). Causa probable: el
+    balanceo de compuertas ahora lleva cada compuerta a 50/50 y reparte tokens viejos a las hijas nuevas. Hay una
+    tensión entre evitar el colapso y proteger el ruteo.
+  - Especialización: el exceso de información por idioma es 0,125 contra 0,049 del plano (las hojas se especializan
+    2,5 veces más por idioma); por documento, igual (0,003). Autosimilitud ~0,02: H8 no se ve.
