@@ -17,7 +17,7 @@ Research en el vault: notas "prácticas de laboratorios", "Neural Networks Are A
 |---|---|---|---|---|---|
 | B1 | ¿Las neuronas de los expertos forman familias que se repiten, en un árbol autosimilar? (Goodfire) | `mf_moe.blocks.composition` y `shared_atoms` sobre los pesos de Granite, capas 0, 6, 12, 18 y 23 | autosimilar: CV de las pendientes del radio < mitad del nulo gaussiano y forma estable; bloques compartidos: mezcla cerca de la barajada y vecinas con coseno > 0,7 en otro experto muy por encima del nulo | CPU | hecho: no autosimilar, sin átomos compartidos, expertos con firma propia |
 | B1b | ¿Las neuronas se repiten por función? (Goodfire identifica neuronas por los tokens que las activan) | firma = perfil de activación de cada neurona sobre tokens fijos; mismas medidas que B1 | igual que B1; además, comparar pesos contra función | CPU | spec |
-| B2 | ¿El router admite direcciones jerárquicas? | `hierarchical_routing`: recall del top-8 con 2 niveles contra grupos al azar | recall con m grupos > p95 del nulo, con costo < 1 | CPU | código listo |
+| B2 | ¿El router admite direcciones jerárquicas? | `hierarchical_routing`: recall del top-8 con 2 niveles contra grupos al azar | recall con m grupos > p95 del nulo, con costo < 1 | CPU | hecho: estructura sobre el azar, sin ahorro útil |
 | B3 | ¿Una sola regla genera los cambios de todos los niveles del árbol? | árbol con un generador compartido por dirección de hoja contra hijas con deltas propios | mismo olvido con menos parámetros nuevos | GPU | spec |
 | B4 | ¿El tronco tiene que crecer? (usuario: un tronco débil frena el árbol) | "anillos": una LoRA de atención nueva por idioma, las viejas con lr bajo, sobre la consolidación por uso | aprende como el control sin perder el −31 % | GPU | spec |
 | B5 | ¿La consolidación graduada le gana a la binaria? (Benna y Fusi; synaptic intelligence) | lr de cada experto ∝ 1/(1+Ω), con Ω acumulada | olvido ≤ consolidación por uso y aprendido mejor por > 0,01 | GPU | spec |
@@ -36,3 +36,8 @@ Research en el vault: notas "prácticas de laboratorios", "Neural Networks Are A
   - Átomos compartidos: no. Casi ninguna neurona tiene una copia en otro experto (coseno > 0,7: 0 a 1 %; nulo 0 %).
   - Identidad de experto: sí. La neurona más parecida está en el mismo experto en 26-46 % de los casos; al azar sería 3 %. En los grupos más finos, la mezcla de expertos es 0,52-0,75 contra 0,94 con etiquetas barajadas.
   - Lectura: un experto se distingue por sus familias de neuronas propias, no por bloques repetidos. Falta B1b (función) para confirmar.
+- 2026-10-26, B2 (router de Granite, capas 0, 6, 12, 18 y 23; ~2.400 tokens por capa de 5 dominios; grupos Ward de 4 y 8 sobre las filas del router; 20 nulos con grupos al azar):
+  - Estructura: sí, débil. Con un solo grupo (m=1), el recall del top-8 es 0,36-0,60 contra 0,21-0,39 del nulo, entre 1,3 y 2,3 veces. Supera al p95 del nulo en casi todas las capas con m ≤ 2.
+  - Ahorro: casi nada. Para recuperar el 95 % del top-8 hace falta el 78-92 % del costo plano; en la capa 12 ningún corte llega al 95 % con costo < 1.
+  - Lectura: el router de Granite tiene vecindarios de expertos, pero no un árbol que permita direcciones baratas. Con top-8 de 32, cada token usa un cuarto de los expertos y los reparte entre grupos.
+  - Límite: los grupos salen de las filas del router, no de un entrenamiento jerárquico. B2 mide si la jerarquía ya existe, no si se puede aprender. La validación con EMO contra un MoE estándar (mf-moe-5tq.20) dice si este medidor distingue un router modular.
