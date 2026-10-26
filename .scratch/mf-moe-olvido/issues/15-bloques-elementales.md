@@ -23,6 +23,7 @@ Research en el vault: notas "prácticas de laboratorios", "Neural Networks Are A
 | B5 | ¿La consolidación graduada le gana a la binaria? (Benna y Fusi; synaptic intelligence) | lr de cada experto ∝ 1/(1+Ω), con Ω acumulada | olvido ≤ consolidación por uso y aprendido mejor por > 0,01 | GPU | spec |
 | B6 | ¿El olvido es de acceso? (engramas silenciosos, Ryan 2015) | modelo final con router y atención del cierre de cada idioma | la pérdida vieja vuelve > 50 % | GPU, solo evals, con checkpoints por dominio | spec |
 | B7 | ¿Conexiones entre capas con una fórmula ayudan? (usuario) | enlaces x → x+2^j con compuerta en cero (patrón dilatado, autosimilar), entrenables | menos olvido o mejor aprendido sin perder la salida inicial | GPU | spec |
+| B9 | ¿Con datos de bits de bloques conocidos, los expertos aprenden las primitivas y las reusan al componer? (usuario) | MoE chico desde cero en CPU; información mutua experto × primitiva; reuso en tareas compuestas; control positivo de autosimilitud con datos recursivos | MI muy sobre el nulo y reuso; las medidas de B1 y H11 detectan el fractal sembrado | CPU | spec (mf-moe-5tq.14, mf-moe-5tq.15) |
 | B8 | Congelar por TF-IDF (Meta, 2510.15103) | uso del idioma / uso en inglés, sobre la consolidación por uso | olvido < consolidación por uso | GPU | spec |
 
 ## Decisiones
