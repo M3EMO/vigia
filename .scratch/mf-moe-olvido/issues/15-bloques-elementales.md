@@ -15,7 +15,7 @@ Research en el vault: notas "prácticas de laboratorios", "Neural Networks Are A
 
 | ID | Pregunta | Medida | Aceptación | Costo | Estado |
 |---|---|---|---|---|---|
-| B1 | ¿Las neuronas de los expertos forman familias que se repiten, en un árbol autosimilar? (Goodfire) | `mf_moe.blocks.composition` y `shared_atoms` sobre los pesos de Granite, capas 0, 6, 12, 18 y 23 | autosimilar: CV de las pendientes del radio < mitad del nulo gaussiano y forma estable; bloques compartidos: mezcla cerca de la barajada y vecinas con coseno > 0,7 en otro experto muy por encima del nulo | CPU | corriendo |
+| B1 | ¿Las neuronas de los expertos forman familias que se repiten, en un árbol autosimilar? (Goodfire) | `mf_moe.blocks.composition` y `shared_atoms` sobre los pesos de Granite, capas 0, 6, 12, 18 y 23 | autosimilar: CV de las pendientes del radio < mitad del nulo gaussiano y forma estable; bloques compartidos: mezcla cerca de la barajada y vecinas con coseno > 0,7 en otro experto muy por encima del nulo | CPU | hecho: no autosimilar, sin átomos compartidos, expertos con firma propia |
 | B1b | ¿Las neuronas se repiten por función? (Goodfire identifica neuronas por los tokens que las activan) | firma = perfil de activación de cada neurona sobre tokens fijos; mismas medidas que B1 | igual que B1; además, comparar pesos contra función | CPU | spec |
 | B2 | ¿El router admite direcciones jerárquicas? | `hierarchical_routing`: recall del top-8 con 2 niveles contra grupos al azar | recall con m grupos > p95 del nulo, con costo < 1 | CPU | código listo |
 | B3 | ¿Una sola regla genera los cambios de todos los niveles del árbol? | árbol con un generador compartido por dirección de hoja contra hijas con deltas propios | mismo olvido con menos parámetros nuevos | GPU | spec |
@@ -30,3 +30,8 @@ Research en el vault: notas "prácticas de laboratorios", "Neural Networks Are A
 - 2026-10-26: B1 y B2 primero, en CPU (sin unidades). Las pruebas en GPU esperan sus resultados y el saldo
   (10,65 unidades, ~2 corridas).
 - 2026-10-26: tareas atomizadas en beads de mf-moe (épica mf-moe-5tq, tareas .1 a .13) para trabajar en sesiones simultáneas. Las tareas que tocan phase2.py van en worktrees propios.
+- 2026-10-26, B1 (pesos, Granite capas 0, 6, 12, 18 y 23; 8192 neuronas por capa; mf-moe 1dae7b2):
+  - Autosimilitud: no. La pendiente del radio se acelera con el nivel, igual que en el nulo gaussiano (CV 0,90-1,08 contra 1,20-1,27; la regla pide menos de la mitad). La forma cae de ~100 a ~8-24 direcciones: no se repite.
+  - Átomos compartidos: no. Casi ninguna neurona tiene una copia en otro experto (coseno > 0,7: 0 a 1 %; nulo 0 %).
+  - Identidad de experto: sí. La neurona más parecida está en el mismo experto en 26-46 % de los casos; al azar sería 3 %. En los grupos más finos, la mezcla de expertos es 0,52-0,75 contra 0,94 con etiquetas barajadas.
+  - Lectura: un experto se distingue por sus familias de neuronas propias, no por bloques repetidos. Falta B1b (función) para confirmar.
