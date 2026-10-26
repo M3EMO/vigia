@@ -472,9 +472,45 @@ Lectura:
 - Sin división, el ruteo viejo queda en los congelados: la parte de los tokens del finés que va a expertos
   congelados pasa de 62 % a 63 % (semilla 0).
 
-Siguiente (ticket 14, etapa C): ¿un árbol de expertos con hijas de bajo rango, que se repite en cada nivel, suma
-algo sobre la consolidación plana? (árbol, árbol al azar, árbol de un solo nivel y control con los mismos
-parámetros nuevos); y ¿los territorios de los expertos son autosimilares?
+**Etapa C (ticket 14, 2026-10-23 a 2026-10-25): ¿un árbol de expertos suma sobre la consolidación plana?** El árbol
+nace de los 32 expertos de Granite; cada mitosis deja una hija vieja congelada y una hija nueva de bajo rango (rango
+16), y una compuerta reparte los tokens entre las dos según la dirección de la duda. Todos los brazos consolidan por
+uso. Controles: el mismo árbol con la hoja elegida al azar, un árbol de un solo nivel (las hijas no se dividen) y un
+MoE plano que crece con expertos de bajo rango (los mismos parámetros nuevos que el árbol).
+
+| Comparación | Olvido medio | Diferencia (3 pares) | p (Holm) |
+|---|---|---|---|
+| árbol contra consolidación plana (H7) | 0,506 contra 0,505 | −0,001 [−0,017; +0,011] | 0,94 (1,0), empate; aprende 0,024 peor |
+| árbol contra plano de bajo rango (H7, V1) | 0,506 contra 0,524 | +0,018 [−0,010; +0,044] | 0,36 (1,0); aprende 0,013 mejor (p 0,036) |
+| árbol libre contra árbol de un nivel (H10) | 0,506 contra 0,540 | +0,035 [+0,010; +0,082] | 0,28, las 3 semillas a favor de la recursión |
+| duda contra azar para abrir rama (H9) | 0,495 contra 0,528 | +0,033 | solo semilla 0 (saldo) |
+
+Forma y ruteo:
+- El árbol casi no deja expertos muertos (4 % contra ~27 % del plano) y sus hojas se especializan 2,5 veces más por
+  idioma.
+- El árbol protege peor el ruteo viejo: los tokens del finés que van a expertos congelados bajan ~28 % (el plano,
+  ~1 %). El balanceo de las compuertas reparte tokens viejos a las hijas nuevas.
+- H8 refutada: la autosimilitud del ruteo del árbol es 0,025 y la del plano 0,052, en las 3 semillas.
+
+H11, territorios (Granite capas 6, 12 y 18; OLMoE capas 4, 8 y 12; 12 dominios, 32 secuencias cada uno). La figura
+de un territorio se mide con la dimensión de correlación, la extensión y el perfil de escalas, y se compara con
+dos nulos: una nube gaussiana y una partición al azar de los mismos tokens en la misma cantidad de grupos.
+- Los territorios tienen dimensión baja: ~13 en Granite y ~20 en OLMoE, la mitad del nulo gaussiano.
+- Los territorios no se distinguen de una partición al azar: la dimensión difiere en menos de 2 y la extensión en
+  menos de 3 %, en los niveles 2, 4, 8 y en los expertos solos.
+- El perfil de escalas no se repite de un nivel a otro de forma consistente.
+- H11 refutada: la variedad de baja dimensión es de los estados ocultos, no de los expertos; un experto es una
+  rebanada de esa variedad, sin una figura propia.
+
+Lectura (tabla de lectura del spec, fila "no, no"):
+- La idea fractal pierde su base como regla de diseño: no hay autosimilitud en los datos (H11) y el árbol no le gana
+  a la consolidación plana (H7).
+- Dentro del árbol, la recursión ayuda un poco (H10, 3 de 3 semillas, sin significancia): si se usa un árbol, conviene
+  dejarlo crecer.
+- El sistema que queda es la consolidación por uso sobre un MoE fijo (−31 %, Holm 0,006). El árbol aporta
+  especialización y pocos expertos muertos, pero cuesta protección del ruteo.
+- Límites: 3 semillas, un solo orden de idiomas, H9 con una semilla, y solo se entrenan las capas 12 a 23 (la
+  atención, con el 69 % del olvido del diagnóstico, queda para la etapa B).
 
 ## 5. Latencia
 
