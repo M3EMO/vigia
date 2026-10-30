@@ -48,3 +48,7 @@ Research en el vault: notas "prácticas de laboratorios", "Neural Networks Are A
   - Ahorro: casi nada. Para recuperar el 95 % del top-8 hace falta el 78-92 % del costo plano; en la capa 12 ningún corte llega al 95 % con costo < 1.
   - Lectura: el router de Granite tiene vecindarios de expertos, pero no un árbol que permita direcciones baratas. Con top-8 de 32, cada token usa un cuarto de los expertos y los reparte entre grupos.
   - Límite: los grupos salen de las filas del router, no de un entrenamiento jerárquico. B2 mide si la jerarquía ya existe, no si se puede aprender. La validación con EMO contra un MoE estándar (mf-moe-5tq.20) dice si este medidor distingue un router modular.
+- 2026-10-30, ¿mapa árbol o nube? (idea del usuario: el conocimiento crece con raíces, no por interpolación entre nubes). Medida nueva `mf_moe.blocks.tree_likeness`: condición de 4 puntos de Gromov relativa a cada cuarteto, contra una gaussiana de igual espectro (mf-moe 7b6cf99). En datos sintéticos con árbol, el árbol da entre 4 y 20 veces menos que el nulo.
+  - Pesos de neuronas de Granite (firmas de B1, capas 0, 6, 12, 18 y 23): real/nulo 0,93-0,94 en todas las capas. Los pesos forman una nube, no un árbol.
+  - Falta lo central: los estados ocultos por token, que son el "mapa de ideas" (mf-moe-5tq.22). HypLoRA (arXiv 2410.04010) reporta embeddings de tokens con forma de árbol.
+  - Tareas nuevas sobre las tareas de bits (B9a hecho, mf-moe 9d9571e): currículo con raíces contra azar (mf-moe-5tq.23) y experto nuevo con raíz contra interpolado (mf-moe-5tq.24).
