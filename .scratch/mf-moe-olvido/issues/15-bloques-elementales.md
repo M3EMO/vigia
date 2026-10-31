@@ -71,3 +71,12 @@ Research en el vault: notas "prácticas de laboratorios", "Neural Networks Are A
   - Lectura: el "sin estructura" de B1 y B2 en Granite queda sostenido por un medidor que sí ve modularidad. La ceguera de B1 y B2 sigue en pie para otros modelos.
   - Límite: una semilla, una muestra y sin IC. Granite tiene 32 expertos y top-8: el rango posible es más angosto que con 127 y top-7.
   - Script: `mf-moe/colab/granite_doc_usage.py`; resultado en `mf-moe/.cache/runs/bloques/granite_doc_usage.json`.
+- 2026-10-31, B9b semilla 0 (mf-moe-5tq.15; `mf-moe/colab/b9_bits.py`, `.cache/runs/bloques/b9_s0.json`). Semillas 1 y 2 en curso.
+  - Diseño: MoE de la fase 1 (16 expertos, top-2, d = 64, 4 capas), tareas con nombre. Ruteo medido solo en la respuesta. Línea base: el mismo modelo sin entrenar.
+  - Recorte: sin rev. Con rev, las 6 tareas que la llevan seguían en cero a los 10.000 pasos; sola se aprende en 3000. Quedan 5 primitivas y 10 pares balanceados.
+  - Curvas: todas las etapas se traban y después saltan de golpe (grokking). Conjunto: 70 % de media del paso 3000 al 8000, todo dominado en el 9500.
+  - P1, información mutua experto × primitiva (sobre H), capas 0-3: 0,01, 0,19, 0,30 y 0,18. Sin entrenar: 0,02, 0,03, 0,14 y 0,14. Barajado: < 0,001. Veredicto: especialización parcial, no un experto por primitiva.
+  - P2, composición (0,5 = azar), capas 0-3: 0,77, 1,00, 1,00 y 0,83. Sin entrenar: 0,87, 0,77, 0,77 y 0,80. Veredicto: en las capas 1 y 2, «a+b» rutea como la mezcla de «a» y «b». Límite: 3 pares ajenos por par.
+  - P3, en fila: primitivas en 1500 pasos y pares en 2500, contra 16.500 desde cero (4 veces menos en total). Sin repetición, las primitivas caen a 0-1 %. Veredicto: reuso fuerte y olvido total de las raíces como tareas sueltas.
+  - P4, control positivo: rec:p tarda 14.500 pasos y las planas 2500. Árbol de estados real/nulo, capas 0-3: recursivas 0,68, 0,93, 0,88 y 0,77; planas 0,35, 0,90, 0,93 y 0,92. CV de pendientes: 0,87-0,64 contra 0,82-0,75. Veredicto: no separa con un signo constante. El control positivo falla: o las medidas no ven la recursión, o el modelo no la guarda como estructura autosimilar.
+  - Límite: una semilla; el paso del salto cambia con la semilla, y el factor 4 de P3 depende de él.
