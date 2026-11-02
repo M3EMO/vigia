@@ -88,3 +88,13 @@ Research en el vault: notas "prácticas de laboratorios", "Neural Networks Are A
   - Lectura de P4: el control positivo no separa "medidor ciego" de "el modelo no guarda la recursión como estructura". Además, el modelo recursivo entrena más pasos, y el CV baja con el entrenamiento (1,02 sin entrenar).
   - Semilla 2: el modelo conjunto no dominó en 20.000 pasos; P1 y P2 se midieron igual.
   - Siguiente: una sonda que busque la escala de la recursión en los estados (¿el modelo sabe en qué nivel está cada bit?). Si la encuentra, el medidor es el ciego.
+- 2026-11-03, B10 con 3 semillas (mf-moe-5tq.23; `mf-moe/colab/b10_curriculum.py`, `.cache/runs/bloques/b10_s{0,1,2}.json` y `b10_s0_reves.json`). Idea del usuario: el conocimiento nuevo necesita raíces.
+  - Diseño: tareas de B9b (5 primitivas, 10 pares). Tres órdenes: raíces (primitivas, después pares), azar (todo junto), revés (pares, después primitivas). 10 % de repetición. Generalización: los 10 pares ordenados no entrenados.
+  - Pasos totales, semillas 0-2: raíces 4000, 13.500 y 3000; azar 9500, 4500 y 20.000 (sin dominar); revés 2500, 8000 y 6000.
+  - Retención media de lo entrenado: raíces 0,975-0,989; azar 0,922-1,00; revés 0,809-0,968.
+  - Pares no vistos: 0-2,8 % en los 9 entrenamientos, incluidos los 2 pares que equivalen como función a tareas entrenadas.
+  - Veredicto sobre la velocidad: el orden no gana con un signo constante. El factor 2,4 de raíces sobre azar en la semilla 0 no se repite; en la semilla 1 azar gana por 3 veces. El salto tipo grokking domina la varianza.
+  - Veredicto sobre el olvido: revés retiene menos en las 3 semillas. Lo aprendido primero se olvida al pasar a la otra etapa.
+  - Veredicto sobre la generalización: ningún orden compone pares nuevos. El modelo lee el nombre del par como una etiqueta entera.
+  - Ya conocido: Ramesh, Lubana et al., ICML 2024 (arXiv 2311.12997) muestran que la composición directa no generaliza, que los pasos intermedios sí, y que el sesgo de orden rompe composiciones. B10 replica su caso directo. B10b (cobertura × pasos) se canceló antes de correr por la misma razón (mf-moe-5tq.26).
+  - Siguiente: B12 (mf-moe-5tq.24), experto hijo con raíz contra interpolado, al azar y de padres ajenos. Hueco confirmado con Lacuna (vault, 2026-11-02).
