@@ -108,3 +108,10 @@ Research en el vault: notas "prácticas de laboratorios", "Neural Networks Are A
   - Veredicto sobre la hipótesis de raíces: no se probó. El «padre» elegido es un experto genérico, no la raíz de f. Coincide con B9b P1 (información mutua ≤ 0,3): no hay un experto por primitiva.
   - Nacimiento: las primitivas caen a 0,775, 0,907 y 0,928 al nacer los hijos, igual en todos los brazos que crecen. Las filas nuevas diluyen la softmax del router.
   - Siguiente: B12b, padre elegido por uso diferencial (uso en f menos uso medio en las otras primitivas), con la especialización medida antes de crecer. Si ningún experto se especializa, la pregunta de raíces no tiene sujeto en este modelo.
+- 2026-11-02, B12b con 3 semillas (mf-moe-5tq.28; `mf-moe/colab/b12_raices.py` en 01e1bcc, `.cache/runs/bloques/b12b_s{0,1,2}.json`). Padre = experto de mayor uso diferencial.
+  - Padres: en las capas 1 y 2 hay 4-5 padres distintos para 5 primitivas en las 3 semillas. En la capa 0 se repiten. Uso diferencial: 0,02-0,25.
+  - Pasos de pares, semillas 0-2: raíz 2000, 3500 y 1500; interp 3000, 3500 y 2500; azar 2500, 6000 y 1500; padres_azar 2500, 3500 y 1500; fijo 3500, 1500 y 4000.
+  - Media de pares a los 1000 pasos: raíz 0,96, 0,86 y 0,95; azar 0,85, 0,83 y 0,92; padres_azar 0,88, 0,81 y 0,98; interp 0,94, 0,81 y 0,90.
+  - Raíz supera a azar a los 1000 pasos en las 3 semillas (+0,11, +0,03 y +0,03). Contra padres_azar gana en 2 de 3. Interp es el brazo que crece más lento al principio.
+  - Ruido: el brazo azar con la misma semilla tardó 2000 contra 2500 pasos (semilla 0) y 2000 contra 6000 (semilla 1) entre B12 y B12b. Solo cambió el estado del generador al azar. Los pasos hasta dominar no sirven para comparar brazos con 3 semillas.
+  - Veredicto: señal débil a favor de la raíz al principio, sin un signo constante contra padres ajenos. La especialización es parcial (uso diferencial ≤ 0,25). Pasa a B12c (mf-moe-5tq.29): dial de distinción, AUC temprana y 5 semillas pareadas.
