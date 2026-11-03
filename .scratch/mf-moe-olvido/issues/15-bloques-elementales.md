@@ -115,3 +115,17 @@ Research en el vault: notas "prácticas de laboratorios", "Neural Networks Are A
   - Raíz supera a azar a los 1000 pasos en las 3 semillas (+0,11, +0,03 y +0,03). Contra padres_azar gana en 2 de 3. Interp es el brazo que crece más lento al principio.
   - Ruido: el brazo azar con la misma semilla tardó 2000 contra 2500 pasos (semilla 0) y 2000 contra 6000 (semilla 1) entre B12 y B12b. Solo cambió el estado del generador al azar. Los pasos hasta dominar no sirven para comparar brazos con 3 semillas.
   - Veredicto: señal débil a favor de la raíz al principio, sin un signo constante contra padres ajenos. La especialización es parcial (uso diferencial ≤ 0,25). Pasa a B12c (mf-moe-5tq.29): dial de distinción, AUC temprana y 5 semillas pareadas.
+- 2026-11-02, B12c Fase A con 5 semillas (mf-moe-5tq.29; `mf-moe/colab/b12c_distincion.py` en c54da6d, GPU L4, `.cache/runs/bloques/b12c_a_gpu/b12c_a_s{0..4}.json`). Hipótesis del usuario: las primitivas de B12 se parecen demasiado para que los expertos se especialicen.
+  - Dial p: cada primitiva escribe una fracción p de las posiciones con su propio alfabeto (not AB, xor CD, rot EF, par GH, andor IJ). Con p = 0 todas usan 0/1.
+  - Medidas por capa: información mutua (IM) experto × primitiva, IM condicionada a los tokens 0/1 compartidos, y especificidad de ablación. IC90 bootstrap sobre 5 semillas.
+  - Controles con los mismos pasos que su base: router congelado al azar, sin balanceo, y base larga de 20.000 pasos sin corte.
+  - p = 1 es degenerado: par no aprende en 20.000 pasos en las 5 semillas de GPU. En CPU, la semilla 1 tampoco aprende en 12.000 pasos, y la semilla 0 sí aprende en 4500. Evaluar en bf16 o en fp32 da lo mismo. El análisis usa p de 0 a 0,75.
+  - Gran parte de la IM es mecánica. Un router congelado al azar da el 70-85 % de la IM de la base, porque el alfabeto ya separa los estados.
+  - Exceso aprendido (base menos router al azar) con p = 0: entre -0,011 y +0,024 en las 4 capas. Con el mismo vocabulario, el router aprendido no separa primitivas más que uno al azar.
+  - Exceso aprendido de IM, de p = 0 a 0,75: capa 1 +0,178 [0,101, 0,266]; capa 2 +0,090 [0,061, 0,124]. La pendiente tiene IC > 0 en las 4 capas.
+  - Exceso de IM condicionada a 0/1: pendiente capa 1 +0,074 [0,006, 0,143], capa 2 +0,088 [0,033, 0,153]. En las capas 0 y 3, el IC cruza 0.
+  - Ablación: con p ≥ 0,25, sacar un experto daña sobre todo a una primitiva en las capas 0, 2 y 3 (especificidad de 0,10 a 0,4-0,8). La capa 1 no sube. El router al azar queda cerca de 0.
+  - Largo del entrenamiento: con p = 0, 20.000 pasos no crean IM aprendida (capa 1: -0,001). Con p = 0,75 suma de +0,04 a +0,06. El largo no explica el efecto.
+  - Padres distintos (mayor uso diferencial): 4,4-5 de 5 en las capas 1 y 2 ya con p = 0. En las capas 1-2 el padre es distinto aunque la IM aprendida sea nula.
+  - Veredicto H-a: se cumple. La especialización aprendida crece con la distinción en las capas 1 y 2, con IC > 0 y sobre el nulo y el router al azar. Con p = 0, la especialización aprendida es nula. La hipótesis del usuario explica por qué B12 y B12b no encontraron raíces.
+  - Siguiente: Fase B con p ∈ {0; 0,75} (p = 1 queda afuera por par). Regla H-b: la AUC temprana pareada raíz − azar y raíz − padres_azar tiene IC > 0 con p = 0,75 y es mayor que con p = 0.
