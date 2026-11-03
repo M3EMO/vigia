@@ -165,3 +165,12 @@ Research en el vault: notas "prácticas de laboratorios", "Neural Networks Are A
   - Medida: Mantel (Spearman) y tripletas sobre la matriz JSD, sin dendrograma intermedio. Robinson-Foulds queda afuera.
   - Defecto de diseño: con vocabulario propio por lengua, las hermanas tampoco comparten símbolos. vocab_rama controla la separación de lenguas, no el árbol.
   - Nuevo control positivo: el bloque «estados» de la base (resultado conocido de Doshi) y el test unitario de tree_recovery. Si ni los estados muestran el árbol, el modelo no aprendió los niveles altos.
+- 2026-11-03, B13, resultado con 5 semillas y 20.000 pasos (`.cache/runs/bloques/b13_gpu/b13_s{0..4}.json`; L4, 1 h 26 min, ~2,5 unidades).
+  - Pérdida: base 1,86; router al azar 1,90; sin balanceo 1,88; vocab_rama 1,81. Con solo las reglas de abajo, la pérdida estimada es ~2,08.
+  - Mantel del ruteo sobre el p95 del nulo: a lo sumo 1 de 5 semillas, en todas las capas y variantes. Tripletas: 0,28-0,43 (azar 0,33).
+  - Estados medios por lengua (control positivo): 0-2 de 5 semillas sobre el nulo. El control positivo falla.
+  - El ruteo sí separa lenguas, pero como una estrella: IM experto × lengua en la capa 2 = 0,19 (router al azar 0,13; k-means sobre estados 0,31).
+  - k-means sobre los estados separa lenguas más que el ruteo, con router entrenado o al azar (0,31-0,32). Coincide con «Myth»: el ruteo no supera al estado.
+  - Veredicto H1: inconcluso. La medida por medias de lengua no ve el árbol ni en los estados.
+  - Causa probable: las reglas de abajo de dos hermanas son independientes, así que la superficie es una estrella. El árbol vive en los niveles altos, y la media por lengua lo diluye. Doshi mide traducciones oración por oración.
+  - Siguiente: B13b con traducciones (`colab/b13b_traducciones.py`). Antes, prueba en CPU de 1 semilla para ver si el modelo chico aprende niveles suficientes.
