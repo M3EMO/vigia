@@ -129,3 +129,17 @@ Research en el vault: notas "prácticas de laboratorios", "Neural Networks Are A
   - Padres distintos (mayor uso diferencial): 4,4-5 de 5 en las capas 1 y 2 ya con p = 0. En las capas 1-2 el padre es distinto aunque la IM aprendida sea nula.
   - Veredicto H-a: se cumple. La especialización aprendida crece con la distinción en las capas 1 y 2, con IC > 0 y sobre el nulo y el router al azar. Con p = 0, la especialización aprendida es nula. La hipótesis del usuario explica por qué B12 y B12b no encontraron raíces.
   - Siguiente: Fase B con p ∈ {0; 0,75} (p = 1 queda afuera por par). Regla H-b: la AUC temprana pareada raíz − azar y raíz − padres_azar tiene IC > 0 con p = 0,75 y es mayor que con p = 0.
+- 2026-11-03, B12c Fase B con 5 semillas pareadas (mf-moe-5tq.29; `mf-moe/colab/b12_raices.py`, GPU L4, `.cache/runs/bloques/b12c_b_gpu/b12c_b_p{0.0,0.75}_s{0..4}.json`). p = 0,75 reemplaza a p = 1 porque par no aprende con p = 1.
+  - Medida preregistrada: AUC de la exactitud media de los pares en los primeros 1000 pasos, con evaluación cada 100. IC95 bootstrap sobre semillas.
+  - Padres con p = 0,75: uso diferencial de 0,13 a 0,41, contra ≤ 0,25 en B12b.
+  - AUC media con p = 0: raíz 0,677, raíz_g 0,698, interp 0,659, padres_azar 0,698, azar 0,669.
+  - AUC media con p = 0,75: raíz 0,800, raíz_g 0,804, interp 0,788, padres_azar 0,778, azar 0,778.
+  - Con p = 0: raíz − azar +0,008 [-0,020, +0,029]; raíz − padres_azar -0,021 [-0,080, +0,042].
+  - Con p = 0,75: raíz − azar +0,021 [-0,000, +0,040]; raíz − padres_azar +0,022 [+0,007, +0,036]. Probabilidad de mejora: 0,8 en los dos.
+  - Diferencia entre p = 0,75 y p = 0: raíz − padres_azar +0,043 [-0,024, +0,094]; raíz − azar +0,013 [-0,022, +0,049].
+  - Raíz de f y raíz de g dan lo mismo (-0,005 [-0,016, +0,009]).
+  - Retención de primitivas: 0,98-1,00 en todos los brazos. Pares no vistos: 0-0,4 %.
+  - Veredicto H-b: no se cumple. Con p = 0,75 la raíz gana a padres ajenos con IC > 0, pero contra azar el IC toca 0, y ninguna diferencia entre p = 0,75 y p = 0 tiene IC > 0.
+  - Tamaño: la ventaja de la raíz es de 2 puntos de exactitud media en los primeros 1000 pasos. La dirección coincide con la hipótesis, pero el efecto es chico.
+  - Lectura del plan: «A sube y B no». Hay expertos especializados cuando las tareas se distinguen, pero heredar sus pesos casi no acelera.
+  - Decisión: no se agregan semillas ni p = 0,5. Un efecto de 2 puntos no cambia el diseño del MF-MoE. La pregunta de raíces se cierra con este resultado.
