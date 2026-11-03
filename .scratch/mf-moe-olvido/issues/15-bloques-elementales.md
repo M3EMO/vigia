@@ -25,6 +25,7 @@ Research en el vault: notas "prácticas de laboratorios", "Neural Networks Are A
 | B7 | ¿Conexiones entre capas con una fórmula ayudan? (usuario) | enlaces x → x+2^j con compuerta en cero (patrón dilatado, autosimilar), entrenables | menos olvido o mejor aprendido sin perder la salida inicial | GPU | spec |
 | B9 | ¿Con datos de bits de bloques conocidos, los expertos aprenden las primitivas y las reusan al componer? (usuario) | MoE chico desde cero en CPU; información mutua experto × primitiva; reuso en tareas compuestas; control positivo de autosimilitud con datos recursivos | MI muy sobre el nulo y reuso; las medidas de B1 y H11 detectan el fractal sembrado | CPU | spec (mf-moe-5tq.14, mf-moe-5tq.15) |
 | B8 | Congelar por TF-IDF (Meta, 2510.15103) | uso del idioma / uso en inglés, sobre la consolidación por uso | olvido < consolidación por uso | GPU | spec |
+| B13 | ¿El árbol de ruteo recupera el árbol de los datos? (mf-moe-5tq.27) | dendrograma del uso de expertos por lengua contra el árbol verdadero de 8 lenguas MRHM, por capa | cofenética sobre el nulo de hojas permutadas y exceso sobre router al azar con IC > 0 | GPU, ~1-2 unidades | plan |
 
 ## Decisiones
 
@@ -143,3 +144,19 @@ Research en el vault: notas "prácticas de laboratorios", "Neural Networks Are A
   - Tamaño: la ventaja de la raíz es de 2 puntos de exactitud media en los primeros 1000 pasos. La dirección coincide con la hipótesis, pero el efecto es chico.
   - Lectura del plan: «A sube y B no». Hay expertos especializados cuando las tareas se distinguen, pero heredar sus pesos casi no acelera.
   - Decisión: no se agregan semillas ni p = 0,5. Un efecto de 2 puntos no cambia el diseño del MF-MoE. La pregunta de raíces se cierra con este resultado.
+- 2026-11-03, B13, plan antes de gastar (mf-moe-5tq.27). Investigación: vault «árbol de ruteo y jerarquía de datos» y pasada de Lacuna del 2026-11-03.
+  - Corrección: Doshi et al. (arXiv 2610.07168) usan dos lenguas MRHM, no una filogenia. B13 la generaliza a 8 lenguas.
+  - Ya se sabe: en un denso, la similitud entre lenguas crece con la cercanía y pica en las capas medias (Doshi). No se corre un denso.
+  - Ya se sabe: el router lineal hereda la geometría del estado oculto (Myth, 2604.09780). La predicción es empate con k-means.
+  - Lacuna 2026-11-03: BRANCH-MoE (2610.06725) impone un árbol y no lo compara con datos. Softmax Routing Dynamics (2610.39442) estudia colapso. Ninguno hace B13.
+  - Datos: MRHM con L = 4, s = 2, m = 4, v = 16 (código de d-doshi/platonic, BSD-3). Dos lenguas a distancia d del árbol de lenguas difieren en las reglas de los d niveles de abajo. El nivel de arriba es común.
+  - Vocabulario terminal compartido en la base, para que el léxico no delate la rama.
+  - Modelo: el de B12c (d = 64, 4 capas, 16 expertos, top-2, balanceo por sesgo), 10.000 pasos con checkpoints en 1000, 3000 y 10.000.
+  - Condiciones por semilla: base, router al azar, sin balanceo y vocabulario por rama (control positivo). Sin entrenar: modelo en inicialización y k-means de 16 sobre los estados propios.
+  - Medidas por capa: correlación cofenética con test de Mantel, acuerdo de tripletas y Robinson-Foulds. Matriz capa × nivel de IM experto × ancestro.
+  - Regla H1: cofenética sobre el p95 del nulo permutado en ≥ 4 de 5 semillas, y base − router al azar con IC90 > 0.
+  - Regla H1 estricta: ruteo − k-means con IC90 > 0. Un empate dice que el ruteo hereda la geometría y que H2 puede dividir por k-means.
+  - Corte: si el vocabulario por rama no recupera el árbol, la medida está rota y se frena.
+  - Paso 0, CPU: generador y tests; piloto de 1 semilla, base, 3000 pasos (~22 min a 430 ms/paso). Si no aprende, bajar a L = 3 antes de GPU.
+  - Costo GPU: 4 × 10.000 pasos por semilla, 5 semillas en paralelo en una L4 (~27 ms/paso por trabajo, medido en B12c) ≈ 30-40 min ≈ 1 unidad. Con 20.000 pasos, ≈ 2 unidades. En CPU serían ~24 h.
+  - tree_likeness no entra en B13: la medida es contra un árbol conocido, no la δ de Gromov.
