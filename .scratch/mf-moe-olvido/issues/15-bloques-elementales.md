@@ -174,3 +174,12 @@ Research en el vault: notas "prácticas de laboratorios", "Neural Networks Are A
   - Veredicto H1: inconcluso. La medida por medias de lengua no ve el árbol ni en los estados.
   - Causa probable: las reglas de abajo de dos hermanas son independientes, así que la superficie es una estrella. El árbol vive en los niveles altos, y la media por lengua lo diluye. Doshi mide traducciones oración por oración.
   - Siguiente: B13b con traducciones (`colab/b13b_traducciones.py`). Antes, prueba en CPU de 1 semilla para ver si el modelo chico aprende niveles suficientes.
+- 2026-11-03, B13b (mf-moe-5tq.27; `colab/b13b_traducciones.py`): la medida de Doshi, traducciones oración por oración. Exploración en CPU, semilla 0.
+  - Gramática de B13 (V = 16, M = 4): pérdida 1,88; ni ruteo ni estados aprenden parecido entre traducciones. El modelo chico no llega a los niveles compartidos.
+  - Gramática fácil (V = 8, M = 2): pérdida 0,92. Estados, parecido aprendido en la capa 2: +0,25 / +0,20 / +0,10 a distancia 1 / 2 / 3. El control positivo funciona.
+  - Ruteo por oración (histograma de expertos, mKNN), capa 2: +0,017 / +0,019 / +0,011. Router al azar: +0,023 / +0,024 / +0,011. k-means de 16: +0,032 / +0,037 / +0,015.
+  - Lectura exploratoria: el ruteo conserva ~10 veces menos árbol que los estados, y discretizar a 16 grupos (router o k-means) pierde la señal.
+  - Confirmación preregistrada: semillas 1-5 nuevas; base, router_azar y sin_balanceo; 20.000 pasos; V = 8, M = 2. Medida: parte aprendida (paso final menos paso 0), IC90 bootstrap sobre semillas.
+  - Control positivo: estados, d1 − d3 > 0 con IC90 > 0 en las capas 2 y 3.
+  - H1b: ruteo_oracion d1 − d3 > 0 con IC90 > 0 en alguna capa, y base − router_azar en d1 con IC90 > 0 en esa capa.
+  - Estricta: ruteo_oracion − kmeans_oracion en d1 con IC90 > 0.
