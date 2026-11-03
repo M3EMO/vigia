@@ -160,3 +160,8 @@ Research en el vault: notas "prácticas de laboratorios", "Neural Networks Are A
   - Paso 0, CPU: generador y tests; piloto de 1 semilla, base, 3000 pasos (~22 min a 430 ms/paso). Si no aprende, bajar a L = 3 antes de GPU.
   - Costo GPU: 4 × 10.000 pasos por semilla, 5 semillas en paralelo en una L4 (~27 ms/paso por trabajo, medido en B12c) ≈ 30-40 min ≈ 1 unidad. Con 20.000 pasos, ≈ 2 unidades. En CPU serían ~24 h.
   - tree_likeness no entra en B13: la medida es contra un árbol conocido, no la δ de Gromov.
+- 2026-11-03, B13 lanzado en una L4 (mf-moe d0430ee; `colab/b13_arbol.py`, `colab/cli/b13.txt`). Cambios antes de ver datos:
+  - 20.000 pasos con corte de medida en 0, 1000, 3000, 10.000 y 20.000. La regla se evalúa en 20.000; 10.000 queda como lectura secundaria.
+  - Medida: Mantel (Spearman) y tripletas sobre la matriz JSD, sin dendrograma intermedio. Robinson-Foulds queda afuera.
+  - Defecto de diseño: con vocabulario propio por lengua, las hermanas tampoco comparten símbolos. vocab_rama controla la separación de lenguas, no el árbol.
+  - Nuevo control positivo: el bloque «estados» de la base (resultado conocido de Doshi) y el test unitario de tree_recovery. Si ni los estados muestran el árbol, el modelo no aprendió los niveles altos.
