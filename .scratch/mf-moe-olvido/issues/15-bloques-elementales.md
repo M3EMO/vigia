@@ -120,7 +120,7 @@ Research en el vault: notas "prácticas de laboratorios", "Neural Networks Are A
   - Medidas por capa: información mutua (IM) experto × primitiva, IM condicionada a los tokens 0/1 compartidos, y especificidad de ablación. IC90 bootstrap sobre 5 semillas.
   - Controles con los mismos pasos que su base: router congelado al azar, sin balanceo, y base larga de 20.000 pasos sin corte.
   - p = 1 es degenerado: par no aprende en 20.000 pasos en las 5 semillas de GPU. En CPU, la semilla 1 tampoco aprende en 12.000 pasos, y la semilla 0 sí aprende en 4500. Evaluar en bf16 o en fp32 da lo mismo. El análisis usa p de 0 a 0,75.
-  - Gran parte de la IM es mecánica. Un router congelado al azar da el 70-85 % de la IM de la base, porque el alfabeto ya separa los estados.
+  - Gran parte de la IM es mecánica. Un router congelado al azar da el 53-85 % de la IM de la base con p = 0,75 y 1, porque el alfabeto ya separa los estados.
   - Exceso aprendido (base menos router al azar) con p = 0: entre -0,011 y +0,024 en las 4 capas. Con el mismo vocabulario, el router aprendido no separa primitivas más que uno al azar.
   - Exceso aprendido de IM, de p = 0 a 0,75: capa 1 +0,178 [0,101, 0,266]; capa 2 +0,090 [0,061, 0,124]. La pendiente tiene IC > 0 en las 4 capas.
   - Exceso de IM condicionada a 0/1: pendiente capa 1 +0,074 [0,006, 0,143], capa 2 +0,088 [0,033, 0,153]. En las capas 0 y 3, el IC cruza 0.
