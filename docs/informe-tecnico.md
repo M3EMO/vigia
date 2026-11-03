@@ -512,6 +512,79 @@ Lectura (tabla de lectura del spec, fila "no, no"):
 - Límites: 3 semillas, un solo orden de idiomas, H9 con una semilla, y solo se entrenan las capas 12 a 23 (la
   atención, con el 69 % del olvido del diagnóstico, queda para la etapa B).
 
+### 4.13 Bloques elementales: ¿los expertos tienen piezas propias que se reusan? (CPU y L4, 2026-10-26 a 2026-11-03)
+
+Pregunta: ¿un experto se distingue por su forma, y el conocimiento nuevo crece desde las piezas que ya existen?
+Código: repo `mf-moe` (`mf_moe/blocks.py`, `colab/b9_bits.py`, `colab/b12_raices.py`, `colab/b12c_distincion.py`).
+Decisiones: ticket 15 del mapa `.scratch/mf-moe-olvido`.
+
+**Modelos grandes (Granite-3.1-1B-A400M; EMO y StdMoE de AllenAI como control positivo).**
+
+| Prueba | Medida | Resultado |
+|---|---|---|
+| B1, pesos de neuronas (Granite) | autosimilitud, copias entre expertos, identidad de experto | sin árbol ni copias; la vecina está en el mismo experto 26-46 % (azar 3 %) |
+| B1b, función de neuronas (Granite) | las mismas medidas sobre perfiles de activación | sin árbol ni copias; identidad más débil (9-22 %); pesos y función no correlacionan |
+| B2, direcciones jerárquicas del router (Granite) | recall del top-8 con grupos de expertos | estructura sobre el azar (1,3-2,3 veces), pero ahorro casi nulo |
+| Árbol o nube (Granite, EMO, StdMoE) | condición de 4 puntos de Gromov contra una gaussiana | pesos: nube (0,86-0,94); estados: algo arbóreos (0,57-0,83), lejos de un árbol (0,05-0,25) |
+| Control EMO contra StdMoE | B1, B1b, B2 y árbol sobre dos MoE con los mismos datos | ningún medidor distingue al MoE modular; solo el uso de expertos por documento lo distingue |
+| Uso por documento | expertos efectivos por documento sobre un nulo | EMO 0,56, StdMoE 0,72, Granite 0,88 (menor = más modular) |
+
+Lectura: los medidores de forma (B1, B1b, B2 y árbol) son ciegos a la modularidad conocida de EMO. El medidor que sí
+la ve, el uso por documento, ubica a Granite como el menos modular de los tres.
+
+**MoE chico desde cero sobre tareas de bits con primitivas conocidas (16 expertos, top-2, d = 64, 4 capas).**
+Cinco primitivas (not, xor, rot, par, andor) y sus pares. La etiqueta es computable, así que la especialización se
+mide contra la verdad.
+
+- B9b (3 semillas): la información mutua experto × primitiva llega a 0,19-0,30, contra 0,004-0,14 sin entrenar.
+  Hay especialización parcial, no un experto por primitiva.
+- B9b: aprender primitivas y después pares cuesta 1,4 a 4 veces menos pasos que aprender pares desde cero. Sin
+  repetición, las primitivas caen a 0-1 %.
+- B9b: los medidores de forma no ven la recursión aprendida en tareas recursivas. El control positivo falla.
+- B10 (3 semillas): el orden del currículo no cambia la velocidad con un signo constante. Ningún orden compone
+  pares no vistos (0-2,8 %). Esto replica el caso directo de Ramesh, Lubana et al. (ICML 2024).
+- B12 y B12b (3 semillas): un experto hijo por par nace de la raíz (el experto de la primitiva), de un promedio, de
+  padres ajenos o al azar. El origen de los pesos no cambia la velocidad con un signo constante. En B12 el "padre"
+  era un experto genérico, compartido por todas las primitivas.
+
+**B12c: dial de distinción (5 semillas, L4).** Hipótesis del usuario: las primitivas comparten el vocabulario 0/1 y
+por eso no hay expertos propios. El dial p hace que cada primitiva escriba una fracción p de las posiciones con su
+propio alfabeto. Con p = 1, par no aprende: falla en las 5 semillas de 20.000 pasos y en 4 de 5 diagnósticos de
+12.000 pasos. El análisis usa p de 0 a 0,75.
+IC 90 % bootstrap sobre semillas en la Fase A; IC 95 % en la Fase B.
+
+| Medida | p = 0 | p = 0,75 | Pendiente o diferencia |
+|---|---|---|---|
+| IM experto × primitiva, capa 1, base | 0,106 | 0,360 | — |
+| IM, capa 1, router congelado al azar | 0,117 | 0,192 | — |
+| IM aprendida (base − azar), capa 1 | −0,011 | +0,168 | +0,178 [+0,101; +0,266] |
+| IM aprendida, capa 2 | +0,009 | +0,099 | +0,090 [+0,061; +0,124] |
+| IM aprendida condicionada a 0/1, capas 1 y 2 | ≈ 0 | +0,06 y +0,07 | pendiente con IC > 0 en las dos |
+| AUC de pares en 1000 pasos, raíz − azar (Fase B) | +0,008 [−0,020; +0,029] | +0,021 [−0,000; +0,040] | dif. +0,013 [−0,022; +0,049] |
+| AUC, raíz − padres ajenos (Fase B) | −0,021 [−0,080; +0,042] | +0,022 [+0,007; +0,036] | dif. +0,043 [−0,024; +0,094] |
+
+Controles: el router congelado al azar entrena los mismos pasos que su base. Una base de 20.000 pasos sin corte
+no crea IM aprendida con p = 0, así que el largo del entrenamiento no explica el efecto. Evaluar en bf16 o en fp32
+da lo mismo.
+
+Lectura:
+- Con el mismo vocabulario, el router aprendido no separa primitivas mejor que un router al azar.
+- La especialización aprendida crece con la distinción entre tareas (H-a se cumple).
+- Una parte grande de la información mutua es mecánica: el router al azar da el 53-85 % con p alto. Toda medida
+  de especialización necesita ese control.
+- Heredar los pesos de un experto especializado casi no acelera al hijo: +2 puntos de exactitud media, con un IC
+  que toca 0 contra azar (H-b no se cumple).
+- Consecuencia para el MoE fractal: dividir un experto desde su padre no aporta una ventaja útil en este modelo.
+
+**Novedad (auditoría con Lacuna, 2026-11-02).** El router como sensor de duda ya está publicado: "Routing Entropy:
+A Hidden Self-Verifier for Free" (COLM 2026) reporta AUROC 0,655 con la entropía de ruteo sola en OLMoE. Este
+informe lo cita como precedente. Vigía tiene que mostrar algo que ese trabajo no tiene. Los candidatos medidos acá
+son la evaluación por token (§4.1), la sonda sobre el estado (§4.1) y la latencia en producción (§4.10). El nacimiento de un experto desde las raíces de sus partes no aparece en la literatura revisada, y
+B12c lo responde con un efecto chico.
+
+Límites: modelo de 16 expertos y tareas sintéticas; 5 semillas dan IC anchos; el ruteo forzado mide el origen de
+los pesos, no si el router encuentra al hijo por sí solo.
+
 ## 5. Latencia
 
 La meta del plan es < 5 % de latencia agregada. La medición limpia corrió en la misma laptop
@@ -547,3 +620,4 @@ La corrida es reanudable. En una laptop con CPU i5-1035G1 y 8 GB de RAM tarda un
 2. gpt-oss-20b ya se midió en una T4; falta gpt-oss-120b y un servidor de producción (vLLM con plugin).
 3. La sonda sobre H iguala a F1; falta medir si F1 transfiere mejor entre dominios o modelos.
 4. La latencia en GPU cumple la meta con HF y vLLM, también con 32 requests simultáneos (§4.10).
+5. El router como sensor de duda tiene precedente publicado (Routing Entropy, COLM 2026; §4.13).
