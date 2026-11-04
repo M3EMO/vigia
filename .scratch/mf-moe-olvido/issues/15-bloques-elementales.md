@@ -185,3 +185,11 @@ Research en el vault: notas "prácticas de laboratorios", "Neural Networks Are A
   - Estricta: ruteo_oracion − kmeans_oracion en d1 con IC90 > 0.
   - 2026-11-03 21:10, cambio antes de ver datos: se corta sin_balanceo. Ninguna regla de arriba la usa, y en B13 dio resultados inconsistentes. Ahorra un tercio de la corrida (~1,1 unidades a 1,94 unidades/h). La corrida se detiene cuando las 5 semillas tienen base y router_azar.
 - 2026-11-03, regla de gasto (pedido del usuario): antes de gastar unidades, cada corrida responde tres preguntas por escrito. ¿Cómo se hace la medida en la literatura? ¿Ya está investigada (Lacuna)? ¿Su resultado, y cada variante o semilla, cambia una decisión? Lo que no cambia una decisión no corre.
+- 2026-11-03, B13b, resultado con 5 semillas (1-5), 20.000 pasos, V = 8, M = 2 (`.cache/runs/bloques/b13b_gpu/b13b_s{1..5}.json`; L4, 50 min, 1,47 unidades). Parte aprendida, IC90 bootstrap sobre semillas.
+  - Control positivo: se cumple. Estados, d1 − d3: capa 2 +0,124 [+0,118; +0,131]; capa 3 +0,101 [+0,089; +0,112].
+  - H1b: se cumple en las capas 0 y 1. Ruteo por oración, d1 − d3: capa 0 +0,011 [+0,006; +0,016]; capa 1 +0,007 [+0,001; +0,013]. Base − router al azar en d1: capa 0 +0,009 [+0,005; +0,012]; capa 1 +0,006 [+0,001; +0,011].
+  - Estricta: no se cumple. Ruteo − k-means en d1: capa 0 +0,005 [−0,003; +0,012]; capa 1 +0,008 [−0,001; +0,017]; capa 2 −0,030 [−0,037; −0,019].
+  - Tamaño: el ruteo guarda ~20 veces menos parecido que los estados (capa 1: d1 +0,009 contra +0,063). El efecto es casi solo de hermanas: capa 0, d1/d2/d3 = +0,012 / +0,001 / +0,001.
+  - Límite: 4 capas probadas con IC90; el error de familia de la primera condición llega a ~19 %. Pasan dos capas con las dos condiciones, y la capa 0 con margen.
+  - Veredicto H1: el router aprendido guarda una huella chica del árbol, solo entre hermanas y en las capas bajas. Esa huella no supera a un k-means de 16 sobre los mismos estados. Es la lectura de «Myth»: el ruteo refleja los grupos de estados, no agrega estructura propia.
+  - Consecuencia para H2: un árbol de crecimiento de expertos no tiene ancla en el router de este modelo. Si H2 sigue, el árbol sale de los estados (k-means jerárquico), no del ruteo. Antes de gastar unidades en H2, auditoría de tres preguntas (regla de gasto).
