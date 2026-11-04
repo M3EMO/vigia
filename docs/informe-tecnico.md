@@ -620,6 +620,29 @@ Lectura:
   de los estados, no del router.
 - Límite: 4 capas con IC 90 % dan ~19 % de error de familia en la primera condición; pasan dos capas, la 0 con margen.
 
+**B14: tamiz de reglas de congelado (5 semillas, L4, 0,88 unidades).** Pregunta: ¿alguna regla de congelado le gana
+a la consolidación por uso de la fase 2? El banco es la fila de B9b: 5 primitivas y después 10 pares, sin repetición.
+Al cerrar las primitivas, cada rama congela según su regla y entrena los pares 4000 pasos. La medida es la pérdida
+de las primitivas al final; al cerrar la primera etapa era de 0,001 a 0,009 nats.
+Código: `colab/b14_congelado.py`.
+
+| Rama | Pérdida de las primitivas (nats) | Diferencia con control, IC 90 % |
+|---|---|---|
+| control | 3,77 | — |
+| uso (8 de 16 expertos por capa) | 3,70 | +0,07 [−0,24; +0,33] |
+| TF-IDF (Meta, 2510.15103) | 3,85 | −0,08 [−0,48; +0,32] |
+| graduada (lr ∝ 1/(1+Ω)) | 3,93 | −0,15 [−0,46; +0,22] |
+| azar | 4,34 | −0,56 [−1,15; +0,03] |
+| capa 0 congelada («Spurious Forgetting») | 4,35 | −0,58 [−0,83; −0,33] |
+
+Lectura:
+- El banco no reproduce el −31 % de la fase 2: uso no supera al control. Según la regla escrita antes de los datos,
+  el tamiz no decide, y la fase 3 no gasta unidades en B5 ni en B8.
+- En un MoE chico entrenado desde cero, el olvido es casi total en todas las ramas. El modelo sobrescribe el
+  circuito compartido, y congelar expertos no lo protege.
+- Congelar la capa 0 aumenta el olvido, al revés del remedio de «Spurious Forgetting» en LLM preentrenados.
+- Límite: el banco difiere de la fase 2 (modelo desde cero, mismo vocabulario en las dos etapas, una sola transición).
+
 **Novedad (auditoría con Lacuna, 2026-11-02).** El router como sensor de duda ya está publicado: "Routing Entropy:
 A Hidden Self-Verifier for Free" (COLM 2026) reporta AUROC 0,655 con la entropía de ruteo sola en OLMoE. Este
 informe lo cita como precedente. Vigía tiene que mostrar algo que ese trabajo no tiene. Los candidatos medidos acá
