@@ -301,3 +301,11 @@ Research en el vault: notas "prácticas de laboratorios", "Neural Networks Are A
   - D, comparación: parcial del router − parcial del árbol, media sobre áreas con IC90. Decide qué sensor gana. IC90 con 0 adentro: empatan.
   - Decisión: si solo H_arbol se cumple, o D < 0, el mapa de conceptos humano predice el daño y el bloque siguiente repite según el árbol de conceptos. Si solo H_router, o D > 0, el router entra como sensor de daño. Si las dos se cumplen y D empata, el bloque siguiente compara repetir por router contra repetir por árbol.
   - Costo estimado: 18 corridas de ~35 s más ~4 min de carga, ~15 min, ~0,5 unidades.
+- 2026-11-04, B17b (`.cache/runs/bloques/b17b_gpu/`; 17:05-17:10, ~0,17 unidades). La puerta C0 cortó en la primera corrida (bird, semilla 0): entrenados +1,44, franja lejana +0,96, cociente 1,5 < 2. Hechos nuevos 3,60 → 0,46 en 20 pasos.
+  - Exploratorio (bird): parcial con todas las covariables, arbol +0,11 y router +0,02.
+  - Punto débil: el derrame general (franja lejana +0,8 a +1,0) es la mayor parte del daño. Un derrame uniforme no cambia los rangos de Spearman, pero uno desigual agrega ruido.
+- 2026-11-04, calibración de B17 (`colab/b17_calibracion.py`; exploratoria, sobre las áreas ya vistas dog y bird, semilla 0). Variantes: base; ancla (cada lote suma 16 definiciones verdaderas de 512 conceptos lejanos, conjunto de preservación como en edición de conocimiento); ancla_medio (ancla, entrenando solo las capas 6-11, donde ROME ubica los hechos).
+  - Regla de elección, escrita antes de ver los datos: gana la variante con hechos nuevos < 0,5 y mayor cociente mínimo (entrenados / franja lejana) entre las dos áreas. Tiene que llegar a 2 en las dos.
+  - Si ninguna llega a 2: el banco no aísla daño específico en Granite con este formato. B16 y B17 quedan exploratorios, y la pregunta árbol contra router se cierra sin confirmar.
+  - Si alguna llega: B17c confirma con esa variante en 6 áreas nuevas (musical_instrument, wheeled_vehicle, fish, disease, tree, tool), 3 semillas, con las reglas de B17b.
+  - Costo estimado: ~4 min de carga y 6 corridas de ~35-60 s, ~0,3 unidades.
