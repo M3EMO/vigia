@@ -244,3 +244,19 @@ Research en el vault: notas "prácticas de laboratorios", "Neural Networks Are A
   - Lectura: el olvido es total a toda distancia desde los primeros 250 pasos, y supera ln 8. Vive en la regla de abajo, que es propia de cada lengua en MRHM. Las hermanas comparten todo lo demás, y eso no las protege.
   - Veredicto según la regla: la línea del árbol del lado de los datos se cierra en este banco. No se corre la versión de dos jerarquías cruzadas.
   - Límite: el banco pone el nivel propio de cada hoja en la superficie. Un banco con superficie compartida y diferencias arriba es la única variante que podría cambiar el veredicto.
+- 2026-11-04, B16 (olvido de conceptos en Granite; `colab/b16_conceptos.py`). Pregunta: ¿qué distancia predice qué concepto se olvida, el árbol humano de conceptos, el estado del modelo o el router?
+  - Motivo: B15 mostró que el olvido vivía en la superficie propia de cada lengua. El usuario propone que el mapa fractal sea de conceptos, no de modos de expresarlos.
+  - Literatura (Lacuna; nota del vault «mapas-fractales-del-dataset-y-repetición-guiada-por-árbol»): el espacio de conceptos es compartido entre lenguas (Körner et al., EACL 2026, 2601.22851). El coseno de estados a ~1/3 de la profundidad predice el daño de una edición a otros hechos (CLaRE, 2603.19297). No apareció el solapamiento de expertos como predictor del olvido.
+  - Banco: Granite-3.1-1B-A400M, capas 6-23 entrenables en fp32. Seis áreas de WordNet: dog, musical_instrument, wheeled_vehicle, fish, disease, tree. Cada área parte del mismo Granite.
+  - Hechos nuevos: 64 conceptos del área con las definiciones permutadas entre ellos, sin que ninguno conserve la suya. 200 pasos, lote 16, lr 5e-5.
+  - Medida: subida de la pérdida de la definición verdadera de los conceptos de evaluación. Son hasta 96 por franja de Wu-Palmer a la raíz (0-0,4; 0,4-0,6; 0,6-0,8; 0,8-1), sin los entrenados.
+  - Predictores, medidos antes de entrenar contra el entrenado más cercano: arbol (Wu-Palmer), estado (coseno en la capa 8, último token del sujeto) y router (solapamiento medio del top-8 por capa).
+  - C0, el entrenamiento hizo efecto: la pérdida de los hechos nuevos baja de la inicial, y la de las definiciones verdaderas de los entrenados sube.
+  - C1, banco válido (control positivo de CLaRE): Spearman(estado, subida) > 0 en al menos 5 de 6 áreas, y su media con IC90 bootstrap sobre áreas > 0.
+  - H_arbol: Spearman parcial(arbol, subida | estado), media sobre áreas con IC90 > 0.
+  - H_router: Spearman parcial(router, subida | estado), media sobre áreas con IC90 > 0.
+  - Puerta de gasto: si Spearman(estado, subida) ≤ 0 en las 2 primeras áreas, se corta la corrida.
+  - Decisión: si H_arbol se cumple, el bloque siguiente repite según el árbol de conceptos. Si H_router se cumple, el router entra como sensor de olvido (Vigía y el paper). Si ninguna, la geometría del modelo basta (CLaRE, CAMR) y el mapa humano no agrega.
+  - Auditoría de gasto: la medida es la de CLaRE; el árbol y el router contra el estado no están publicados; cada área aporta un punto a cada regla. Una sola semilla, porque la unidad de réplica es el área.
+  - Costo estimado (no medido): un proceso en L4, ~5 min por área, ~35 min con la carga, ~1,2 unidades. Con la puerta cerrada: ~0,5 unidades. Memoria: ~16 GB (capas 6-23 en fp32 con AdamW).
+  - Pruebas: test con Granite chico (entrena, guarda los predictores y restaura el modelo). Sondas sobre el Granite real en CPU, en bf16, sin errores. El entrenamiento del Granite real no entra en la RAM local.
