@@ -322,3 +322,10 @@ Research en el vault: notas "prácticas de laboratorios", "Neural Networks Are A
   - Exploratorio: el mismo parcial con el solapamiento de palabras de la definición como covariable (interferencia del lado de la salida).
   - Decisión: la de B17b. Una H vale solo si se cumple en todos los conceptos y dentro del área.
   - Costo estimado: 18 corridas de ~45 s más ~4 min de carga, ~18 min, ~0,6 unidades.
+- 2026-11-04, B17c, resultado (`.cache/runs/bloques/b17c_gpu/`; L4, 17:30-17:55, ~0,8 unidades). Cayó por OOM en la corrida 15 de 18 (semillas 0 y 1 completas; semilla 2 con 2 áreas). C0 pasó. Las 4 corridas faltantes no se repiten: el diseño pareado siguiente las supera.
+  - Cada corrida real tardó ~100 s, no 45: las sondas van de a una oración y el contador no las incluye.
+  - Todos los conceptos: C1 +0,283 [+0,234; +0,337], 6/6 áreas. H_router +0,187 [+0,145; +0,226]. H_arbol +0,250 [+0,214; +0,291]. D −0,063 [−0,101; −0,021].
+  - Dentro del área (~91 conceptos): estado +0,024 [−0,029; +0,080]; router +0,052 [−0,007; +0,111]; arbol +0,013 [−0,036; +0,059]; D +0,039 [−0,012; +0,091].
+  - Veredicto según la regla: ninguna H se cumple, porque cada una tiene que valer también dentro del área. Los tres predictores separan adentro de afuera del área, sin ordenar con claridad el daño dentro de ella.
+  - Exploratorio, solapamiento de palabras de la definición: subida +0,245 [+0,204; +0,283]. Router y árbol sobreviven a ese control (+0,174 y +0,219).
+  - Exploratorio post hoc, mismo concepto bajo dos conjuntos entrenados (~37 conceptos, 5 áreas): router +0,125 [+0,064; +0,187]; estado +0,075 [−0,013; +0,163]; arbol −0,071 [−0,151; +0,009]. Dentro del área: router +0,107 [+0,040; +0,174]; arbol −0,045 [−0,134; +0,042]. La ventaja transversal del árbol puede venir de rasgos propios del concepto.
