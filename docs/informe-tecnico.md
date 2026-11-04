@@ -685,9 +685,32 @@ Lectura:
 - Lo medido es un colapso general del formato «A X is»: la pérdida de evaluación sube ~3 nats de media.
 - Dentro de ese colapso, el solapamiento de expertos predice el daño en las 4 áreas, y sobrevive al control por la
   pérdida inicial. El árbol humano no agrega nada sobre el estado.
-- Con el router en el control, el estado queda negativo (−0,09). El router predice mejor que la medida de CLaRE.
-- Límite: el router puede codificar rasgos del token (frecuencia, largo del sujeto), sin control todavía. Falta
-  un banco con conflicto real (definiciones de fuera del área) antes de afirmar el router como sensor de daño.
+- Con el router en el control, el estado queda negativo (−0,09). B18 no replica esta ventaja del router.
+
+**B17 y B18: daño a conceptos con conflicto real (L4, ~2,7 unidades en total).** Banco: cada concepto entrenado
+recibe la definición de un concepto lejano, y cada lote suma definiciones verdaderas de 512 conceptos lejanos
+(conjunto de preservación). El entrenamiento corta cuando los hechos nuevos bajan de 0,5 nats (Gekhman et al., EMNLP
+2024). Los entrenados suben +0,69 nats y los lejanos +0,05. Códigos: `colab/b17_conflicto.py`, `colab/b18_mismo_concepto.py`.
+
+B17c compara conceptos distintos. Los tres predictores separan adentro de afuera del área (estado +0,28, router
++0,19, árbol +0,25), pero dentro del área ninguno se separa de 0. B18 compara el mismo concepto bajo 6 conjuntos
+entrenados, en 6 áreas nuevas. El efecto fijo por concepto cancela definición, frecuencia y largo.
+
+| Predictor (B18, parcial con efecto fijo por concepto) | Valor | Regla |
+|---|---|---|
+| estado (coseno, capa 8) | +0,086 [+0,057; +0,116] | se cumple |
+| router (solapamiento del top-8, último token del sujeto) | −0,014 [−0,032; +0,006] | no se cumple |
+| árbol de WordNet | +0,016 [−0,014; +0,041] | no se cumple |
+| fiabilidad (conjunto 0 contra su repetición) | +0,377 [+0,346; +0,407] | se cumple |
+
+Lectura:
+- El solapamiento previo de ruteo no predice qué concepto se daña. El router como sensor de daño sale del paper.
+  Esto no toca al sensor de duda de Vigía, que mide otra cosa.
+- El árbol humano de conceptos no predice el daño de un concepto. Su ventaja entre conceptos venía de rasgos propios.
+- El estado predice poco. Unos 38 % de la variación por conjunto se repite, y todos los predictores juntos explican
+  ~1,8 %. La mayor parte del daño reproducible queda sin explicar por estos mapas.
+- Límites: máximo contra el entrenado más cercano; router medido en el sujeto, no en los tokens de la definición;
+  la repetición comparte los donantes.
 
 **Novedad (auditoría con Lacuna, 2026-11-02).** El router como sensor de duda ya está publicado: "Routing Entropy:
 A Hidden Self-Verifier for Free" (COLM 2026) reporta AUROC 0,655 con la entropía de ruteo sola en OLMoE. Este

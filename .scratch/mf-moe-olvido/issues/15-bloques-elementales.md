@@ -345,3 +345,14 @@ Research en el vault: notas "prácticas de laboratorios", "Neural Networks Are A
   - Si C2 se cumple y H_arbol no, el árbol humano de conceptos no predice el daño y la línea se cierra.
   - Auditoría de gasto: la literatura no usa el solapamiento previo como predictor (MoEEdit mide el cambio de ruteo); cada conjunto aporta desvíos por concepto y cada área aporta un punto a cada regla. Saldo: 592,5 unidades.
   - Costo estimado: 42 corridas de ~55 s, 6 sondas de área de ~70 s, ~4 min de carga: ~47 min, ~1,5 unidades. Con la puerta cerrada: ~0,2 unidades.
+- 2026-11-04, B18, resultado (`.cache/runs/bloques/b18_gpu/`; L4, 18:01-18:35, ~1,07 unidades; 42 de 42 corridas). Efecto fijo por concepto, miembros del área, ~140 conceptos por área, IC90 sobre 6 áreas.
+  - Banco: entrenados +0,69, lejos +0,05, hechos nuevos 0,34 nats, 20-30 pasos. C0 pasó en la primera corrida y en 34 de 42 corridas.
+  - C2, fiabilidad: +0,377 [+0,346; +0,407]. Se cumple: un nulo se puede interpretar.
+  - H_estado: +0,086 [+0,057; +0,116]. Se cumple.
+  - H_router: −0,014 [−0,032; +0,006]. No se cumple.
+  - H_arbol: +0,016 [−0,014; +0,041]. No se cumple.
+  - D1, router − estado: −0,100 [−0,140; −0,061]. El estado gana.
+  - Veredicto según la regla: el router como sensor de daño sale del paper. La línea del árbol humano de conceptos se cierra. El pareado exploratorio de B17c a favor del router no se replicó.
+  - Robustez no preregistrada, con efectos fijos de concepto y de corrida: estado +0,073 [+0,044; +0,100]; router −0,005 [−0,023; +0,014]; arbol +0,033 [+0,025; +0,040], por debajo del mínimo de 0,05; D1 −0,078 [−0,120; −0,033].
+  - Hallazgo no previsto: ~38 % de la variación por conjunto se repite, pero predictores y covariables juntos explican ~1,8 %. Unos 95 % del daño reproducible no lo explica ningún mapa medido.
+  - Límites: el predictor es el máximo contra el entrenado más cercano; el router se mide en el último token del sujeto, no en los tokens de la definición; la repetición comparte conjunto y donantes, así que el techo incluye el efecto de los donantes.
