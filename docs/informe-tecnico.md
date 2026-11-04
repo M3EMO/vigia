@@ -597,6 +597,29 @@ Lectura:
 - Veredicto: H1 queda inconclusa con esta medida, porque el control positivo falla.
 - B13b repite la prueba con la medida de Doshi: la misma oración en las 8 lenguas, comparada oración por oración.
 
+**B13b: traducciones (5 semillas, 20.000 pasos, L4, gramática V = 8, M = 2).** Cada oración latente se escribe en
+las 8 lenguas. La medida es la de Doshi: vecinos mutuos (k = 10) entre traducciones, menos lo mismo entre oraciones
+barajadas. El ruteo de una oración es su histograma de expertos. Cada valor es la parte aprendida: paso final menos
+paso 0. Las reglas se escribieron antes de ver los datos (ticket 15). IC 90 % bootstrap sobre semillas.
+Código: `colab/b13b_traducciones.py`.
+
+| Medida | capa 0 | capa 1 | capa 2 | capa 3 |
+|---|---|---|---|---|
+| Estados, d1 − d3 (control positivo) | −0,008 | +0,051 [+0,036; +0,066] | +0,124 [+0,118; +0,131] | +0,101 [+0,089; +0,112] |
+| Ruteo por oración, d1 − d3 | +0,011 [+0,006; +0,016] | +0,007 [+0,001; +0,013] | −0,010 | −0,004 |
+| Ruteo base − router al azar, d1 | +0,009 [+0,005; +0,012] | +0,006 [+0,001; +0,011] | −0,002 | +0,001 |
+| Ruteo − k-means de 16 sobre estados, d1 | +0,005 [−0,003; +0,012] | +0,008 [−0,001; +0,017] | −0,030 [−0,037; −0,019] | −0,005 |
+
+Lectura:
+- El control positivo funciona: los estados guardan el árbol, más fuerte entre lenguas cercanas, como predice Doshi.
+- El router aprendido guarda una huella del árbol en las capas 0 y 1, por encima de un router al azar.
+- La huella es chica (unas 20 veces menor que en los estados) y casi solo entre hermanas, a distancia 1.
+- La huella no supera a un k-means sobre los mismos estados: el ruteo refleja los grupos de estados, como dice
+  «The Myth of Expert Specialization» (arXiv 2604.09780).
+- Veredicto H1: el ruteo recupera poco del árbol y nada propio. Un árbol para hacer crecer expertos tendría que salir
+  de los estados, no del router.
+- Límite: 4 capas con IC 90 % dan ~19 % de error de familia en la primera condición; pasan dos capas, la 0 con margen.
+
 **Novedad (auditoría con Lacuna, 2026-11-02).** El router como sensor de duda ya está publicado: "Routing Entropy:
 A Hidden Self-Verifier for Free" (COLM 2026) reporta AUROC 0,655 con la entropía de ruteo sola en OLMoE. Este
 informe lo cita como precedente. Vigía tiene que mostrar algo que ese trabajo no tiene. Los candidatos medidos acá
