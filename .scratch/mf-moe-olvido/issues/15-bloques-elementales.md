@@ -260,3 +260,18 @@ Research en el vault: notas "prácticas de laboratorios", "Neural Networks Are A
   - Auditoría de gasto: la medida es la de CLaRE; el árbol y el router contra el estado no están publicados; cada área aporta un punto a cada regla. Una sola semilla, porque la unidad de réplica es el área.
   - Costo estimado (no medido): un proceso en L4, ~5 min por área, ~35 min con la carga, ~1,2 unidades. Con la puerta cerrada: ~0,5 unidades. Memoria: ~16 GB (capas 6-23 en fp32 con AdamW).
   - Pruebas: test con Granite chico (entrena, guarda los predictores y restaura el modelo). Sondas sobre el Granite real en CPU, en bf16, sin errores. El entrenamiento del Granite real no entra en la RAM local.
+- 2026-11-04, B16, resultado (`.cache/runs/bloques/b16_gpu/`; L4, 15:01-16:51, ~3,6 unidades más ~0,1 de un intento fallido; cortada tras 4 de 6 áreas). Áreas completas: dog, musical_instrument, wheeled_vehicle, fish. IC90 bootstrap sobre áreas.
+  - Intento fallido (14:56): assert de CUDA «index out of bounds» en la primera sonda. Arreglo: transformers fijo en 5.19.0 (la del `.venv`) y CUDA_LAUNCH_BLOCKING (mf-moe 97b26ce). Colab tenía torch 2.11.
+  - C0 no se cumple. Los hechos nuevos se aprenden (pérdida final 0,008-0,034). Pero la pérdida de la definición verdadera de los entrenados baja 0,9-1,3 nats, en vez de subir.
+  - Causa del fallo de C0: las 64 definiciones permutadas siguen en el entrenamiento como respuesta de otro concepto. El modelo memoriza el conjunto de definiciones del área, sin conflicto por concepto.
+  - Lo que el banco midió: un colapso general del formato «A X is». La pérdida de los conceptos de evaluación sube 2,9-3,3 nats de media (p10 1,4; p90 4,7).
+  - C1 (exploratorio, 4 áreas): Spearman(estado, subida) > 0 en 4/4; media +0,085 [+0,026; +0,145].
+  - H_arbol: parcial(arbol, subida | estado) +0,053 [−0,011; +0,125]. No se cumple.
+  - H_router: parcial(router, subida | estado) +0,224 [+0,157; +0,290]. Se cumple en las 4 áreas (+0,34; +0,21; +0,11; +0,24). Sobrevive al control por la pérdida inicial (+0,14 a +0,33).
+  - Hallazgo no previsto: con el router en el control, el estado queda negativo (−0,092 [−0,185; −0,030]). El router predice el daño mejor que el estado de CLaRE.
+  - Veredicto según la regla: C0 falla, así que el banco no mide olvido por conflicto. Los resultados de H quedan como exploratorios.
+  - Lectura: el solapamiento de expertos del último token del sujeto predice qué conceptos se dañan en un colapso general, mejor que el árbol humano y que el estado. El árbol humano no agrega nada sobre el estado.
+  - Decisión: el router pasa a candidato de sensor de daño (Vigía y el paper), pendiente de un banco con C0 válido. La repetición por árbol humano de conceptos no se corre.
+  - Banco siguiente (sin gasto todavía): definiciones nuevas sacadas de fuera del área y sin repetir ninguna definición verdadera, para que el conflicto sea real. Medir la velocidad en GPU antes de lanzar.
+  - Confusiones sin revisar: el router puede codificar rasgos del token (frecuencia, palabras del sujeto). Falta un control por largo y frecuencia del sujeto.
+  - Lección de gasto: estimé ~5 min por área sin medir; tardó 22 min (oraciones de a una y CUDA_LAUNCH_BLOCKING). C0 era visible en la primera área (16:23 en el log) y no tenía puerta. Una puerta sobre C0 tras la primera área habría ahorrado ~2,3 unidades.
