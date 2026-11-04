@@ -275,3 +275,17 @@ Research en el vault: notas "prácticas de laboratorios", "Neural Networks Are A
   - Banco siguiente (sin gasto todavía): definiciones nuevas sacadas de fuera del área y sin repetir ninguna definición verdadera, para que el conflicto sea real. Medir la velocidad en GPU antes de lanzar.
   - Confusiones sin revisar: el router puede codificar rasgos del token (frecuencia, palabras del sujeto). Falta un control por largo y frecuencia del sujeto.
   - Lección de gasto: estimé ~5 min por área sin medir; tardó 22 min (oraciones de a una y CUDA_LAUNCH_BLOCKING). C0 era visible en la primera área, ~25 min después del arranque, y no tenía puerta. Una puerta sobre C0 tras la primera área habría ahorrado ~2,3 unidades.
+- 2026-11-04, B17 (B16 con conflicto real; `colab/b17_conflicto.py`). Pregunta: ¿el solapamiento de expertos predice qué concepto se daña cuando el conflicto es real y el daño es específico?
+  - Literatura (Lacuna): el fine-tuning de un MoE cambia el ruteo de las capas siguientes, y ese cambio rompe hechos (MoEEdit, ICLR 2026). Mide la similitud de ruteo antes y después, pero no usa el solapamiento previo para predecir qué hecho cae. Memorizar hechos desconocidos enseña un estilo de alucinación que se derrama (Gekhman et al., EMNLP 2024). La defensa es cortar temprano.
+  - Cambios frente a B16: cada entrenado recibe la definición de un concepto lejano (Wu-Palmer a la raíz < 0,3), usada una vez. Los donantes quedan fuera de la evaluación. El entrenamiento corta cuando la pérdida media de los hechos nuevos baja de 0,5 nats (máximo 300 pasos). Lotes de 16 con relleno.
+  - Covariables nuevas: tokens del sujeto, frecuencia en SemCor, solapamiento léxico (Jaccard de tokens) con el entrenado más parecido y último token compartido.
+  - Chequeo con los datos de B16, sin gasto: el router correlaciona con el léxico (+0,31 a +0,59). Con todas las covariables, el parcial del router baja pero sigue positivo en las 4 áreas (+0,25; +0,20; +0,09; +0,18).
+  - C0, puerta tras la primera área: hechos nuevos < 0,5 nats, y subida de la definición verdadera de los entrenados > máx(0,5; 2 × subida media de evaluación). Si falla, se corta.
+  - Puerta de tiempo: si la primera área tarda más de 900 s, se corta.
+  - Puerta C1: si Spearman(estado, subida) ≤ 0 en las dos primeras áreas, se corta.
+  - C1, banco válido: Spearman(estado, subida) > 0 en al menos 5 de 6 áreas, y media con IC90 > 0.
+  - H_router: Spearman parcial(router, subida | estado, pérdida inicial, tokens, frecuencia, léxico, último token), media sobre áreas con IC90 bootstrap > 0.
+  - H_arbol: el mismo parcial con el árbol de WordNet.
+  - Decisión: si H_router se cumple, el bloque siguiente elige qué repetir por solapamiento de ruteo, contra repetición al azar y contra vecinos de estado (CAMR). Si no se cumple, la señal de B16 era del colapso y el router como sensor de daño sale del paper.
+  - Auditoría de gasto: la medida es la de CLaRE y MoEEdit; el solapamiento previo como predictor no está publicado; cada área aporta un punto a cada regla. Costo estimado (no medido): ~3 min de carga y ~3 min por área, ~25 min, ~0,8 unidades. Tope por la puerta de tiempo: ~0,6 unidades.
+  - Pruebas: 3 tests en CPU (el relleno no cambia la pérdida por oración; la puerta corta y restaura el modelo). En el Granite real en bf16, la pérdida en lote difiere de la pasada de a una en 0,029 nats como máximo.
