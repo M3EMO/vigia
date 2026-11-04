@@ -289,3 +289,15 @@ Research en el vault: notas "prácticas de laboratorios", "Neural Networks Are A
   - Decisión: si H_router se cumple, el bloque siguiente elige qué repetir por solapamiento de ruteo, contra repetición al azar y contra vecinos de estado (CAMR). Si no se cumple, la señal de B16 era del colapso y el router como sensor de daño sale del paper.
   - Auditoría de gasto: la medida es la de CLaRE y MoEEdit; el solapamiento previo como predictor no está publicado; cada área aporta un punto a cada regla. Costo estimado (no medido): ~3 min de carga y ~3 min por área, ~25 min, ~0,8 unidades. Tope por la puerta de tiempo: ~0,6 unidades.
   - Pruebas: 3 tests en CPU (el relleno no cambia la pérdida por oración; la puerta corta y restaura el modelo). En el Granite real en bf16, la pérdida en lote difiere de la pasada de a una en 0,029 nats como máximo.
+- 2026-11-04, B17, primer intento (`.cache/runs/bloques/b17_gpu/`; 16:58-17:03, ~0,17 unidades). La puerta C0 cortó tras la primera área (dog).
+  - Hechos nuevos: 3,55 → 0,42 nats en 20 pasos (5 épocas). Área en 29 s.
+  - Subida por franja de Wu-Palmer a la raíz: 0,77 (< 0,4); 1,02; 1,16; 2,11 (≥ 0,8). Entrenados: 2,26.
+  - Por qué falló C0: la regla pedía entrenados > 2 × media de toda la evaluación (2,53). Esa media incluye a los vecinos dañados, que son el efecto medido. Contra la franja lejana, los entrenados suben 2,9 veces más. La regla estaba mal calibrada, no el banco.
+  - Exploratorio (una área): parcial con todas las covariables, arbol +0,34 y router +0,27. Con conflicto real, el árbol sí predice, al revés que en B16.
+- 2026-11-04, B17b (preregistro; `colab/b17_conflicto.py`). Cambios frente a B17: C0 usa como base la franja lejana (Wu-Palmer a la raíz < 0,4): entrenados > máx(0,5; 2 × subida lejana). dog queda fuera por vista; bird la reemplaza. Tres semillas (0, 1, 2) por área, en un solo proceso, semilla por semilla.
+  - Unidad de réplica: el área. Cada regla promedia las 3 semillas dentro del área y saca el IC90 bootstrap sobre las 6 áreas.
+  - Puertas en el código: C0 y tiempo (> 900 s) tras la primera corrida; C1 (estado ≤ 0 en las dos primeras áreas).
+  - C1, H_router y H_arbol: las mismas de B17, con todas las covariables.
+  - D, comparación: parcial del router − parcial del árbol, media sobre áreas con IC90. Decide qué sensor gana. IC90 con 0 adentro: empatan.
+  - Decisión: si solo H_arbol se cumple, o D < 0, el mapa de conceptos humano predice el daño y el bloque siguiente repite según el árbol de conceptos. Si solo H_router, o D > 0, el router entra como sensor de daño. Si las dos se cumplen y D empata, el bloque siguiente compara repetir por router contra repetir por árbol.
+  - Costo estimado: 18 corridas de ~35 s más ~4 min de carga, ~15 min, ~0,5 unidades.
