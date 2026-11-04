@@ -183,3 +183,5 @@ Research en el vault: notas "prácticas de laboratorios", "Neural Networks Are A
   - Control positivo: estados, d1 − d3 > 0 con IC90 > 0 en las capas 2 y 3.
   - H1b: ruteo_oracion d1 − d3 > 0 con IC90 > 0 en alguna capa, y base − router_azar en d1 con IC90 > 0 en esa capa.
   - Estricta: ruteo_oracion − kmeans_oracion en d1 con IC90 > 0.
+  - 2026-11-03 21:10, cambio antes de ver datos: se corta sin_balanceo. Ninguna regla de arriba la usa, y en B13 dio resultados inconsistentes. Ahorra un tercio de la corrida (~1,1 unidades a 1,94 unidades/h). La corrida se detiene cuando las 5 semillas tienen base y router_azar.
+- 2026-11-03, regla de gasto (pedido del usuario): antes de gastar unidades, cada corrida responde tres preguntas por escrito. ¿Cómo se hace la medida en la literatura? ¿Ya está investigada (Lacuna)? ¿Su resultado, y cada variante o semilla, cambia una decisión? Lo que no cambia una decisión no corre.
