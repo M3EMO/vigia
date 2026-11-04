@@ -576,6 +576,27 @@ Lectura:
   que toca 0 contra azar (H-b no se cumple).
 - Consecuencia para el MoE fractal: dividir un experto desde su padre no aporta una ventaja útil en este modelo.
 
+**B13: ¿el ruteo recupera el árbol que generó los datos? (5 semillas, 20.000 pasos, L4).** Los datos son 8 lenguas
+de un Random Hierarchy Model multilingüe (Doshi et al., arXiv 2610.07168), generalizado de 2 a 8 lenguas. Las lenguas
+son las hojas de un árbol binario de profundidad 3. Dos lenguas a distancia d comparten todas las tablas de reglas
+salvo las d de abajo. El modelo es el de B12c. La medida compara el uso medio de expertos de cada lengua contra el
+árbol: correlación de Mantel con un nulo de hojas permutadas.
+Código: `mf_moe/hierarchy.py` y `colab/b13_arbol.py`.
+
+| Medida (capa 2, paso 20.000) | base | router al azar | k-means sobre estados | estados |
+|---|---|---|---|---|
+| Mantel contra el árbol (semillas sobre el p95 del nulo) | −0,07 (0/5) | +0,05 (1/5) | −0,02 (0/5) | +0,02 (0/5) |
+| IM experto × lengua | 0,19 | 0,13 | 0,31 | — |
+
+Lectura:
+- En ninguna capa ni variante el ruteo supera el nulo en más de 1 de 5 semillas.
+- El control positivo también falla: los estados superan el nulo en 0 a 2 de 5 semillas.
+- El ruteo separa las lenguas (IM 0,19), pero como una estrella, sin el árbol.
+- Causa probable: las tablas de abajo de dos lenguas hermanas son independientes, así que la superficie no muestra
+  el árbol, y la media por lengua lo diluye.
+- Veredicto: H1 queda inconclusa con esta medida, porque el control positivo falla.
+- B13b repite la prueba con la medida de Doshi: la misma oración en las 8 lenguas, comparada oración por oración.
+
 **Novedad (auditoría con Lacuna, 2026-11-02).** El router como sensor de duda ya está publicado: "Routing Entropy:
 A Hidden Self-Verifier for Free" (COLM 2026) reporta AUROC 0,655 con la entropía de ruteo sola en OLMoE. Este
 informe lo cita como precedente. Vigía tiene que mostrar algo que ese trabajo no tiene. Los candidatos medidos acá
