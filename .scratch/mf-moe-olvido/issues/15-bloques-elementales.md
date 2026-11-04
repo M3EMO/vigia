@@ -329,3 +329,19 @@ Research en el vault: notas "prácticas de laboratorios", "Neural Networks Are A
   - Veredicto según la regla: ninguna H se cumple, porque cada una tiene que valer también dentro del área. Los tres predictores separan adentro de afuera del área, sin ordenar con claridad el daño dentro de ella.
   - Exploratorio, solapamiento de palabras de la definición: subida +0,245 [+0,204; +0,283]. Router y árbol sobreviven a ese control (+0,174 y +0,219).
   - Exploratorio post hoc, mismo concepto bajo dos conjuntos entrenados (~37 conceptos, 5 áreas): router +0,125 [+0,064; +0,187]; estado +0,075 [−0,013; +0,163]; arbol −0,071 [−0,151; +0,009]. Dentro del área: router +0,107 [+0,040; +0,174]; arbol −0,045 [−0,134; +0,042]. La ventaja transversal del árbol puede venir de rasgos propios del concepto.
+- 2026-11-04, B18 (preregistro; `colab/b18_mismo_concepto.py`). Pregunta: para el mismo concepto, ¿el cambio del predictor sigue al cambio del daño cuando cambia lo que se entrena? Es la prueba de la pregunta árbol, estado y router sin rasgos propios del concepto.
+  - Banco: el de B17c (donantes lejanos, 512 anclas, corte temprano), con definiciones de donantes de hasta 30 palabras (OOM de B17c). Seis áreas nuevas: clothing, insect, container, beverage, fungus, reptile.
+  - Diseño: evaluación fija por área (un tercio de los miembros, hasta 200, más 48 lejanos). Seis conjuntos entrenados de 64, sacados del resto de los miembros. Una corrida extra repite el conjunto 0 con otro orden de lotes.
+  - Análisis, escrito antes de los datos: efecto fijo por concepto, solo miembros del área. Spearman parcial sobre los desvíos por concepto, por área; media sobre 6 áreas con IC90 bootstrap.
+  - Covariables, también en desvíos: estado, léxico, último token compartido y solapamiento de palabras de la definición con las verdaderas de los entrenados y con las de los donantes.
+  - Control del análisis con datos sintéticos: detecta un efecto plantado (router +0,63) y rechaza una confusión por concepto (árbol +0,97 transversal, −0,01 con efecto fijo). En el nulo dio un falso positivo chico (−0,018 con IC90 sin 0): por eso cada regla pide además |media| ≥ 0,05.
+  - C0, puerta tras la primera corrida: la de B17c. Tiempo: > 900 s en la primera corrida.
+  - C2, fiabilidad: correlación entre los desvíos del conjunto 0 y los de su repetición, media con IC90 > 0 y ≥ 0,05. Si falla, el efecto del conjunto no se separa del ruido y un nulo no se puede interpretar.
+  - H_router: parcial(router, subida | estado y covariables) con IC90 > 0 y media ≥ 0,05.
+  - H_estado: parcial(estado, subida | router y covariables), misma regla.
+  - H_arbol: parcial(arbol, subida | estado y covariables), misma regla.
+  - D1, router − estado: IC90 > 0 y media ≥ 0,05 significa que el router agrega información sobre el estado.
+  - Decisión: si H_router y D1 se cumplen, el router entra al paper como sensor de daño y el bloque siguiente elige qué repetir por solapamiento de ruteo, contra azar y contra vecinos de estado. Si H_router se cumple sin D1, el router es un proxy barato del estado, útil para Vigía porque no pide otra pasada. Si C2 se cumple y H_router no, el router como sensor de daño sale del paper.
+  - Si C2 se cumple y H_arbol no, el árbol humano de conceptos no predice el daño y la línea se cierra.
+  - Auditoría de gasto: la literatura no usa el solapamiento previo como predictor (MoEEdit mide el cambio de ruteo); cada conjunto aporta desvíos por concepto y cada área aporta un punto a cada regla. Saldo: 592,5 unidades.
+  - Costo estimado: 42 corridas de ~55 s, 6 sondas de área de ~70 s, ~4 min de carga: ~47 min, ~1,5 unidades. Con la puerta cerrada: ~0,2 unidades.
