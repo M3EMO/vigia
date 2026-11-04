@@ -643,6 +643,29 @@ Lectura:
 - Congelar la capa 0 aumenta el olvido, al revés del remedio de «Spurious Forgetting» en LLM preentrenados.
 - Límite: el banco difiere de la fase 2 (modelo desde cero, mismo vocabulario en las dos etapas, una sola transición).
 
+**B15: repetición guiada por el árbol de los datos (5 semillas, L4, 0,58 unidades; cortada por la puerta).**
+Pregunta: ¿el olvido depende de la distancia en el árbol de los datos? Si depende, ¿repetir según el árbol le gana
+a repetir al azar? Banco: las 8 lenguas MRHM de B13b. El modelo aprende 7 lenguas juntas (10.000 pasos) y después
+una lengua nueva (4000 pasos). Precedentes: el olvido de una clase crece con su parecido a lo nuevo (CLAD, AAAI
+2024), con máximo a parecido intermedio (Ramasesh, ICLR 2021; Lee, ICML 2021). CAMR (2610.36734) repite vecinos
+por embeddings. Código: `colab/b15_repeticion.py`.
+
+| Brazo | Olvido medio d = 1 / 2 / 3 (nats) | Pérdida de la lengua nueva |
+|---|---|---|
+| sin repetición (5 semillas) | 4,98 / 5,21 / 5,12 | 0,784 |
+| repetición uniforme, 25 % del lote (semillas 2-5) | 0,12 / 0,12 / 0,12 | 0,806 |
+
+Lectura:
+- El control de distancia falla: d1 − d3 = −0,14 [−0,32; +0,04]. Según la regla escrita antes, la corrida se cortó.
+- Sin repetición, el olvido es total a toda distancia desde los primeros 250 pasos. La pérdida de las viejas
+  supera a la de adivinar al azar (ln 8 ≈ 2,08): el modelo predice con confianza las reglas de la lengua nueva.
+- Mecanismo probable: cada lengua tiene propia la regla de abajo, la que toca los tokens. Las hermanas comparten
+  todo lo demás, pero el olvido vive justo en el nivel que ninguna comparte. La distancia no cambia nada.
+- La repetición uniforme baja el olvido de ~5 a ~0,12 nats, también plano por distancia. Elegir por distancia
+  tendría poco que ganar.
+- Límite: un solo banco sintético, donde el nivel que se olvida es propio de cada hoja. Un banco donde las hojas
+  compartan la superficie y difieran arriba podría dar otro resultado.
+
 **Novedad (auditoría con Lacuna, 2026-11-02).** El router como sensor de duda ya está publicado: "Routing Entropy:
 A Hidden Self-Verifier for Free" (COLM 2026) reporta AUROC 0,655 con la entropía de ruteo sola en OLMoE. Este
 informe lo cita como precedente. Vigía tiene que mostrar algo que ese trabajo no tiene. Los candidatos medidos acá

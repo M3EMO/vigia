@@ -236,3 +236,11 @@ Research en el vault: notas "prácticas de laboratorios", "Neural Networks Are A
   - Plasticidad: pérdida final de la lengua nueva por brazo. Un brazo que gana pero sube la pérdida nueva más de 0,05 nats queda marcado.
   - Decisión: si H se cumple, el bloque siguiente prueba dos jerarquías cruzadas (la versión «capas en distintos ejes») y el resultado entra al paper. Si C1 o H fallan, la línea del árbol del lado de los datos se cierra con ese resultado.
   - Auditoría de gasto: la medida es la de CLAD y Ramasesh (olvido por clase contra parecido); la repetición por árbol no está publicada; cada brazo y cada semilla alimenta una regla. Velocidad: CPU 9 pasos/s; L4 ~15 pasos/s por proceso con 5 en paralelo. Costo estimado: 5 semillas en paralelo, ~35 min, ~1,1 unidades a 1,94 unidades/h. Con la puerta cerrada: ~0,5 unidades. Humo en CPU (300 + 250 pasos) sin errores.
+- 2026-11-04, B15, resultado (`.cache/runs/bloques/b15_gpu/`; L4, 13:24-13:42, ~0,58 unidades; cortada por la puerta). Olvido medio sobre la historia de B, IC90 bootstrap sobre semillas 1-5.
+  - sin_repeticion: d1/d2/d3 = 4,98 / 5,21 / 5,12 nats. Cierre de A de las viejas: 0,92-0,95.
+  - C1 no se cumple: d1 − d3 −0,14 [−0,32; +0,04]; d2 − d1 +0,23 [−0,10; +0,55]. En olvido final: d1 − d3 −0,17 [−0,38; +0,06].
+  - Puerta: se cortó la corrida con sin_repeticion en 5 semillas y uniforme en 4 (semillas 2-5). Cerca, lejos y perdida no corrieron.
+  - Exploratorio, uniforme (semillas 2-5): olvido 0,12 / 0,12 / 0,12 nats; pérdida nueva 0,806 contra 0,784 sin repetición.
+  - Lectura: el olvido es total a toda distancia desde los primeros 250 pasos, y supera ln 8. Vive en la regla de abajo, que es propia de cada lengua en MRHM. Las hermanas comparten todo lo demás, y eso no las protege.
+  - Veredicto según la regla: la línea del árbol del lado de los datos se cierra en este banco. No se corre la versión de dos jerarquías cruzadas.
+  - Límite: el banco pone el nivel propio de cada hoja en la superficie. Un banco con superficie compartida y diferencias arriba es la única variante que podría cambiar el veredicto.
