@@ -309,3 +309,16 @@ Research en el vault: notas "prácticas de laboratorios", "Neural Networks Are A
   - Si ninguna llega a 2: el banco no aísla daño específico en Granite con este formato. B16 y B17 quedan exploratorios, y la pregunta árbol contra router se cierra sin confirmar.
   - Si alguna llega: B17c confirma con esa variante en 6 áreas nuevas (musical_instrument, wheeled_vehicle, fish, disease, tree, tool), 3 semillas, con las reglas de B17b.
   - Costo estimado: ~4 min de carga y 6 corridas de ~35-60 s, ~0,3 unidades.
+- 2026-11-04, calibración de B17, resultado (`.cache/runs/bloques/b17cal_gpu/` y `b17cal2_gpu/`; 17:12-17:18 cayó por OOM con lotes de 32, 17:19-17:29 completa; ~0,5 unidades). Subida en nats, semilla 0.
+  - base: dog entrenados 2,81, lejos 1,16, cerca 2,66 (cociente 2,4); bird 1,73, 0,97, 1,45 (1,8).
+  - ancla: dog 1,02, 0,04, 0,86 (24); bird 0,95, 0,14, 0,71 (7,1). 30 pasos.
+  - ancla_medio: dog 0,98, −0,30, 0,75; bird 0,94, −0,26, 0,51. 70-80 pasos.
+  - Las anclas frenan el derrame general, como en edición de conocimiento y en Gekhman.
+  - Punto débil: las anclas salen de la misma población que la franja lejana. Entrenan esa franja directamente, y con ancla_medio la franja hasta mejora. El cociente con base negativa no tiene sentido.
+  - Desviación de la regla escrita: la regla elegía ancla_medio por el cociente mínimo, que quedó degenerado. Elijo ancla: la franja lejana queda cerca de 0 sin pasarse, usa 30 pasos y mantiene las capas 6-23 de B16 y B17.
+- 2026-11-04, B17c (preregistro; `colab/b17_conflicto.py` con 512 anclas). Seis áreas nuevas: musical_instrument, wheeled_vehicle, fish, disease, tree, tool. Semillas 0, 1 y 2. Puertas en el código como en B17b.
+  - Reglas de B17b: C1, H_router, H_arbol y D, con todas las covariables. La unidad de réplica es el área.
+  - Control nuevo contra la contaminación de las anclas: cada H también tiene que cumplirse (IC90 > 0) solo entre los evaluados que son hipónimos de la raíz del área.
+  - Exploratorio: el mismo parcial con el solapamiento de palabras de la definición como covariable (interferencia del lado de la salida).
+  - Decisión: la de B17b. Una H vale solo si se cumple en todos los conceptos y dentro del área.
+  - Costo estimado: 18 corridas de ~45 s más ~4 min de carga, ~18 min, ~0,6 unidades.
