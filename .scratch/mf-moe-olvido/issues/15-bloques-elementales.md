@@ -356,3 +356,18 @@ Research en el vault: notas "prácticas de laboratorios", "Neural Networks Are A
   - Robustez no preregistrada, con efectos fijos de concepto y de corrida: estado +0,073 [+0,044; +0,100]; router −0,005 [−0,023; +0,014]; arbol +0,033 [+0,025; +0,040], por debajo del mínimo de 0,05; D1 −0,078 [−0,120; −0,033].
   - Hallazgo no previsto: ~38 % de la variación por conjunto se repite, pero predictores y covariables juntos explican ~1,8 %. Unos 95 % del daño reproducible no lo explica ningún mapa medido.
   - Límites: el predictor es el máximo contra el entrenado más cercano; el router se mide en el último token del sujeto, no en los tokens de la definición; la repetición comparte conjunto y donantes, así que el techo incluye el efecto de los donantes.
+- 2026-11-04, B19 (preregistro; `colab/b19_gradientes.py`). Pregunta: ¿el mapa de gradientes explica el daño reproducible que árbol, estado y router dejaron sin explicar en B18?
+  - Literatura (Lacuna): el kernel cruzado entre tareas predice el olvido antes de entrenar, con coseno > 0,99 en modelos con la base congelada; en fine-tuning completo es menos exacto, y en LLMs queda abierto («Catastrophic Forgetting is Low-Rank», CATS @ ICML 2026). EOUPCT (2609.30935) protege con gradientes estimados, sin predecir por concepto.
+  - Banco: el de B18, en las mismas 6 áreas. Cinco conjuntos entrenados más la repetición del conjunto 0.
+  - Medidas por miembro del área: ntk = −⟨∇L_c, ∇L_entrenamiento⟩ en los pesos iniciales (antes de entrenar); primer_orden = ⟨∇L_c, Δθ⟩ con el cambio real, en total y por bloque (expertos, router, resto); uso_def = coseno del uso de expertos entre la definición del concepto y los hechos nuevos.
+  - Análisis: efecto fijo por concepto, como B18, con las mismas covariables. Cada regla pide IC90 sin 0 y |media| ≥ 0,05.
+  - C2, fiabilidad: la de B18.
+  - C_po, control positivo: Spearman(primer_orden, subida) con IC90 > 0 y media ≥ 0,3. Si falla, el daño no es de primer orden en este régimen, y ntk no se interpreta como mecanismo.
+  - H_ntk: parcial(ntk, subida | estado y covariables).
+  - H_uso: parcial(uso_def, subida | estado y covariables). Es la prueba justa del router: si falla, el router queda fuera también en los tokens de la definición.
+  - D_ntk: parcial de ntk − parcial de estado (cada uno controlando al otro).
+  - Se informa: R² de cada medida contra el techo de C2, y qué bloque carga el primer orden.
+  - Decisión: si H_ntk se cumple, el mapa de gradientes es el mapa útil, y el bloque siguiente elige qué repetir por ntk, contra vecinos de estado y contra azar. Si H_uso se cumple, el router vuelve como proxy barato. Si ninguna se cumple, el daño no se predice antes de entrenar con estos mapas, y la línea de predictores se cierra en el paper con ese resultado.
+  - Auditoría de gasto: la medida es la de la teoría NTK; en LLMs por concepto no está publicada; cada conjunto aporta desvíos por concepto y cada área un punto a cada regla. Saldo: ~590 unidades.
+  - Costo estimado: 36 corridas de ~75 s, más carga y uso por área: ~50 min, ~1,6 unidades. Memoria estimada: ~16 GB en cada etapa.
+  - Pruebas: con pasos chicos, primer_orden sigue a la subida real en un Granite chico (Spearman > 0,5), los bloques suman el total y el modelo se restaura.
