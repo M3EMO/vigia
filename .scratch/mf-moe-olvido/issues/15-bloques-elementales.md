@@ -274,4 +274,4 @@ Research en el vault: notas "prácticas de laboratorios", "Neural Networks Are A
   - Decisión: el router pasa a candidato de sensor de daño (Vigía y el paper), pendiente de un banco con C0 válido. La repetición por árbol humano de conceptos no se corre.
   - Banco siguiente (sin gasto todavía): definiciones nuevas sacadas de fuera del área y sin repetir ninguna definición verdadera, para que el conflicto sea real. Medir la velocidad en GPU antes de lanzar.
   - Confusiones sin revisar: el router puede codificar rasgos del token (frecuencia, palabras del sujeto). Falta un control por largo y frecuencia del sujeto.
-  - Lección de gasto: estimé ~5 min por área sin medir; tardó 22 min (oraciones de a una y CUDA_LAUNCH_BLOCKING). C0 era visible en la primera área (16:23 en el log) y no tenía puerta. Una puerta sobre C0 tras la primera área habría ahorrado ~2,3 unidades.
+  - Lección de gasto: estimé ~5 min por área sin medir; tardó 22 min (oraciones de a una y CUDA_LAUNCH_BLOCKING). C0 era visible en la primera área, ~25 min después del arranque, y no tenía puerta. Una puerta sobre C0 tras la primera área habría ahorrado ~2,3 unidades.
