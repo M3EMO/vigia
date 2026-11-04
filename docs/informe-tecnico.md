@@ -666,6 +666,29 @@ Lectura:
 - Límite: un solo banco sintético, donde el nivel que se olvida es propio de cada hoja. Un banco donde las hojas
   compartan la superficie y difieran arriba podría dar otro resultado.
 
+**B16: olvido de conceptos en Granite (4 de 6 áreas de WordNet, L4, ~3,7 unidades; exploratorio).** Pregunta:
+¿qué predice qué concepto se daña al aprender hechos nuevos, el árbol humano de conceptos, el estado del modelo o
+el router? Motivo: B15 mostró que el olvido vivía en la superficie de cada lengua, no en el concepto. Precedente:
+el coseno de estados a ~1/3 de la profundidad predice el daño de una edición (CLaRE, 2603.19297). Banco:
+Granite-3.1-1B-A400M aprende 64 conceptos de un área con las definiciones permutadas. Se mide la subida de la
+pérdida de la definición verdadera de ~380 conceptos de evaluación. Código: `colab/b16_conceptos.py`.
+
+| Predictor (Spearman con la subida, media de 4 áreas) | Simple | Parcial, sin el estado |
+|---|---|---|
+| árbol de WordNet (Wu-Palmer) | +0,092 [+0,032; +0,148] | +0,053 [−0,011; +0,125] |
+| estado (coseno, capa 8) | +0,085 [+0,026; +0,145] | — |
+| router (solapamiento del top-8) | +0,223 [+0,162; +0,284] | +0,224 [+0,157; +0,290] |
+
+Lectura:
+- El control del banco falla: la pérdida de la definición verdadera de los entrenados baja en vez de subir. Las
+  definiciones permutadas siguen en el entrenamiento, y el modelo memoriza el conjunto sin conflicto por concepto.
+- Lo medido es un colapso general del formato «A X is»: la pérdida de evaluación sube ~3 nats de media.
+- Dentro de ese colapso, el solapamiento de expertos predice el daño en las 4 áreas, y sobrevive al control por la
+  pérdida inicial. El árbol humano no agrega nada sobre el estado.
+- Con el router en el control, el estado queda negativo (−0,09). El router predice mejor que la medida de CLaRE.
+- Límite: el router puede codificar rasgos del token (frecuencia, largo del sujeto), sin control todavía. Falta
+  un banco con conflicto real (definiciones de fuera del área) antes de afirmar el router como sensor de daño.
+
 **Novedad (auditoría con Lacuna, 2026-11-02).** El router como sensor de duda ya está publicado: "Routing Entropy:
 A Hidden Self-Verifier for Free" (COLM 2026) reporta AUROC 0,655 con la entropía de ruteo sola en OLMoE. Este
 informe lo cita como precedente. Vigía tiene que mostrar algo que ese trabajo no tiene. Los candidatos medidos acá
