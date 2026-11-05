@@ -712,6 +712,30 @@ Lectura:
 - Límites: máximo contra el entrenado más cercano; router medido en el sujeto, no en los tokens de la definición;
   la repetición comparte los donantes.
 
+**B19: el mapa de gradientes tampoco predice antes de entrenar (L4, ~2,0 unidades).** Mismo banco y áreas de B18, con
+5 conjuntos más una repetición. Código: `colab/b19_gradientes.py`. Ntk es −⟨∇L_c, ∇L_entrenamiento⟩ en los pesos
+iniciales. Primer orden es ⟨∇L_c, Δθ⟩ con el cambio real de pesos.
+
+| Medida (B19, efecto fijo por concepto) | Valor | Regla |
+|---|---|---|
+| ntk, parcial con estado y covariables | +0,049 [−0,002; +0,104] | no se cumple |
+| uso de expertos en la definición, parcial | +0,025 [−0,027; +0,086] | no se cumple |
+| primer orden real (control positivo) | +0,339 [+0,303; +0,370] | se cumple |
+| fiabilidad | +0,361 [+0,321; +0,399] | se cumple |
+
+Lectura:
+- Ningún mapa medido predice el daño propio de cada conjunto entrenado antes de entrenar. La línea de predictores se
+  cierra con este resultado. Ntk queda en el borde y lo sostiene una sola área.
+- El daño medio no es de primer orden. El primer orden predice −1,51 nats y la subida real es +0,61. Esto coincide con
+  la cuenta por curvatura de Dimitrov et al. (CATS @ ICML 2026).
+- El nivel por concepto pesa más que el conjunto entrenado. El 57 % de la varianza es entre conceptos, y la subida en
+  otros conjuntos predice la de un conjunto nuevo con +0,60. Este análisis no estaba preregistrado.
+- El 20 % elegido por historia captura 32 % de la subida positiva; el oráculo, 41 %; ntk, 25 %; el estado, 20 %, igual
+  que el azar. Captura no es reducción de daño: la repetición dirigida no se midió acá.
+- Precedente: Jin y Ren (ICML 2024, NeurIPS 2025) muestran en LLMs que el olvido por ejemplo tiene rango bajo, que la
+  historia supera a la similitud semántica y que la repetición dirigida supera al azar. B18 y B19 replican esa parte en un MoE.
+- Límites: ntk usa producto euclídeo y el entrenamiento usa AdamW; 5 conjuntos por área; la historia usa el mismo banco.
+
 **Novedad (auditoría con Lacuna, 2026-11-02).** El router como sensor de duda ya está publicado: "Routing Entropy:
 A Hidden Self-Verifier for Free" (COLM 2026) reporta AUROC 0,655 con la entropía de ruteo sola en OLMoE. Este
 informe lo cita como precedente. Vigía tiene que mostrar algo que ese trabajo no tiene. Los candidatos medidos acá

@@ -371,3 +371,20 @@ Research en el vault: notas "prácticas de laboratorios", "Neural Networks Are A
   - Auditoría de gasto: la medida es la de la teoría NTK; en LLMs por concepto no está publicada; cada conjunto aporta desvíos por concepto y cada área un punto a cada regla. Saldo: ~590 unidades.
   - Costo estimado: 36 corridas de ~75 s, más carga y uso por área: ~50 min, ~1,6 unidades. Memoria estimada: ~16 GB en cada etapa.
   - Pruebas: con pasos chicos, primer_orden sigue a la subida real en un Granite chico (Spearman > 0,5), los bloques suman el total y el modelo se restaura.
+- 2026-11-05, B19, resultado (`.cache/runs/bloques/b19_gpu/` de mf-moe; L4, 18:42-19:50 del 2026-11-04, ~2,0 unidades contra 1,6 estimadas; 36 de 36 corridas). Efecto fijo por concepto, ~140 conceptos por área, IC90 sobre 6 áreas.
+  - C2, fiabilidad: +0,361 [+0,321; +0,399]. Se cumple: un nulo se puede interpretar.
+  - C_po, control positivo: +0,339 [+0,303; +0,370]. Se cumple por rango.
+  - H_ntk: +0,049 [−0,002; +0,104]. No se cumple. Sin insect (+0,184), la media de las otras 5 áreas es +0,021.
+  - H_uso: +0,025 [−0,027; +0,086]. No se cumple: el router tampoco predice en los tokens de la definición.
+  - D_ntk: −0,040 [−0,104; +0,034]. Ntk no gana al estado. Estado, controlando a ntk: +0,089 [+0,058; +0,121].
+  - R² contra el techo de 0,361: ntk 0,008; todos los previos 0,036 (en muestra); primer orden 0,118.
+  - Veredicto según la regla: ninguna hipótesis se cumple. El daño no se predice antes de entrenar con estos mapas, y la línea de predictores se cierra en el paper.
+  - Debilidad 1, nivel: el primer orden predice −1,51 nats y la subida real es +0,61. La pendiente sobre los desvíos es 0,33, no 1. C_po pasa por rango, pero el daño medio no es de primer orden: domina la curvatura. Dimitrov et al. (CATS @ ICML 2026) descomponen el olvido igual.
+  - Debilidad 2, métrica: ntk usa producto euclídeo y el entrenamiento usa AdamW con recorte. Ntk sigue poco al primer orden real (+0,139). No se probó un kernel con Adam.
+  - Debilidad 3, escala: sin preregistrar, con efectos fijos de concepto y de corrida ntk da +0,057 [+0,014; +0,102]; con rango por conjunto, +0,062 [+0,022; +0,103]; con z por concepto, +0,034 [−0,026; +0,094]. El resultado está en el borde, y el tamaño sigue chico en todos los casos.
+  - Bloques: expertos 57 % de la carga con 94 % de los parámetros; resto 40 % con 6 %; router 2,6 % con 0,1 %. Por rango, primer orden de expertos +0,308, resto +0,279, router +0,107. La carga mezcla signos, así que no reparte el daño por bloque.
+  - Hallazgo sin preregistrar, sin gasto: el efecto fijo quitó el nivel, y el nivel pesa más. El 57 % de la varianza es entre conceptos. La subida en otros conjuntos predice la subida en un conjunto nuevo con +0,598 [+0,566; +0,630].
+  - Captura de la subida positiva por el 20 % elegido (azar 0,20): oráculo 0,411; historia en otros conjuntos 0,324; ntk 0,246; estado 0,197; pérdida inicial 0,176-0,214.
+  - Error de auditoría: el preregistro decía que el predictor por concepto en LLMs no estaba publicado, y B18 decía algo parecido del solapamiento previo. Lacuna tiene Jin y Ren (ICML 2024, NeurIPS 2025): el olvido por ejemplo tiene rango bajo, la historia supera a la similitud semántica, y la repetición dirigida supera al azar y a MIR. Su variante inspirada en NTK fue inconsistente. La búsqueda previa no los encontró; parte de B18 y B19 replica ese resultado.
+  - Decisión: no corre B20 de repetición dirigida. La literatura ya responde esa pregunta en LLMs, y la captura medida acota la ganancia en este banco. Elegir por historia queda como método conocido, a citar.
+  - Límites: captura no es reducción de daño, porque no mide la repetición real; 5 conjuntos por área; historia medida con los mismos conceptos y el mismo banco.
