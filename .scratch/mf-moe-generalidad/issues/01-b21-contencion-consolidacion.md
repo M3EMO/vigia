@@ -66,7 +66,7 @@ Reducción > 0 significa menos daño. Unidad de réplica: el tema. Cada regla pi
 ### Auditoría de gasto
 
 - Cada brazo cambia una decisión escrita arriba. `cont24` salió porque ninguna decisión dependía de él.
-- `cons8` y otros brazos que no aprendan se abandonan tras 3 corridas seguidas sin aprender.
+- Un brazo se abandona si sus primeras 3 corridas no aprenden, porque ese hecho ya es su resultado.
 - Costo: 165 corridas. Con 46 a 90 s por corrida, 2,1 a 4,1 h. Tope duro de 3 h, ~5,8 unidades. El orden por conjunto y tema deja pares completos si el tope corta.
 - Puerta: `b18.gate` en la primera corrida.
 
