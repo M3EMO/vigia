@@ -4,4 +4,4 @@ Este repo usa el tracker local en Markdown: `.scratch/<esfuerzo>/` (mapa en `map
 `issues/NN-<slug>.md` con líneas `Type:`, `Status:` y `Blocked by:`). Formato completo:
 `~/.claude/skills/setup-matt-pocock-skills/issue-tracker-local.md`.
 
-Mapas activos: `.scratch/mf-moe-olvido/map.md` (¿el MoE fractal olvida menos?).
+Mapas activos: `.scratch/mf-moe-olvido/map.md` (¿el MoE fractal olvida menos?) y `.scratch/mf-moe-generalidad/map.md` (¿lo medido vale en otros modelos y datos?).
