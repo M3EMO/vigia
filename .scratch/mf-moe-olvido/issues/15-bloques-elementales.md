@@ -409,3 +409,21 @@ Research en el vault: notas "prácticas de laboratorios", "Neural Networks Are A
   - Costo estimado, sin medir: ~75 s por corrida. Etapa 1 ~48 min, ~1,55 unidades; las dos ~85 min, ~2,75 unidades. B19 costó 25 % más que su estimación. Saldo: ~589 unidades.
   - Límites: anclas y donantes pueden incluir miembros de otros temas (≤ 5 de 576 en la mayoría, 34-50 en vegetable y dish). mammal incluye dog, usado en la calibración. Mitad de conceptos observados, no 30 semillas como Jin y Ren, porque 30 no tiene potencia en la grilla. Los mundos sintéticos usan niveles parejos en el árbol. La frontera entre 0,10 y 0,12 tiene 3 repeticiones por señal.
   - Pruebas: `tests/test_b20.py` (evaluación fija, repetición con mismo conjunto, modelo restaurado, puerta de señal, covarianza simétrica y semidefinida, fiabilidad sin sesgo, veredicto).
+- 2026-11-06, B20, resultado (`.cache/runs/bloques/b20_gpu/` de mf-moe; L4, 01:04-02:03, ~1,9 unidades contra 2,75 estimadas; 65 de 65 corridas, 45 s por corrida). IC90 sobre 10 temas.
+  - C0: pasó (`corte` nulo; entrenados +0,795, hechos nuevos 0,29). C2, fiabilidad: +0,389 [+0,316; +0,463].
+  - Señal entre temas: 0,190, sobre la puerta de 0,12. Varianza con 3 conjuntos por tema: nivel 48 %, interacción 50 %, conjunto 2,5 %.
+  - ρ global: WordNet +0,357 [+0,339; +0,375]; bloques +0,356 [+0,336; +0,375]; plano +0,312 [+0,286; +0,336]; árbol +0,300 [+0,279; +0,320]; k vecinos +0,289 [+0,260; +0,314].
+  - ρ dentro del tema: plano +0,140 [+0,118; +0,164]; k vecinos +0,130 [+0,103; +0,160]; árbol +0,090 [+0,079; +0,102]; WordNet +0,061 [+0,050; +0,074]; bloques +0,003 [−0,003; +0,009].
+  - Daño total: aditivo +0,649 [+0,633; +0,665]; aditivo más árbol +0,684 [+0,669; +0,698].
+  - H_estructura: se cumple (plano +0,312).
+  - H_arbol: no se cumple. Árbol − plano −0,012 [−0,026; +0,001]; − k vecinos +0,011 [−0,007; +0,027]; − WordNet −0,057 [−0,079; −0,039]; − bloques −0,056 [−0,077; −0,038].
+  - Veredicto según la regla: D ≤ 0 contra el plano. Alcanzan factores planos, y el árbol aprendido no tiene apoyo en este régimen. No se diseña la división por ese árbol. WordNet y bloques le ganan al árbol, y queda registrado.
+  - Corrección: dije que ningún árbol previo predice el daño. Eso vale solo dentro de un área (B18, B19). Entre temas, un mapa humano de dos niveles gana a los mapas aprendidos. B17c ya mostraba árbol +0,25 entre adentro y afuera del área, y lo subestimé.
+  - Hallazgo sin preregistrar, sin gasto: subida relativa al otro supertema, sin nivel de concepto. Mismo tema +0,381 [+0,340; +0,422]; mismo supertema +0,192 [+0,146; +0,240]. Escalón tema − supertema +0,189 [+0,128; +0,253].
+  - Sin semillas y antes de entrenar: Wu-Palmer a la raíz da +0,214 [+0,181; +0,245] en global y +0,001 [−0,012; +0,013] dentro del tema. Repite el nulo de B18 dentro del área.
+  - Debilidad, anclas: las anclas se eligen lejos del tema, y pueden fabricar el gradiente. Wu-Palmer medio a las 10 anclas más cercanas: tema 0,221; supertema 0,221; otro 0,396. El escalón tema − supertema no depende de las anclas. El escalón supertema − otro está confundido con ellas.
+  - Con covariables de ancla y entrenado: tema +0,205 [−0,002; +0,388], supertema +0,083 [−0,071; +0,217], ancla −0,029 [−0,060; −0,002] por desvío. Hay colinealidad alta, y los IC son anchos. Las anclas protegen algo, pero con efecto chico.
+  - Control sin anclas (calibración, dog y bird, 1 semilla, exploratorio): ρ(raíz, subida) base +0,551 y +0,266; con anclas +0,499 y +0,389. Las anclas no crean el gradiente.
+  - Lectura para el fractal: la estructura aparece a escala gruesa (tema, supertema) y se debilita dentro del tema, donde factores planos aprendidos superan a WordNet y al árbol. No es autosimilar: coincide con H11 de §4.12.
+  - Decisión: no gasto más Colab en mapas. La próxima pregunta sería si contener el daño por tema reduce el olvido, y eso ya es diseño de MoE: se revisa contra la consolidación por uso de §4.12 antes de costearla.
+  - Límites: 10 temas, 2 por supertema; los mapas necesitan la mitad de los conceptos observados, salvo Wu-Palmer a la raíz; los mundos sintéticos no incluyen un árbol grueso y plano adentro; predecir el daño no prueba que dividir por ese mapa lo reduzca.

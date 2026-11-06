@@ -736,6 +736,24 @@ Lectura:
   historia supera a la similitud semántica y que la repetición dirigida supera al azar. B18 y B19 replican esa parte en un MoE.
 - Límites: ntk usa producto euclídeo y el entrenamiento usa AdamW; 5 conjuntos por área; la historia usa el mismo banco.
 
+**B20: el árbol aprendido no le gana a un mapa plano (L4, ~1,9 unidades).** Mismo banco, con 10 temas en 5 supertemas,
+6 conjuntos por tema y 600 conceptos fijos. Cada mapa es una covarianza sobre conceptos: observa la mitad del tema
+dejado afuera y predice la otra mitad. Fiabilidad +0,389 y señal 0,190. Código: `colab/b20_matriz.py`, `colab/b20_analisis.py`.
+
+| Mapa (ρ, IC90 sobre 10 temas) | Global | Dentro del tema |
+|---|---|---|
+| WordNet | +0,357 [+0,339; +0,375] | +0,061 [+0,050; +0,074] |
+| Bloques (tema y supertema) | +0,356 [+0,336; +0,375] | +0,003 [−0,003; +0,009] |
+| Plano aprendido | +0,312 [+0,286; +0,336] | +0,140 [+0,118; +0,164] |
+| Árbol aprendido | +0,300 [+0,279; +0,320] | +0,090 [+0,079; +0,102] |
+| k vecinos | +0,289 [+0,260; +0,314] | +0,130 [+0,103; +0,160] |
+
+- H_estructura se cumple. H_arbol no: árbol − plano −0,012 [−0,026; +0,001].
+- Sin preregistrar: frente a otro supertema, el mismo tema sube +0,381 [+0,340; +0,422] y el mismo supertema +0,192 [+0,146; +0,240].
+- El escalón tema − supertema no depende de las anclas. El escalón supertema − otro está confundido con ellas.
+- Corrección: B18 y B19 midieron dentro de un área. Allí ningún árbol predice, y Wu-Palmer a la raíz repite ese nulo (+0,001). Entre temas, el mapa humano grueso gana.
+- La estructura es gruesa y se debilita dentro del tema: no es autosimilar. Predecir el daño no prueba que dividir por ese mapa lo reduzca.
+
 **Novedad (auditoría con Lacuna, 2026-11-02).** El router como sensor de duda ya está publicado: "Routing Entropy:
 A Hidden Self-Verifier for Free" (COLM 2026) reporta AUROC 0,655 con la entropía de ruteo sola en OLMoE. Este
 informe lo cita como precedente. Vigía tiene que mostrar algo que ese trabajo no tiene. Los candidatos medidos acá
