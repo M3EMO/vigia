@@ -77,3 +77,42 @@ Reducción > 0 significa menos daño. Unidad de réplica: el tema. Cada regla pi
 - Menos capacidad puede pedir más pasos, y más pasos dañan: por eso se informan los pasos.
 - El top-8 por uso sobre los hechos nuevos refleja el texto de los donantes lejanos, no el tema.
 - `esp8` elige con 64 conceptos del grupo de entrenamiento del tema; pueden coincidir con los entrenados.
+
+## Resultado (2026-11-06, L4, 3,1 h, ~6,0 unidades)
+
+Corrieron 144 de 165 corridas: conjunto 0 completo, 7 temas completos del conjunto 1 y 1 tema parcial. El tope de 3 h cortó el resto. La fuga es 0 y todos los brazos aprenden. Los 5 controles repetidos dan ρ = 1,000 con B20, con la misma semilla: esto valida la reutilización y no mide ruido.
+
+| Regla | Media | IC90 | Holm | Veredicto |
+|---|---|---|---|---|
+| C_pos | `cont8_tronco` fuera del tema, sin Holm | ≥ 0,05 e IC90 > 0 | — | Se cumple |
+| H_esp | +0,143 | [+0,117; +0,173] | 0,0001 | Se cumple |
+| D_esp | −0,027 | [−0,070; +0,015] | 0,67 | Falla |
+| D_pop | +0,020 | [−0,010; +0,051] | 0,67 | Falla |
+| H_cons24 | +0,080 | [+0,042; +0,119] | 0,029 | Se cumple |
+| D_cons | +0,071 | [+0,061; +0,081] | < 0,0001 | Se cumple |
+| D_tronco | +0,156 | [+0,133; +0,176] | < 0,0001 | Se cumple |
+
+Secundario: `prec24` − `cons24` da +0,035 [+0,027; +0,043]. Solo con el conjunto 0, las seis reglas dan el mismo veredicto.
+
+### Decisión aplicada
+
+- La contención por tema con este ruteo queda descartada: `esp8` no supera al azar, y H_esp refleja capacidad reservada.
+- Solo sigue una versión que cambie el ruteo (LEGO), si un ticket nuevo justifica su costo.
+- La consolidación por uso se sostiene en un segundo banco: H_cons24 y D_cons se cumplen.
+- El paper informa el tronco como límite de cualquier regla por expertos.
+
+### Exploratorio, no preregistrado
+
+- Con 8 expertos entrenables, las cuatro reglas reducen 46-75 % del daño en el conjunto 0; `cons8`, `azar8` y `cont8` quedan entre 69 % y 75 %.
+- `cons24` reduce 33 %, `azar24` 1 %, `prec24` 48 %. `cont8_tronco` reduce 139 %, así que el daño medio pasa a negativo.
+- `esp8` − `azar8` da −0,139 [−0,207; −0,075] en el tema, −0,103 en el supertema y −0,003 [−0,042; +0,036] en otros supertemas.
+- Elegir por especificidad concentra daño en el tema sin reducir el daño lejano. Esta lectura es post hoc.
+- El efecto de `esp8` varía por tema: de −0,175 en mammal a +0,111 en vegetable. Los primeros 4 temas exageraron la señal.
+- Ajustando por `nuevos_final` y pasos, D_cons queda en +0,054 a +0,058, y `prec24` − `cons24` en +0,035. Es exploratorio porque `nuevos_final` es mediador.
+
+### Límites
+
+- Es un entrenamiento único, no la secuencia de §4.12.
+- Los pasos varían: 29-30 en brazos de 24, 31-42 en brazos de 8, control 24 en los temas repetidos.
+- El daño usa teacher forcing, sobre definiciones, y no se registró ‖Δθ‖.
+- El tema con conjunto 1 parcial no tiene los mismos conjuntos en todos los brazos. El análisis solo con conjunto 0 evita ese desbalance.

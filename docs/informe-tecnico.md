@@ -740,6 +740,8 @@ Lectura:
 6 conjuntos por tema y 600 conceptos fijos. Cada mapa es una covarianza sobre conceptos: observa la mitad del tema
 dejado afuera y predice la otra mitad. Fiabilidad +0,389 y señal 0,190. Código: `colab/b20_matriz.py`, `colab/b20_analisis.py`.
 
+**B21: la contención por tema no le gana al azar, la consolidación por uso sí (L4, ~6,0 unidades).** Mismo banco y conjuntos de B20, con 144 de 165 corridas y 10 temas pareados. Entrenar los 8 expertos más específicos del tema da −0,027 nats frente a 8 al azar (IC90 [−0,070; +0,015]). Congelar los 8 expertos que más usan las anclas da +0,071 frente a 8 al azar (IC90 [+0,061; +0,081], Holm < 0,0001), y +0,080 frente al control. Esta regla es la de §4.12, y aquí se sostiene en un segundo banco, en un solo entrenamiento y sin secuencia. Congelar además el tronco suma +0,156 fuera del tema, así que cualquier regla por expertos deja pasar daño por el tronco. Ordenar por sensibilidad en lugar de uso suma +0,035 (IC90 [+0,027; +0,043]), como medida secundaria. De forma exploratoria, elegir por especificidad concentra daño en el propio tema (−0,139, IC90 [−0,207; −0,075]) sin reducir el daño lejano (−0,003). Los límites son: pasos variables, teacher forcing, y ‖Δθ‖ sin registrar.
+
 | Mapa (ρ, IC90 sobre 10 temas) | Global | Dentro del tema |
 |---|---|---|
 | WordNet | +0,357 [+0,339; +0,375] | +0,061 [+0,050; +0,074] |
