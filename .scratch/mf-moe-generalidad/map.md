@@ -27,7 +27,7 @@ registro de que un resultado solo vale en Granite con WordNet.
 ## Not yet specified
 
 - [B21: contención contra consolidación en Granite](issues/01-b21-contencion-consolidacion.md) — resuelto: la contención por tema no supera al azar; la consolidación por uso se sostiene.
-- [B20 en OLMoE-1B-7B](issues/02-b20-olmoe.md) — ¿los mapas dependen del modelo? Falta medir si entra en una L4.
+- [B20 en OLMoE-1B-7B](issues/02-b20-olmoe.md) — cerrado en esta forma: con 1 o 4 capas, B22 no reproduce el banco de B20, y OLMoE no entra en L4 con más.
 - [Banco con UniEdit](issues/03-banco-uniedit.md) — ¿los mapas dependen de WordNet? Falta licencia y conversión a hechos en conflicto.
 - [Tamaños con FLAME-MoE](issues/04-tamanos-flame-moe.md) — ¿el tamaño cambia el resultado? Incluye 38M/100M, el tamaño del north-star.
 - [Frecuencia en el corpus abierto](issues/05-frecuencia-corpus.md) — ¿lo visto en el entrenamiento explica el nivel por concepto?

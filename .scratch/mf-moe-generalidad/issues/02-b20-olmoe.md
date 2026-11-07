@@ -1,7 +1,7 @@
 # B20 en OLMoE-1B-7B
 
 Type: task
-Status: open
+Status: closed
 Blocked by: 01
 
 ## Question
@@ -65,3 +65,36 @@ Un brazo se abandona si sus primeras 3 corridas no aprenden.
 - Granite no es OLMoE: el router, la cantidad de expertos y el dropout siguen distintos.
 - Un conjunto por tema no separa conjunto de profundidad.
 - Las 18 capas de B20 no se comparan con repetición independiente.
+
+## Resultado de B22 (2026-11-06, L4, 22 min, ~0,7 unidades)
+
+Corrieron las 21 corridas. `p18` repite B20 con ρ = 1,000, así que el congelado no altera la corrida. La L4 tiene 22,03 GB. El pico de Granite es 19,1 GB con `p18`, 8,0 GB con `p4` y 6,0 GB con `p1`.
+
+| Brazo | Aprende | C0 | ρ con B20 | IC90 de ρ | Gradiente tema − fuera | Subida | Pasos | Válida |
+|---|---|---|---|---|---|---|---|---|
+| `p4` | 100 % | 80 % | 0,547 | [0,529; 0,566] | +0,353 [+0,288; +0,417] | 0,210 | 39 | No |
+| `p1` | 100 % | 90 % | 0,356 | [0,332; 0,385] | +0,464 [+0,375; +0,567] | 0,277 | 71 | No |
+
+Referencia en B20, mismo conjunto: gradiente +0,378 [+0,304; +0,451], subida 0,227 y 24 pasos.
+
+### Decisión aplicada
+
+Ambas fallan, así que este ticket se cierra en esta forma. La generalidad sigue por UniEdit en Granite.
+
+- `p4` falla por 0,003, dentro de su IC90. No cambio la regla después de ver el dato.
+- Ese margen no cambia el resultado en L4: OLMoE con 4 capas necesita ~37 GB, y la L4 tiene 22,03 GB.
+- `p1` no es una versión reducida de B20: se parece a B20 menos que otro tema con 18 capas (0,356 contra 0,434).
+
+### Exploratorio, no preregistrado
+
+- `p1` conserva aprendizaje, conflicto y gradiente, así que sirve como banco propio, aunque no sea comparable con B20.
+- Una comparación OLMoE contra Granite a igual profundidad necesitaría un ticket nuevo y una matriz `p1` en Granite.
+- Esa opción queda justa de memoria: OLMoE `p1` estima ~20 GB sin activaciones, y Granite `p1` agrega ~1 GB de activaciones.
+- `p4` entrena ~214 M de parámetros y sube 0,210; `cont8` entrena un orden parecido (estimado) y sube ~0,06.
+- Con capacidad parecida, repartirla entre capas daña menos que concentrarla al final. Los pasos no son iguales (39 contra 30).
+
+### Límites
+
+- Un solo conjunto por tema, y sin réplicas independientes por profundidad.
+- El ρ de referencia viene de otro conjunto, no de otra profundidad.
+- Granite no es OLMoE, así que esto solo muestra que reducir capas cambia el banco.

@@ -742,6 +742,8 @@ dejado afuera y predice la otra mitad. Fiabilidad +0,389 y señal 0,190. Código
 
 **B21: la contención por tema no le gana al azar, la consolidación por uso sí (L4, ~6,0 unidades).** Mismo banco y conjuntos de B20, con 144 de 165 corridas y 10 temas pareados. Entrenar los 8 expertos más específicos del tema da −0,027 nats frente a 8 al azar (IC90 [−0,070; +0,015]). Congelar los 8 expertos que más usan las anclas da +0,071 frente a 8 al azar (IC90 [+0,061; +0,081], Holm < 0,0001), y +0,080 frente al control. Esta regla es la de §4.12, y aquí se sostiene en un segundo banco, en un solo entrenamiento y sin secuencia. Congelar además el tronco suma +0,156 fuera del tema, así que cualquier regla por expertos deja pasar daño por el tronco. Ordenar por sensibilidad en lugar de uso suma +0,035 (IC90 [+0,027; +0,043]), como medida secundaria. De forma exploratoria, elegir por especificidad concentra daño en el propio tema (−0,139, IC90 [−0,207; −0,075]) sin reducir el daño lejano (−0,003). Los límites son: pasos variables, teacher forcing, y ‖Δθ‖ sin registrar.
 
+**B22: reducir capas cambia el banco (L4, ~0,7 unidades).** Con 4 capas finales, el daño se parece a B20 con ρ 0,547 (umbral 0,55). Con 1 capa, el parecido baja a 0,356. Ambas aprenden y conservan el gradiente por tema, pero no replican el patrón. OLMoE solo entra en una L4 con muy pocas capas, así que esta comparación no se corre.
+
 | Mapa (ρ, IC90 sobre 10 temas) | Global | Dentro del tema |
 |---|---|---|
 | WordNet | +0,357 [+0,339; +0,375] | +0,061 [+0,050; +0,074] |
