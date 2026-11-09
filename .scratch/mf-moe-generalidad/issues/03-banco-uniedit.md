@@ -41,3 +41,17 @@ Puntos débiles para el diseño:
 3. Falta medir cuántos hechos conoce Granite. Sin hecho conocido no hay conflicto.
 
 Siguiente paso: medir en CPU la pérdida del valor real contra la del donante, sin entrenar.
+
+## Cuántos hechos conoce Granite (2026-11-08, CPU, sin gasto de unidades)
+
+Reglas fijadas antes de ver pérdidas. 755 hechos con 4 donantes, Granite en bf16. Salida: `mf-moe/.cache/runs/bloques/uniedit_conoce/`.
+
+- Conocidos 42,9 %. Piso con cabeza ajena 17,4 %. Exceso +25,6 puntos, IC90 [+22,8; +28,2].
+- Banco viable: sí. El exceso supera 15 puntos y los 25 dominios tienen 412 o más hechos reales estimados, contra 124 necesarios.
+- Dominio como tema: no. kNN normalizado 0,050 contra 0,554 de los temas de B20.
+- El prompt largo de UniEdit sube el acierto por pares de 64,6 % a 79,1 %. Confirma el aporte de la descripción: se entrena con plantilla corta.
+- El exceso cambia por propiedad: ubicación administrativa 0,44; subclass of 0,41; part of 0,38; country 0,24; employer 0,11; occupation 0,00.
+
+Decisión: UniEdit sirve como fuente de hechos conocidos, pero el dominio no sirve como tema. El tema necesita otra definición antes de preregistrar.
+
+Límites: la muestra no es aleatoria, exigir 4 donantes favorece propiedades frecuentes, y 10 temas contra 25 dominios no es la misma tarea de kNN.
