@@ -55,3 +55,27 @@ Reglas fijadas antes de ver pérdidas. 755 hechos con 4 donantes, Granite en bf1
 Decisión: UniEdit sirve como fuente de hechos conocidos, pero el dominio no sirve como tema. El tema necesita otra definición antes de preregistrar.
 
 Límites: la muestra no es aleatoria, exigir 4 donantes favorece propiedades frecuentes, y 10 temas contra 25 dominios no es la misma tarea de kNN.
+
+## P31 y relación como tema (2026-11-09, CPU, sin gasto de unidades)
+
+Reglas fijadas antes de calcular kNN. Tarea: 10 clases balanceadas, 50 sorteos, k=5, Granite en bf16. WordNet usa igual n y k. Salida: `mf-moe/.cache/runs/bloques/uniedit_tema/`.
+
+| Definición | n | kNN Granite | kNN WordNet | Control léxico | Clases con ≥ 124 | Veredicto |
+|---|---|---|---|---|---|---|
+| `P31`, nombre | 13 | 0,379 [0,320; 0,427] | 0,445 | 0,269 | 8 de 10 | válido |
+| `property.id`, prompt | 18 | 0,910 [0,889; 0,929] | 0,468 | 0,804 | 9 de 10 | válido |
+
+Las permutaciones dan cerca de 0. El léxico de WordNet da 0,133.
+
+Por la regla previa, `P31` gana porque usa la misma sonda que WordNet.
+
+Puntos débiles (análisis exploratorio, posterior a la regla):
+
+1. La ganancia de `P31` sobre su control léxico es 0,110. La de WordNet es 0,312. `P31` tiene un 35 % de esa ganancia.
+2. Cuatro clases llevan el resultado: proteína 0,81, persona 0,78, taxón 0,70, empresa 0,58.
+3. Las clases de títulos se mezclan: edición 0,06, obra literaria 0,21, sencillo 0,25, película 0,31, episodio 0,33.
+4. Tres de las 8 clases con hechos suficientes se estiman con menos de 10 hechos. Con 10 hechos o más quedan 5 clases, y la regla pide 6.
+5. La relación se mide con otra sonda que WordNet. Su kNN no compara el mismo objeto.
+6. La muestra sale del comienzo de cada archivo.
+
+Decisión: `P31` queda como definición elegida, pero sin 10 temas separables. El modelo distingue unos 4 grupos: persona, biología, organización y obra. El preregistro necesita grupos gruesos definidos antes de medir, más filas de ventanas al azar, y el gradiente de daño real como prueba final.
