@@ -79,3 +79,41 @@ Puntos débiles (análisis exploratorio, posterior a la regla):
 6. La muestra sale del comienzo de cada archivo.
 
 Decisión: `P31` queda como definición elegida, pero sin 10 temas separables. El modelo distingue unos 4 grupos: persona, biología, organización y obra. El preregistro necesita grupos gruesos definidos antes de medir, más filas de ventanas al azar, y el gradiente de daño real como prueba final.
+
+## Ocho tipos gruesos como tema (2026-11-09, CPU, sin gasto de unidades)
+
+Datos: 505 ventanas al azar, 10.177 registros, 6.069 pasan el filtro. Se excluyen las cabezas de la muestra anterior. Reglas fijadas antes de medir. Salida: `mf-moe/.cache/runs/bloques/uniedit_tipos/` y `uniedit_ventanas/`.
+
+| Condición | Resultado | Umbral | Cumple |
+|---|---|---|---|
+| kNN de tipos, 8 clases, n=60 | 0,583 [0,540; 0,620] | ≥ 0,288 (mitad de WordNet 0,576) | sí |
+| Ganancia sobre el control léxico | 0,220 | ≥ 0,122 (mitad de 0,243) | sí |
+| Tipos con acierto ≥ 0,40 | 8 de 8 | ≥ 6 | sí |
+| Tipos con ≥ 124 hechos reales estimados | 8 de 8 | ≥ 6 | sí |
+
+Decisión: los 8 tipos gruesos forman tema válido para el banco.
+
+| Tipo | Acierto kNN | Exceso | IC90 | Conocidos y no piso | Reales estimados |
+|---|---|---|---|---|---|
+| persona | 0,88 | +0,12 | [+0,03; +0,20] | 8 de 60 | 3.927 |
+| organización | 0,43 | +0,17 | [+0,10; +0,25] | 10 de 60 | 1.554 |
+| biomedicina | 0,86 | +0,27 | [+0,17; +0,37] | 16 de 60 | 1.789 |
+| publicación | 0,50 | +0,08 | [+0,02; +0,15] | 6 de 60 | 874 |
+| obra cultural | 0,48 | +0,12 | [+0,02; +0,22] | 10 de 60 | 2.328 |
+| lugar y estructura | 0,62 | +0,20 | [+0,12; +0,28] | 12 de 60 | 722 |
+| derecho y gobierno | 0,80 | +0,17 | [+0,03; +0,30] | 17 de 60 | 621 |
+| software y datos | 0,52 | +0,18 | [+0,08; +0,28] | 13 de 60 | 469 |
+
+Exceso global +0,162, IC90 [+0,129; +0,196]. Esta muestra al azar corrige a la baja el +25,6 de la muestra inicial.
+
+Puntos débiles para el diseño:
+
+1. Tipo y relación están confundidos. Biomedicina usa part of y subclass of. Derecho usa country y jurisdicción. Country aparece en tres tipos y permite cruzar tipo con relación.
+2. La selección es cara: solo 10 % a 28 % de los hechos son conocidos y no piso. Armar el banco exige filtrar hechos en el dataset completo.
+3. La pureza es baja. Con 36,9 % conocidos y 20,6 % de piso, cerca de 56 % de los conocidos son reales. Conviene un filtro más estricto.
+4. B18 sortea 64 hechos por conjunto. Seis conjuntos casi independientes piden unos 444 hechos por tipo, no 124. Software queda justo, con 469 estimados.
+5. B20 usa árbol de supertemas. Los 8 tipos todavía no tienen árbol.
+6. La agrupación se definió por criterio propio sobre etiquetas. Otra agrupación puede dar otro resultado.
+7. kNN solo filtra candidatos. Falta medir el gradiente de daño por tipo.
+
+Siguiente paso: diseñar el banco y costearlo, con investigación en Lacuna antes de gastar unidades.
