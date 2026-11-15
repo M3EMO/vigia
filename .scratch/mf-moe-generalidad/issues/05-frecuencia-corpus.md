@@ -1,7 +1,7 @@
 # Frecuencia en el corpus abierto
 
 Type: research
-Status: open
+Status: closed
 Blocked by: 02
 
 ## Question
@@ -32,3 +32,9 @@ Decisión: la frecuencia no entra como covariable de los mapas. El paper declara
 La señal global desaparece dentro de cada tema, así que refleja sobre todo diferencias entre temas. El ticket sigue abierto solo para una prueba directa con OLMoE, si el ticket 02 corre.
 
 Límites: el conteo es por palabra y no por sentido; el análisis no controla colocaciones; el servicio limitó las consultas, pero los conteos quedaron completos.
+
+## Cierre (2026-11-14, decisión del usuario)
+
+- La frecuencia no entra como covariable de los mapas: el ρ parcial dio −0,140, y la regla pedía |ρ| ≥ 0,15.
+- La prueba directa con OLMoE dependía del ticket 02, y el ticket 02 está cerrado.
+- El paper declara el resultado del proxy DCLM con sus límites.

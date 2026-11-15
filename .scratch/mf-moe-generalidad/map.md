@@ -28,11 +28,16 @@ registro de que un resultado solo vale en Granite con WordNet.
 
 - [B21: contención contra consolidación en Granite](issues/01-b21-contencion-consolidacion.md) — resuelto: la contención por tema no supera al azar; la consolidación por uso se sostiene.
 - [B20 en OLMoE-1B-7B](issues/02-b20-olmoe.md) — cerrado en esta forma: con 1 o 4 capas, B22 no reproduce el banco de B20, y OLMoE no entra en L4 con más.
-- [Banco con UniEdit](issues/03-banco-uniedit.md) — ¿los mapas dependen de WordNet? Falta licencia y conversión a hechos en conflicto.
+- [Banco con UniEdit](issues/03-banco-uniedit.md) — cerrado: UniEdit sirve; B23 midió el gradiente por tipo y relación fuera de WordNet.
 - [Tamaños con FLAME-MoE](issues/04-tamanos-flame-moe.md) — ¿el tamaño cambia el resultado? Incluye 38M/100M, el tamaño del north-star.
-- [Frecuencia en el corpus abierto](issues/05-frecuencia-corpus.md) — ¿lo visto en el entrenamiento explica el nivel por concepto?
-- [Denso convertido a MoE](issues/06-denso-a-moe.md) — ¿una conversión sin reentrenar se comporta igual?
-- [Qué entra al paper](issues/07-que-entra-al-paper.md) — grilling: lo decide el usuario.
+- [Frecuencia en el corpus abierto](issues/05-frecuencia-corpus.md) — cerrado: la frecuencia no entra como covariable (proxy DCLM).
+- [Denso convertido a MoE](issues/06-denso-a-moe.md) — cerrado: descartado por costo; ninguna decisión lo necesita.
+- [Qué entra al paper](issues/07-que-entra-al-paper.md) — resuelto: opción A, la estructura del olvido.
+- [B24: olvido direccional](issues/08-olvido-direccional.md) — candidato 1: ¿sobrescribir la ida deja viva la vuelta?
+- [B27: puerta de duda](issues/09-puerta-de-duda.md) — una sonda del estado, sin etiqueta, crea el nivel 2 con 0,83 del oráculo; el router de Vigía no sirve como señal.
+- [B28: la puerta aprendida](issues/10-puerta-aprendida.md) — cerrado en Granite: entrenar al modelo para leerse reescribe lo que lee o lo vuelve menos legible, y releer en línea no hace durar la puerta.
+- [B29: la puerta en otro banco](issues/11-replica-otro-banco.md) — G1 falla por la regla: el azar ya da N2 +0,11; la diferencia pareada contra el azar sí aparece; desde 2026-11-15, las réplicas usan la regla pareada.
+- [B30: fuentes y umbral](issues/12-fuentes-y-umbral.md) — el umbral de fuentes reproduce el video en dos bancos (B30 y B31) y con la sonda (B32, 0,74 del oráculo); la puerta de pesos no. El costo del umbral no se repite.
 
 ## Out of scope
 

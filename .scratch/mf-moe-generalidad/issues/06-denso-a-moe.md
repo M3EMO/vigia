@@ -1,7 +1,7 @@
 # Denso convertido a MoE
 
 Type: research
-Status: open
+Status: closed
 Blocked by: 02, 04
 
 ## Question
@@ -18,3 +18,8 @@ ToMoE: https://lacuna.tiptreesystems.com/work/tomoe-converting-dense-large-langu
 - DIVE reentrena con 5B tokens, y no se halló código de ExpertWeaver.
 
 Detalle: nota del vault "Viabilidad de ampliar mf-moe: OLMoE, FLAME-MoE, UniEdit y frecuencia de corpus".
+
+## Cierre (2026-11-14, decisión del usuario)
+
+- La rama se descarta por costo: ToMoE entrena 20.000 pasos, DIVE reentrena con 5B tokens, y ExpertWeaver no tiene código.
+- Ninguna decisión del paper necesita esta rama.

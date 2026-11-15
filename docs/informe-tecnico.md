@@ -21,6 +21,13 @@ aporta con 1.271 features baratas en lugar de un vector denso por capa.
 
 En gpt-oss-20b sobre GPU (§4.4), el detector logra AUROC 0,881 contra 0,643 de la entropía, y la latencia agregada es **+3,0 %** [2,97 %; 3,03 %]: la puerta 1 del plan se cumple en ese modelo.
 
+La segunda parte del informe mide la estructura del olvido (§4.12 a §4.15).
+Consolidar expertos por uso sobre un MoE fijo olvida 31 % menos que el control (§4.12). Dividir y fusionar expertos en árbol no suma.
+El daño de un ajuste sigue una estructura gruesa por tema (§4.13). Un árbol aprendido no le gana a un mapa plano.
+El olvido es direccional (§4.14). Sobrescribir la ida de un hecho aprendido por ajuste fino deja viva la vuelta.
+Sin ayuda, Granite cambia igual un hecho seguro y uno dudoso (§4.15). Una puerta con una sonda de certeza crea esa selectividad.
+Rechazar una sola corrección exige además contar fuentes distintas. Ese umbral se repite en dos bancos y con la sonda.
+
 ## 2. Datos
 
 | Fuente | Ítems | Etiqueta | Licencia |
@@ -767,6 +774,112 @@ B12c lo responde con un efecto chico.
 Límites: modelo de 16 expertos y tareas sintéticas; 5 semillas dan IC anchos; el ruteo forzado mide el origen de
 los pesos, no si el router encuentra al hijo por sí solo.
 
+### 4.14 El olvido es direccional, y depende del origen del hecho (L4, 2026-11-11 a 2026-11-13)
+
+Pregunta: si un ajuste sobrescribe «el p de h es v», ¿la vuelta «v es el p de h» se pierde también?
+Las cuatro corridas usan Granite 3.1 1B-A400M base, capas 6 a 23 en fp32, AdamW con LR 5e-5 y lotes de 16.
+Cada hecho tiene K = 4 donantes, así que el azar vale 0,2. Los IC90 salen por bootstrap sobre 8 conjuntos.
+El daño específico es la subida de los hechos sobrescritos menos la subida de los no tocados.
+R es el daño de la otra dirección dividido por el daño de la dirección sobrescrita. R cerca de 0 es direccional.
+Todos los diseños y reglas están preregistrados en el ticket 08 del mapa de generalidad.
+
+| Corrida | Banco | Origen del hecho | Entidad | R_ida, dosis 10 | R_ida, dosis 40 | R_ida, dosis 160 |
+|---|---|---|---|---|---|---|
+| B24 y dosis (~1,6 u) | 256 ficticios | Ajuste fino | Inventada | +0,095 [+0,064; +0,125] | +0,109 | +0,135 [+0,091; +0,183] |
+| B25 (~1,2 u) | 206 reales | Preentrenamiento | Real | +0,328 [+0,210; +0,425] | +0,533 | +0,610 [+0,554; +0,655] |
+| B26 (~0,75 u) | Falsos sobre entidades reales | Ajuste fino | Real | +0,051 [+0,028; +0,073] | +0,130 [+0,089; +0,165] | — |
+
+- B24: el daño de la vuelta es cerca de un décimo del daño de la ida. El brazo inverso también es direccional (R +0,041).
+- B24 no invierte lo nuevo: la otra cara del hecho nuevo gana en 20 %, el azar exacto.
+- Dosis: R_ida sube poco con más pasos, +0,040 [+0,002; +0,078] entre 10 y 160. La dosis 160 daña todo el banco.
+- B25 usa hechos que Granite ya sabe en las dos direcciones. Un filtro con 9 donantes nuevos por dirección deja el azar en p ≈ 0,01.
+- En B25 el daño se comparte cerca de tres veces más. Con dosis alta, el daño pasa a compartido.
+- B26 separa origen y entidad: hechos falsos sobre organizaciones, obras y personas reales, enseñados por ajuste fino.
+- B26 queda direccional como B24. La diferencia de B25 viene del origen del hecho, no de la entidad.
+
+Lectura: lo aprendido por ajuste fino queda guardado por dirección, aun con entidades reales.
+Lo aprendido en el preentrenamiento comparte más daño entre direcciones.
+El resultado conecta con la maldición de la inversión: Granite no deduce la vuelta, y tampoco la pierde con la ida.
+
+Certeza contra plasticidad (preregistrado sobre B26): la certeza previa de un hecho no predice cuánto cambia.
+Spearman vale +0,005 [−0,096; +0,103]. Granite cambia igual un hecho seguro y uno dudoso.
+La certeza de la otra dirección la protege un poco del daño colateral: −0,217 [−0,276; −0,160].
+
+Límites:
+- En B25, el origen sigue mezclado con la frecuencia. Un hecho de preentrenamiento aparece muchas veces y en muchas formas.
+- La etapa 1 de B26 terminó más profunda que la de B24: pérdida 0,114 contra 0,16. Aun así, B26 quedó direccional.
+- La escala de aciertos tiene piso en la dosis 160. Por eso la afirmación principal usa la escala de pérdida.
+- La asimetría entre brazos sigue sin explicación: la ida comparte más daño que la vuelta.
+- La medida de certeza es la pérdida base. Su piso puede sesgar el Spearman.
+
+### 4.15 La certeza modula el olvido; rechazar una voz exige contar fuentes (L4 y CPU, 2026-11-13 a 2026-11-15)
+
+Pregunta: ¿el modelo puede cambiar menos un hecho seguro que uno dudoso, y rechazar una sola corrección?
+El banco, los conjuntos, los lotes y las dosis son los de B25, con 206 hechos reales. B29 y B31 usan 256 hechos de UniEdit.
+Solo cambia el peso de cada ejemplo. Va de 0,25 a 1,75 según el rango de la duda, con media 1.
+La medida N2 es la de §4.14.
+Todos los diseños y reglas están preregistrados en los tickets 09 a 12 del mapa de generalidad.
+Gasto: B27 a B27c ~3,0 u, B28 ~2,0 u, B29 ~0,32 u, B30 ~0,72 u, B31 ~0,48 u y B32 ~0,33 u.
+
+**Afirmación 1: una puerta de certeza crea la plasticidad selectiva.**
+
+| Puerta (señal de duda) | Sigue a la certeza (Spearman) | N2, dosis 10 | Fracción del oráculo |
+|---|---|---|---|
+| Azar (pesos permutados) | — | +0,038 [−0,093; +0,185] | 0 |
+| Router de Vigía, sin features de salida | +0,079 en base, +0,059 en instruct | no se corrió | — |
+| Confianza del primer token | +0,317 | −0,160 [−0,228; −0,101] | 0,49 |
+| Sonda ridge sobre el estado oculto, ajuste cruzado | +0,616 | −0,271 [−0,330; −0,216] | 0,83 |
+| Oráculo: la pérdida real del valor | 1 | −0,328 [−0,382; −0,273] | 1 |
+
+- Sin puerta, Granite cambia igual un hecho seguro y uno dudoso (+0,003, B25).
+- El efecto crece con la calidad de la señal. La sonda lee el estado al final de la pregunta, sin ver el valor.
+- La sonda es un autoconocimiento que el modelo tiene y no usa. Usado como puerta, crea la plasticidad selectiva.
+- El router de Vigía detecta tokens erróneos al generar (§4.1), pero no lee la certeza de un hecho (§7).
+- En otro banco (B29, 256 hechos de UniEdit), la puerta mueve N2 contra el azar casi igual: −0,280 contra −0,366.
+- Ese banco ya trae N2 positivo sin puerta (+0,114). Por eso las réplicas comparan contra la base del mismo banco.
+
+**Afirmación 2: la certeza útil es la que se lee desde afuera, sobre el modelo de partida.**
+
+- Entrenar al modelo para leerse reescribe los hechos que lee (B28 a B28d).
+- Con un KL fuerte y hechos ancla, el modelo conserva los hechos (B28f). Aun así, se vuelve menos legible: Δ −0,087 y −0,155.
+- Releer la certeza en cada paso no hace durar la puerta: N2 +0,004 en la dosis 160 (B28e).
+- La relectura diluye la señal, porque el modelo que cambia ya no sabe lo que sabía.
+- Para la tesis del informe, es un efecto observador: medir la certeza desde adentro cambia lo medido.
+
+**Afirmación 3: rechazar una voz exige contar fuentes distintas.**
+
+Con pesos desde 0,02, la puerta igual deja que el tercio seguro adopte una sola voz.
+El umbral abre el peso de un hecho solo después de tau frases distintas. Antes, el peso es 0.
+tau vale 1 en la mitad dudosa del banco y sube hasta 8 en el hecho más seguro.
+La creencia se mide en dos frases que ningún ajuste entrena. La tabla da fracciones de hechos sobrescritos.
+
+| Banco | Brazo | Seguro resiste una voz, dosis 10 | Seguro adopta 10 fuentes, dosis 40 | Dudoso adopta una voz, dosis 10 | Daño al resto, dosis 10 |
+|---|---|---|---|---|---|
+| 206 reales (B30) | Una voz, pesos | 0,19 | — | 1,00 | 1,87 |
+| 206 reales (B30) | Una voz, umbral | 1,00 | — | 1,00 | 2,30 |
+| 206 reales (B30) | Fuentes, umbral | — | 0,985 | — | 2,62 |
+| 256 de UniEdit (B31) | Una voz, pesos | 0,20 | — | 1,00 | 2,48 |
+| 256 de UniEdit (B31) | Una voz, umbral | 0,95 | — | 1,00 | 2,63 |
+| 256 de UniEdit (B31) | Fuentes, umbral | — | 0,977 | — | 2,65 |
+| 206 reales (B32) | Una voz, umbral con sonda | 0,79 | — | 0,80 | 2,08 |
+| 206 reales (B32) | Fuentes, umbral con sonda | — | 0,985 | — | — |
+
+- Con pesos, el tercio seguro adopta una sola voz en cerca de 80 % de los hechos de cada banco.
+- Con pesos, la diversidad sola no protege: con fuentes distintas, el seguro resiste 0,22 en la dosis 10 (B30).
+- Con el umbral, el seguro rechaza 20 o más repeticiones de una voz y adopta diez fuentes distintas.
+- El dudoso cambia con una sola voz en todos los brazos.
+- En B31, el umbral sube la resistencia del seguro +0,75 [+0,68; +0,83] contra los pesos del mismo banco.
+- En B30, el umbral sube el daño al resto de 1,87 a 2,30. En B31, la suba no se repite: +0,15 [−0,21; +0,50].
+- B32 calcula pesos y tau con la sonda, sin la pérdida real. El umbral logra 0,74 del efecto del oráculo.
+- Con la sonda, el dudoso adopta una voz en 80,3 %, apenas sobre el mínimo prerregistrado de 80 %.
+- El error de la sonda se paga en los dudosos mal leídos: 15 de 66 quedan trabados con el valor viejo.
+
+Límites:
+- El rechazo de una voz sale casi por construcción. Lo medido es que el seguro todavía aprende cuando el umbral se abre.
+- Las fuentes de B30 y B31 difieren en la forma, no en el contenido.
+- Con la sonda, el efecto de la puerta se apaga en la dosis 160 (−0,023). Con el oráculo se mantiene (−0,243).
+- Todo corre en un modelo. El tipo de hecho no se separó.
+
 ## 5. Latencia
 
 La meta del plan es < 5 % de latencia agregada. La medición limpia corrió en la misma laptop
@@ -801,5 +914,14 @@ La corrida es reanudable. En una laptop con CPU i5-1035G1 y 8 GB de RAM tarda un
 1. La etiqueta es por respuesta; falta medir con etiquetas por span (juez validado o humanos).
 2. gpt-oss-20b ya se midió en una T4; falta gpt-oss-120b y un servidor de producción (vLLM con plugin).
 3. La sonda sobre H iguala a F1; falta medir si F1 transfiere mejor entre dominios o modelos.
+   Primer dato (2026-11-13): el detector de Granite instruct no transfiere a Granite base en hechos de UniEdit.
+   Sin features de salida, su duda sigue a la pérdida real con Spearman +0,079 [+0,001; +0,155], con 461 hechos.
+   Una sonda solo con router, entrenada en base, separa hechos sabidos con AUROC 0,591 [0,541; 0,637].
+   En instruct, el modelo calibrado, el resultado se repite: Spearman +0,059 [−0,019; +0,134] y AUROC 0,598 [0,550; 0,645].
+   El router detecta tokens erróneos al generar, pero no lee cuán seguro está el modelo de un hecho.
 4. La latencia en GPU cumple la meta con HF y vLLM, también con 32 requests simultáneos (§4.10).
 5. El router como sensor de duda tiene precedente publicado (Routing Entropy, COLM 2026; §4.13).
+6. La estructura del olvido se midió en un solo modelo, Granite 3.1 1B-A400M.
+   La puerta y el umbral de §4.15 corrieron en dos bancos de hechos reales, con frases plantilla.
+   Las fuentes de B30 y B31 difieren en la forma, no en el contenido. Falta medir fuentes con contenido distinto.
+   Falta también repetir la puerta y el umbral en otro modelo.
