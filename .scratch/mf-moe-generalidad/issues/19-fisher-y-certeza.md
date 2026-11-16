@@ -1,7 +1,7 @@
 # B40: ¿la Fisher de EWC sigue a la certeza de cada hecho?
 
 Type: task
-Status: prerregistrado (2026-11-16), sin correr
+Status: B40 corrido (2026-11-16): R1 y R2 fallan; la lectura de la puerta implícita es falsa
 Blocked by: 18
 
 Pedido del usuario (2026-11-16): «Dale, medí la correlación entre la Fisher y la certeza».
@@ -51,3 +51,20 @@ Pregunta: ¿el gradiente de sobrescribir un hecho seguro cae más sobre los peso
 - r_i usa un solo gradiente, en el punto de partida. Durante el ajuste, el gradiente cambia.
 - La Fisher sale de hechos verdaderos, y la certeza también mira hechos verdaderos. Parte de la relación puede venir de esa fuente común.
 - Los hechos de un mismo conjunto no son independientes en R2.
+
+## Resultados de B40 (2026-11-16, unos 8 minutos de L4, ~0,25 u)
+
+Análisis: `.cache/runs/bloques/b40_fisher_gpu/analisis.out` en mf-moe.
+- I0 falla según la regla: la Fisher tiene 96.270.619 entradas, contra 96.310.832 en B38. La diferencia es 0,04 %.
+- B39 ya difería de B38 en 0,02 %. Los gradientes del MoE en GPU no son deterministas, y el corte del 10 % se mueve apenas.
+- La pérdida base coincide con B25, con error 0. La diferencia de 0,04 % no cambia la lectura de R1 ni de R2.
+- R1 falla: el Spearman entre certeza y r (valor nuevo) vale −0,020 [−0,134; +0,092].
+- R2 falla: el Spearman entre r y la protección de EWC vale +0,027 [−0,101; +0,159], en 175 hechos.
+- Decisión según el prerregistro: la lectura de la puerta implícita es falsa. §4.15 la saca, y §7 deja abierta la causa.
+
+Datos descriptivos:
+- Certeza contra r del valor viejo: +0,101 [−0,015; +0,218].
+- Certeza contra la norma del gradiente del valor nuevo: +0,166 [+0,056; +0,272]. Sobrescribir un hecho seguro pide un gradiente más grande.
+- Certeza contra la protección de EWC, por hecho: +0,152 [+0,020; +0,282]. Es el N2 de EWC visto hecho por hecho.
+
+Brier de B40: R1 0,360 y R2 0,250.

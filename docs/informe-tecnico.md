@@ -836,12 +836,15 @@ Gasto: B27 a B27c ~3,0 u, B28 ~2,0 u, B29 ~0,32 u, B30 ~0,72 u, B31 ~0,48 u, B32
 - Sin puerta, Granite cambia igual un hecho seguro y uno dudoso (+0,003, B25).
 - EWC frena cada peso según la Fisher de 255 hechos verdaderos fuera del banco. No mira la certeza de ningún hecho del banco.
 - Aun así, EWC crea la mitad de la selectividad del oráculo en la dosis 10. Contra el ajuste común, la diferencia vale −0,152 [−0,235; −0,069].
-- Lectura: los hechos seguros dependen de pesos con Fisher alta, y EWC los frena. Es una puerta de certeza implícita.
+- B40 puso a prueba una lectura: los hechos seguros dependerían de pesos con Fisher alta, que EWC frena.
+- La lectura falla. La fracción del gradiente de cada hecho que cae sobre pesos protegidos no sigue a la certeza: −0,02 [−0,13; +0,09].
+- Esa fracción tampoco predice qué hechos protege EWC: +0,03 [−0,10; +0,16]. El mecanismo del N2 de EWC sigue abierto (§7).
+- Una pista descriptiva: el gradiente de sobrescribir un hecho seguro es más grande (Spearman +0,17 [+0,06; +0,27]).
 - La selectividad de EWC se apaga en la dosis 40: −0,109 [−0,254; +0,027].
 - EWC corta además el daño al resto: de +2,74 a +1,04 en la dosis 40, 61 % [57 %; 66 %]. Los hechos nuevos se aprenden igual (0,009).
 - Ese corte iguala al repaso de 20 hechos de §4.16. La puerta de certeza no reduce el daño al resto.
 - B39 combina EWC con los pesos de la puerta. Las selectividades no se suman: la sonda suma −0,064 [−0,160; +0,028] sobre EWC.
-- Lectura: EWC y la sonda leen la misma certeza del modelo de partida, y se solapan.
+- Las dos selectividades se solapan. B40 descartó que el solapamiento pase por la Fisher de cada hecho.
 - La combinación sí conserva lo mejor de cada una en la dosis 40: N2 −0,193, como la sonda sola (−0,184).
 - Su daño al resto es +1,39, contra +3,13 de la sonda sola. Corta 49 % [45 %; 55 %] del daño del ajuste común.
 - En la dosis 10, la combinación aprende más lento (1,1 contra 0,26) y daña más (+2,5). Los pesos desiguales chocan con la penalidad.
@@ -1006,3 +1009,4 @@ La corrida es reanudable. En una laptop con CPU i5-1035G1 y 8 GB de RAM tarda un
    Granite 3B no corrió: Colab no asignó una H100 en 4 horas (B36).
    EWC con la puerta conserva la selectividad de la sonda y corta el daño a la mitad en la dosis 40 (B39, §4.15).
    Falta la dosis 160 de esa combinación. Su prerregistro la condicionaba a S1, que falló.
+   Falta el mecanismo del N2 de EWC. La Fisher de cada hecho no sigue a su certeza (B40).
