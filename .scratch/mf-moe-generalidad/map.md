@@ -29,7 +29,7 @@ registro de que un resultado solo vale en Granite con WordNet.
 - [B21: contención contra consolidación en Granite](issues/01-b21-contencion-consolidacion.md) — resuelto: la contención por tema no supera al azar; la consolidación por uso se sostiene.
 - [B20 en OLMoE-1B-7B](issues/02-b20-olmoe.md) — cerrado en esta forma: con 1 o 4 capas, B22 no reproduce el banco de B20, y OLMoE no entra en L4 con más.
 - [Banco con UniEdit](issues/03-banco-uniedit.md) — cerrado: UniEdit sirve; B23 midió el gradiente por tipo y relación fuera de WordNet.
-- [Tamaños con FLAME-MoE](issues/04-tamanos-flame-moe.md) — ¿el tamaño cambia el resultado? Incluye 38M/100M, el tamaño del north-star.
+- [Tamaños con FLAME-MoE](issues/04-tamanos-flame-moe.md) — bloqueado: FLAME-MoE no carga en transformers y sus pickles figuran como inseguros; el tamaño de §4.15 pasa al ticket 14.
 - [Frecuencia en el corpus abierto](issues/05-frecuencia-corpus.md) — cerrado: la frecuencia no entra como covariable (proxy DCLM).
 - [Denso convertido a MoE](issues/06-denso-a-moe.md) — cerrado: descartado por costo; ninguna decisión lo necesita.
 - [Qué entra al paper](issues/07-que-entra-al-paper.md) — resuelto: opción A, la estructura del olvido.
@@ -38,6 +38,9 @@ registro de que un resultado solo vale en Granite con WordNet.
 - [B28: la puerta aprendida](issues/10-puerta-aprendida.md) — cerrado en Granite: entrenar al modelo para leerse reescribe lo que lee o lo vuelve menos legible, y releer en línea no hace durar la puerta.
 - [B29: la puerta en otro banco](issues/11-replica-otro-banco.md) — G1 falla por la regla: el azar ya da N2 +0,11; la diferencia pareada contra el azar sí aparece; desde 2026-11-15, las réplicas usan la regla pareada.
 - [B30: fuentes y umbral](issues/12-fuentes-y-umbral.md) — el umbral de fuentes reproduce el video en dos bancos (B30 y B31) y con la sonda (B32, 0,74 del oráculo); la puerta de pesos no. El costo del umbral no se repite.
+- [B33 y B34: sonda mejor y contenido](issues/13-sonda-mejor-y-contenido.md) — más datos sin filtro empeoran la sonda; el ruido del mismo tamaño no se apaga en la dosis 160; el umbral cuenta fuentes sin etiquetas y trata diez paráfrasis como dos fuentes.
+- [B35 y B36: otro modelo](issues/14-otro-modelo.md) — OLMo-2-1B repite la puerta (0,76 del oráculo con la sonda) y el umbral; Granite 3B espera una H100.
+- [B37: intuición de daño](issues/15-intuicion-de-dano.md) — repasar 20 hechos cualesquiera corta el daño cerca de 60 %; elegirlos por intuición o con el oráculo no suma.
 
 ## Out of scope
 

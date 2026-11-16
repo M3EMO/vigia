@@ -26,7 +26,7 @@ Consolidar expertos por uso sobre un MoE fijo olvida 31 % menos que el control (
 El daño de un ajuste sigue una estructura gruesa por tema (§4.13). Un árbol aprendido no le gana a un mapa plano.
 El olvido es direccional (§4.14). Sobrescribir la ida de un hecho aprendido por ajuste fino deja viva la vuelta.
 Sin ayuda, Granite cambia igual un hecho seguro y uno dudoso (§4.15). Una puerta con una sonda de certeza crea esa selectividad.
-Rechazar una sola corrección exige además contar fuentes distintas. Ese umbral se repite en dos bancos y con la sonda.
+Rechazar una sola corrección exige además contar fuentes distintas. Ese umbral se repite en dos bancos, con la sonda y en OLMo-2.
 
 ## 2. Datos
 
@@ -818,8 +818,8 @@ Pregunta: ¿el modelo puede cambiar menos un hecho seguro que uno dudoso, y rech
 El banco, los conjuntos, los lotes y las dosis son los de B25, con 206 hechos reales. B29 y B31 usan 256 hechos de UniEdit.
 Solo cambia el peso de cada ejemplo. Va de 0,25 a 1,75 según el rango de la duda, con media 1.
 La medida N2 es la de §4.14.
-Todos los diseños y reglas están preregistrados en los tickets 09 a 12 del mapa de generalidad.
-Gasto: B27 a B27c ~3,0 u, B28 ~2,0 u, B29 ~0,32 u, B30 ~0,72 u, B31 ~0,48 u y B32 ~0,33 u.
+Todos los diseños y reglas están preregistrados en los tickets 09 a 14 del mapa de generalidad.
+Gasto: B27 a B27c ~3,0 u, B28 ~2,0 u, B29 ~0,32 u, B30 ~0,72 u, B31 ~0,48 u, B32 ~0,33 u, B33 ~1,1 u, B34 ~0,8 u y B35 ~0,6 u.
 
 **Afirmación 1: una puerta de certeza crea la plasticidad selectiva.**
 
@@ -837,6 +837,10 @@ Gasto: B27 a B27c ~3,0 u, B28 ~2,0 u, B29 ~0,32 u, B30 ~0,72 u, B31 ~0,48 u y B3
 - El router de Vigía detecta tokens erróneos al generar (§4.1), pero no lee la certeza de un hecho (§7).
 - En otro banco (B29, 256 hechos de UniEdit), la puerta mueve N2 contra el azar casi igual: −0,280 contra −0,366.
 - Ese banco ya trae N2 positivo sin puerta (+0,114). Por eso las réplicas comparan contra la base del mismo banco.
+- Más datos de otra distribución empeoran la sonda. Con 3.000 hechos de UniEdit sin filtro, el Spearman baja de 0,616 a 0,571 (B33).
+- La validación cruzada eligió esos datos, porque mide sobre candidatos sin filtro. El banco solo tiene hechos que Granite conoce.
+- En OLMo-2-0425-1B, denso y de otra familia, la puerta se repite (B35). El banco tiene 256 hechos que OLMo-2 conoce.
+- En OLMo-2, el oráculo contra el azar da −0,333 [−0,467; −0,199]. La sonda da −0,253 [−0,329; −0,164], con 0,76 del oráculo.
 
 **Afirmación 2: la certeza útil es la que se lee desde afuera, sobre el modelo de partida.**
 
@@ -863,6 +867,10 @@ La creencia se mide en dos frases que ningún ajuste entrena. La tabla da fracci
 | 256 de UniEdit (B31) | Fuentes, umbral | — | 0,977 | — | 2,65 |
 | 206 reales (B32) | Una voz, umbral con sonda | 0,79 | — | 0,80 | 2,08 |
 | 206 reales (B32) | Fuentes, umbral con sonda | — | 0,985 | — | — |
+| 206 reales (B34) | Contenido, pesos | — | 1,00 | — | 2,21 |
+| 206 reales (B34) | Contenido, umbral | — | 0,985 | — | 2,31 |
+| 206 reales (B34) | Contenido, umbral por similitud | — | 0,985 | — | 2,31 |
+| 206 reales (B34) | Forma, umbral por similitud | — | 0,03 | — | 2,56 |
 
 - Con pesos, el tercio seguro adopta una sola voz en cerca de 80 % de los hechos de cada banco.
 - Con pesos, la diversidad sola no protege: con fuentes distintas, el seguro resiste 0,22 en la dosis 10 (B30).
@@ -873,12 +881,45 @@ La creencia se mide en dos frases que ningún ajuste entrena. La tabla da fracci
 - B32 calcula pesos y tau con la sonda, sin la pérdida real. El umbral logra 0,74 del efecto del oráculo.
 - Con la sonda, el dudoso adopta una voz en 80,3 %, apenas sobre el mínimo prerregistrado de 80 %.
 - El error de la sonda se paga en los dudosos mal leídos: 15 de 66 quedan trabados con el valor viejo.
+- En B34, cada fuente antepone una oración de contexto distinta: otro origen, otra época u otro método.
+- Con contenido distinto, el umbral se comporta igual que con la forma. La diversidad sola tampoco protege (0,21).
+- El umbral por similitud cuenta fuentes sin etiqueta, con el estado medio de cada frase en el modelo de partida.
+- Ese umbral cuenta 10 de 10 fuentes con contenido distinto, y 2 de 10 fuentes que solo cambian la forma.
+- Por eso, el hecho seguro adopta diez fuentes con contenido, y casi nunca adopta diez paráfrasis (3 %).
+- Esa es la conducta del video: muchas frases de una misma fuente valen como una sola voz.
+- En OLMo-2 (B35), el umbral reproduce la conducta: el seguro resiste una voz en 100 % y adopta diez fuentes en 100 %.
+- En OLMo-2, el umbral sube la resistencia del seguro +0,86 [+0,77; +0,94] contra los pesos.
 
 Límites:
 - El rechazo de una voz sale casi por construcción. Lo medido es que el seguro todavía aprende cuando el umbral se abre.
-- Las fuentes de B30 y B31 difieren en la forma, no en el contenido.
+- Las oraciones de contexto de B34 son plantillas escritas a mano. Ninguna fuente es real.
+- El umbral por similitud separa las fuentes por diferencias en el quinto decimal del coseno: el corte vale 0,99997.
+- Esa similitud mide la diferencia del texto. No prueba que mida la independencia de dos fuentes reales.
 - Con la sonda, el efecto de la puerta se apaga en la dosis 160 (−0,023). Con el oráculo se mantiene (−0,243).
-- Todo corre en un modelo. El tipo de hecho no se separó.
+- Un oráculo con ruido del mismo Spearman (0,616) retiene la mitad del efecto en la dosis 160 (B33): −0,120 [−0,219; −0,013].
+- Contra la sonda, ese ruido retiene −0,082 [−0,155; −0,019] más. La caída de la sonda no viene solo del tamaño de su error.
+- El error de la sonda no depende del largo del valor, del tipo de hecho ni de la fragilidad del hecho. La causa sigue abierta.
+- La puerta y el umbral corren en Granite 1B y en OLMo-2-1B. Los dos modelos tienen un tamaño parecido.
+- El tipo de hecho no se separó.
+
+### 4.16 Cualquier repaso protege; la intuición de daño no suma (L4 y CPU, 2026-11-16)
+
+Pregunta: ¿una intuición de daño, aprendida de ediciones pasadas, elige mejor qué hechos repasar? Es el nivel 4 del video.
+El banco, los conjuntos y los lotes son los de B25. Cada edición suma 20 hechos viejos de repaso. El diseño está en el ticket 15.
+Gasto: B37 ~0,7 u.
+
+- La intuición existe: la fragilidad de cada hecho en 331 corridas pasadas predice su daño con Spearman 0,57.
+- La intuición mejora con la experiencia: el Spearman vale 0,31 con una corrida y 0,57 con cien.
+- Esa intuición acierta 41 % de las 20 víctimas reales de cada edición. El azar acierta 11 %.
+- Pero repasar 20 hechos cualesquiera corta el daño al resto cerca de 60 %: de +2,72 a cerca de +1,10, en la dosis 40.
+- Elegir esos 20 hechos con la intuición (+1,05) o con el oráculo (+1,10) no mejora al azar (+1,10).
+- El repaso actúa como un ancla global, no como una protección de víctimas.
+- Por eso, en este banco, la saliencia sale gratis: un hecho elegido para el repaso queda protegido sin costo para los demás.
+
+Límites:
+- La regla prerregistrada incluía a los hechos repasados, que mejoran mucho. La lectura de los no repasados es exploratoria.
+- Con más de 20 hechos de repaso, o con menos, el resultado puede cambiar.
+- La literatura encuentra que el repaso dirigido sí gana entre tareas (ICML 2024). Este banco solo tiene hechos de una forma.
 
 ## 5. Latencia
 
@@ -923,5 +964,5 @@ La corrida es reanudable. En una laptop con CPU i5-1035G1 y 8 GB de RAM tarda un
 5. El router como sensor de duda tiene precedente publicado (Routing Entropy, COLM 2026; §4.13).
 6. La estructura del olvido se midió en un solo modelo, Granite 3.1 1B-A400M.
    La puerta y el umbral de §4.15 corrieron en dos bancos de hechos reales, con frases plantilla.
-   Las fuentes de B30 y B31 difieren en la forma, no en el contenido. Falta medir fuentes con contenido distinto.
-   Falta también repetir la puerta y el umbral en otro modelo.
+   B34 midió fuentes con contenido distinto, pero con oraciones de contexto escritas a mano. Falta medir fuentes reales.
+   La puerta y el umbral se repiten en OLMo-2-0425-1B, un modelo denso de otra familia (B35). Falta otro tamaño.
