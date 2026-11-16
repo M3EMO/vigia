@@ -26,6 +26,7 @@ Consolidar expertos por uso sobre un MoE fijo olvida 31 % menos que el control (
 El daño de un ajuste sigue una estructura gruesa por tema (§4.13). Un árbol aprendido no le gana a un mapa plano.
 El olvido es direccional (§4.14). Sobrescribir la ida de un hecho aprendido por ajuste fino deja viva la vuelta.
 Sin ayuda, Granite cambia igual un hecho seguro y uno dudoso (§4.15). Una puerta con una sonda de certeza crea esa selectividad.
+EWC, la protección clásica de pesos, crea la mitad de esa selectividad en la dosis 10 y corta 61 % del daño al resto (B38).
 Rechazar una sola corrección exige además contar fuentes distintas. Ese umbral se repite en dos bancos, con la sonda y en OLMo-2.
 
 ## 2. Datos
@@ -830,8 +831,15 @@ Gasto: B27 a B27c ~3,0 u, B28 ~2,0 u, B29 ~0,32 u, B30 ~0,72 u, B31 ~0,48 u, B32
 | Confianza del primer token | +0,317 | −0,160 [−0,228; −0,101] | 0,49 |
 | Sonda ridge sobre el estado oculto, ajuste cruzado | +0,616 | −0,271 [−0,330; −0,216] | 0,83 |
 | Oráculo: la pérdida real del valor | 1 | −0,328 [−0,382; −0,273] | 1 |
+| Sin puerta, con EWC (B38, conjuntos 1 a 7) | — | −0,171 [−0,230; −0,110] | 0,52 |
 
 - Sin puerta, Granite cambia igual un hecho seguro y uno dudoso (+0,003, B25).
+- EWC frena cada peso según la Fisher de 255 hechos verdaderos fuera del banco. No mira la certeza de ningún hecho del banco.
+- Aun así, EWC crea la mitad de la selectividad del oráculo en la dosis 10. Contra el ajuste común, la diferencia vale −0,152 [−0,235; −0,069].
+- Lectura: los hechos seguros dependen de pesos con Fisher alta, y EWC los frena. Es una puerta de certeza implícita.
+- La selectividad de EWC se apaga en la dosis 40: −0,109 [−0,254; +0,027].
+- EWC corta además el daño al resto: de +2,74 a +1,04 en la dosis 40, 61 % [57 %; 66 %]. Los hechos nuevos se aprenden igual (0,009).
+- Ese corte iguala al repaso de 20 hechos de §4.16. La puerta de certeza no reduce el daño al resto.
 - El efecto crece con la calidad de la señal. La sonda lee el estado al final de la pregunta, sin ver el valor.
 - La sonda es un autoconocimiento que el modelo tiene y no usa. Usado como puerta, crea la plasticidad selectiva.
 - El router de Vigía detecta tokens erróneos al generar (§4.1), pero no lee la certeza de un hecho (§7).
@@ -921,6 +929,30 @@ Límites:
 - Con más de 20 hechos de repaso, o con menos, el resultado puede cambiar.
 - La literatura encuentra que el repaso dirigido sí gana entre tareas (ICML 2024). Este banco solo tiene hechos de una forma.
 
+### 4.17 La capacidad a la mosca daña todo; EWC protege (L4 y CPU, 2026-11-16)
+
+Pregunta: ¿una capacidad nueva y esparsa, como el cuerpo fungiforme de la mosca, protege el resto mejor que EWC?
+FW1 midió antes en el conectoma de la mosca (FlyWire 783) que la importancia de una neurona vive sobre todo en su número de socios.
+La fuerza por par sube poco con el grado de los socios: Spearman 0,15 a 0,17 en los dos hemisferios.
+B38 usa el banco, los conjuntos y los lotes de B25. Los diseños están en los tickets 16 y 17. Gasto: B38 ~0,65 u.
+
+| Brazo (conjuntos 1 a 7) | Daño al resto, dosis 40 | Hechos nuevos, dosis 40 | N2, dosis 10 |
+|---|---|---|---|
+| Ajuste común (B25) | +2,74 | 0,022 | −0,019 |
+| EWC, λ 1 | +1,04 | 0,009 | −0,171 |
+| Mosca: Kenyon esparsa en la capa 16, base congelada | +10,19 | 0,127 | +0,238 |
+| Mosca densa: la misma expansión sin esparsidad | +8,80 | 1,364 | +0,223 |
+
+- La expansión de la mosca aprende los hechos nuevos, pero destruye el resto: el daño sube casi cuatro veces.
+- La esparsidad no protege: la mosca esparsa daña 16 % más que la densa en la dosis 40.
+- Causa probable: la expansión escribe en el estado de todos los tokens. Todas las preguntas comparten la plantilla y activan unidades en común.
+- En la mosca, cada olor activa células de Kenyon distintas. Aquí falta esa entrada selectiva; el ruteo del MoE sí la tiene.
+
+Límites:
+- La capa 16, el tamaño de la expansión y la esparsidad se fijaron a priori, sin barrido.
+- La salida aprende por gradiente, no por la regla local con dopamina de la mosca.
+- λ y la tasa se eligieron en el conjunto 0 entre tres valores.
+
 ## 5. Latencia
 
 La meta del plan es < 5 % de latencia agregada. La medición limpia corrió en la misma laptop
@@ -966,3 +998,5 @@ La corrida es reanudable. En una laptop con CPU i5-1035G1 y 8 GB de RAM tarda un
    La puerta y el umbral de §4.15 corrieron en dos bancos de hechos reales, con frases plantilla.
    B34 midió fuentes con contenido distinto, pero con oraciones de contexto escritas a mano. Falta medir fuentes reales.
    La puerta y el umbral se repiten en OLMo-2-0425-1B, un modelo denso de otra familia (B35). Falta otro tamaño.
+   Granite 3B no corrió: Colab no asignó una H100 en 4 horas (B36).
+   Falta combinar EWC con la puerta. EWC corta el daño, y la puerta da la selectividad más fuerte (§4.15).
