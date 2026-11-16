@@ -840,6 +840,11 @@ Gasto: B27 a B27c ~3,0 u, B28 ~2,0 u, B29 ~0,32 u, B30 ~0,72 u, B31 ~0,48 u, B32
 - La selectividad de EWC se apaga en la dosis 40: −0,109 [−0,254; +0,027].
 - EWC corta además el daño al resto: de +2,74 a +1,04 en la dosis 40, 61 % [57 %; 66 %]. Los hechos nuevos se aprenden igual (0,009).
 - Ese corte iguala al repaso de 20 hechos de §4.16. La puerta de certeza no reduce el daño al resto.
+- B39 combina EWC con los pesos de la puerta. Las selectividades no se suman: la sonda suma −0,064 [−0,160; +0,028] sobre EWC.
+- Lectura: EWC y la sonda leen la misma certeza del modelo de partida, y se solapan.
+- La combinación sí conserva lo mejor de cada una en la dosis 40: N2 −0,193, como la sonda sola (−0,184).
+- Su daño al resto es +1,39, contra +3,13 de la sonda sola. Corta 49 % [45 %; 55 %] del daño del ajuste común.
+- En la dosis 10, la combinación aprende más lento (1,1 contra 0,26) y daña más (+2,5). Los pesos desiguales chocan con la penalidad.
 - El efecto crece con la calidad de la señal. La sonda lee el estado al final de la pregunta, sin ver el valor.
 - La sonda es un autoconocimiento que el modelo tiene y no usa. Usado como puerta, crea la plasticidad selectiva.
 - El router de Vigía detecta tokens erróneos al generar (§4.1), pero no lee la certeza de un hecho (§7).
@@ -999,4 +1004,5 @@ La corrida es reanudable. En una laptop con CPU i5-1035G1 y 8 GB de RAM tarda un
    B34 midió fuentes con contenido distinto, pero con oraciones de contexto escritas a mano. Falta medir fuentes reales.
    La puerta y el umbral se repiten en OLMo-2-0425-1B, un modelo denso de otra familia (B35). Falta otro tamaño.
    Granite 3B no corrió: Colab no asignó una H100 en 4 horas (B36).
-   Falta combinar EWC con la puerta. EWC corta el daño, y la puerta da la selectividad más fuerte (§4.15).
+   EWC con la puerta conserva la selectividad de la sonda y corta el daño a la mitad en la dosis 40 (B39, §4.15).
+   Falta la dosis 160 de esa combinación. Su prerregistro la condicionaba a S1, que falló.

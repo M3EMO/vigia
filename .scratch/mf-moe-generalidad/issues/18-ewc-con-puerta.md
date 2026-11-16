@@ -1,7 +1,7 @@
 # B39: EWC con la puerta de certeza
 
 Type: task
-Status: prerregistrado (2026-11-16), sin correr
+Status: B39 corrido (2026-11-16): C0, S1 y S2 fallan; D1 pasa. Las selectividades no se suman; la protección sí queda
 Blocked by: 17
 
 Pedido del usuario (2026-11-16): «Dale, escribí el prerregistro de EWC con la puerta».
@@ -77,3 +77,35 @@ Pregunta: ¿la puerta de certeza suma selectividad sobre EWC, sin perder la prot
 - Los pesos multiplican el gradiente de cada hecho. Eso cambia la tasa efectiva de cada hecho frente a la penalidad.
 - Las referencias de B27 y B27c corrieron en otras VM. El entrenamiento es determinista entre VM, y I0 controla solo la base.
 - La sonda se ajustó sobre el modelo de partida. EWC usa la Fisher del mismo modelo. Las dos señales pueden solaparse.
+
+## Resultados de B39 (2026-11-16, unos 15 minutos de L4, ~0,5 u)
+
+Análisis: `.cache/runs/bloques/b39_combinada_gpu/analisis.out` en mf-moe.
+- I0 pasa, con error 0. L0 pasa en los tres brazos.
+- Chequeo en CPU: con pesos 1, B39 repite exactamente el brazo ewc de B38 (diferencia 0). El camino de código es el mismo.
+- C0 falla por poco: el oráculo suma −0,137 [−0,245; −0,024] sobre EWC en la dosis 10. El corte era −0,15.
+- S1 falla: la sonda suma −0,064 [−0,160; +0,028] sobre EWC en la dosis 10.
+- S2 falla: la combinación contra la sonda sola da +0,040 [−0,014; +0,089].
+- D1 pasa: la combinación corta el daño al resto 49 % [45 %; 55 %] en la dosis 40.
+- K: los pesos al azar no suman sobre EWC (+0,042 [−0,057; +0,137]). El control funciona.
+- Decisión según el prerregistro: la puerta no suma sobre EWC. La §4.15 dice que EWC ya captura parte de la selectividad en este banco.
+- S1 falló, así que B39b (dosis 160) no corre.
+
+| Brazo (conjuntos 1 a 7) | N2, dosis 10 | N2, dosis 40 | Daño al resto, dosis 40 |
+|---|---|---|---|
+| comun (B25) | −0,019 | −0,031 | +2,74 |
+| ewc (B38) | −0,171 | −0,109 | +1,04 |
+| sonda (B27c) | −0,276 | −0,184 | +3,13 |
+| oraculo (B27) | −0,339 | −0,288 | +2,64 |
+| ewc+sonda | −0,235 | −0,193 | +1,39 |
+| ewc+oraculo | −0,308 | −0,360 | +1,42 |
+| ewc+azar | −0,129 | −0,089 | +1,15 |
+
+Lectura (no prerregistrada):
+- Las dos selectividades se solapan: EWC y la sonda leen la misma certeza del modelo de partida.
+- La combinación conserva la selectividad de la sonda en la dosis 40 (−0,193 contra −0,184) y corta el daño a menos de la mitad (1,39 contra 3,13).
+- Con el oráculo, la combinación supera a los dos en la dosis 40: −0,360, contra −0,288 del oráculo solo.
+- En la dosis 10, los brazos combinados aprenden más lento: los hechos nuevos quedan en 1,1, contra 0,26 de ewc solo.
+- En la dosis 10, los brazos combinados también dañan más (+2,5). La causa probable es la interacción entre los pesos desiguales y la penalidad.
+
+Brier de B39: C0 0,423, S1 0,303, S2 0,122 y D1 0,090. La media es 0,234.
