@@ -42,6 +42,7 @@ registro de que un resultado solo vale en Granite con WordNet.
 - [B35 y B36: otro modelo](issues/14-otro-modelo.md) — OLMo-2-1B repite la puerta (0,76 del oráculo con la sonda) y el umbral; Granite 3B quedó sin datos: ninguna H100 en 4 h.
 - [B37: intuición de daño](issues/15-intuicion-de-dano.md) — repasar 20 hechos cualesquiera corta el daño cerca de 60 %; elegirlos por intuición o con el oráculo no suma.
 - [FW1: premisa en FlyWire](issues/16-premisa-flywire.md) — la fuerza por par sube poco con el grado de los socios (Spearman 0,15 a 0,17); el club rico tiene aristas 1,4 veces más fuertes. El brazo de la mosca en B38 agrega capacidad.
+- [B38: capacidad a la mosca](issues/17-capacidad-mosca.md) — prerregistrado: expansión esparsa y congelada contra ajuste común y EWC; dice si la capacidad protege el resto y suma EWC al informe.
 
 ## Out of scope
 
