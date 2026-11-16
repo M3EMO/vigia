@@ -1,7 +1,7 @@
 # B35 y B36: la puerta y el umbral en otro modelo
 
 Type: task
-Status: B35 corrido (2026-11-16): OLMo-2 pasa G1, G2, U1 y P1; B36 espera una H100
+Status: B35 corrido (2026-11-16): OLMo-2 pasa G1, G2, U1 y P1; B36 sin datos (ninguna H100 en 4 h)
 Blocked by: 12
 
 Pedido del usuario (2026-11-16): «Hace todo eso en colab». Este ticket cubre otro modelo y reemplaza la parte de tamaño del ticket 04.
@@ -81,3 +81,11 @@ Análisis: `.cache/runs/bloques/b35_olmo_gpu/analisis.out` en mf-moe.
 - Decisión según el prerregistro: §4.15 vale en otra familia y en un modelo denso. El ítem 6 de §7 se achica.
 
 Brier de B35: G1 0,090 y U1 0,063.
+
+## B36, Granite-3.1-3B-A800M (2026-11-16): sin datos
+
+- `colab/cli/esperar_gpu.sh` pidió una H100 cada 5 minutos durante 4 horas, desde la 01:20.
+- Colab respondió «Service Unavailable» en cada intento. El registro cierra con «sin H100 en 4 h», a las 05:20.
+- La espera no gastó unidades.
+- Una A100 de 40 GB no alcanza: los pesos en fp32 más Adam para las capas entrenables suman unos 43 GB.
+- El ítem 6 de §7 sigue con «Falta otro tamaño».
