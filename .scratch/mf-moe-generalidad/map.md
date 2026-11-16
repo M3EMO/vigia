@@ -44,6 +44,7 @@ registro de que un resultado solo vale en Granite con WordNet.
 - [FW1: premisa en FlyWire](issues/16-premisa-flywire.md) — la fuerza por par sube poco con el grado de los socios (Spearman 0,15 a 0,17); el club rico tiene aristas 1,4 veces más fuertes. El brazo de la mosca en B38 agrega capacidad.
 - [B38: capacidad a la mosca](issues/17-capacidad-mosca.md) — la expansión de la mosca daña el resto casi 4 veces; EWC corta 61 % del daño y crea la mitad de la selectividad del oráculo en la dosis 10.
 - [B39: EWC con la puerta](issues/18-ewc-con-puerta.md) — las selectividades no se suman (la sonda suma −0,064 sobre EWC); la combinación conserva la selectividad de la sonda y corta el daño 49 %.
+- [B40: Fisher y certeza](issues/19-fisher-y-certeza.md) — prerregistrado: ¿el gradiente de sobrescribir un hecho seguro cae sobre pesos que EWC frena?
 
 ## Out of scope
 
