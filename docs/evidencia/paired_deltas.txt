@@ -1,0 +1,10 @@
+Granite 600 (test)           token    F0+F1 0.906 entropía 0.601 F0+F1-entropía +0.305 [+0.216; +0.386] (n_boot 2000)
+Granite 600 (test)           response F0+F1 0.894 entropía 0.845 F0+F1-entropía +0.049 [-0.035; +0.126] (n_boot 2000)
+OLMoE rtqa_2026              token    F0+F1 0.748 entropía 0.595 F0+F1-entropía +0.154 [+0.135; +0.170] (n_boot 1000)
+OLMoE oos_squad              token    F0+F1 0.650 entropía 0.603 F0+F1-entropía +0.047 [+0.016; +0.079] (n_boot 1000)
+OLMoE oos_truthfulqa         token    F0+F1 0.618 entropía 0.565 F0+F1-entropía +0.052 [+0.016; +0.085] (n_boot 1000)
+OLMoE oos_nq_open            token    F0+F1 0.591 entropía 0.560 F0+F1-entropía +0.031 [-0.004; +0.063] (n_boot 1000)
+OLMoE oos_freshqa            token    F0+F1 0.649 entropía 0.532 F0+F1-entropía +0.117 [+0.088; +0.144] (n_boot 1000)
+vLLM MKQA (sin aritmética)    token    F0+U 0.784 [0.639, 0.916] F0 0.512 F0+U-F0 +0.272 [+0.153; +0.382] F0+U-NLL +0.322 [+0.196; +0.425] (test 66 preguntas, n_boot 1000)
+vLLM latencia p50 con/sin expertos: 22.57 / 22.61 ms; mediana pareada de cocientes -0.23% [-0.43%; -0.16%] (24 unidades, bootstrap sobre 8 prompts; sesiones de servidor separadas)
+  cociente medio por prompt: [-0.18, -0.25, -0.17, -0.19, -0.24, -22.92, 1.26, -0.46]
